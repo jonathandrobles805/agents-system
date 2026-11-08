@@ -266,3 +266,14 @@ def test_changed_docs_validates_in_ci_mode(tmp_path):
     F.commit_all(root, "bad research")
     r = ci("ci_changed_docs.py", root)
     assert r.returncode == 1 and "untagged-claim" in r.stderr
+
+
+def test_lane_slug_prefers_repo_branch_over_ci_env(tmp_path, monkeypatch):
+    """GitHub Actions sets GITHUB_HEAD_REF to the PR branch; a repo on its own branch must still win."""
+    import ci_common as C
+    root = lane_repo(tmp_path)
+    monkeypatch.setenv("GITHUB_HEAD_REF", "phase-2-bootstrap")
+    assert C.lane_slug(root) == "refund-route"
+    F.git(["checkout", "-q", "--detach"], root)
+    monkeypatch.setenv("GITHUB_HEAD_REF", "wt/other")
+    assert C.lane_slug(root) == "other"

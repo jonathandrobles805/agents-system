@@ -7,14 +7,18 @@ import kitlib as K  # noqa: E402
 
 
 def current_branch(root: Path) -> str:
+    """The repo's own branch. CI checks out PRs with a detached HEAD; only then fall back to the CI env var."""
+    import os
+    try:
+        b = K.git(["rev-parse", "--abbrev-ref", "HEAD"], root).strip()
+    except Exception:
+        b = ""
+    if b and b != "HEAD":
+        return b
     for env in ("GITHUB_HEAD_REF", "CI_COMMIT_REF_NAME"):
-        import os
         if os.environ.get(env):
             return os.environ[env]
-    try:
-        return K.git(["rev-parse", "--abbrev-ref", "HEAD"], root).strip()
-    except Exception:
-        return ""
+    return b
 
 
 def lane_slug(root: Path) -> str | None:
