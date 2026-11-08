@@ -1,10 +1,10 @@
 # Agent kit specification
 
-Version: 0.2.0-draft
-Status: awaiting approval
-Approved by: —
-Approved on: —
-Approved at commit: —
+Version: 0.2.0
+Status: approved
+Approved by: Jonathan Robles (via chat, defaults accepted: WIP 2, mutation 70% warning-first, default high-risk paths, second model on high-risk)
+Approved on: 2026-11-08
+Approved at commit: 5c8e34d
 
 This document is the contract for the kit. Nothing is built that is not described here. Anything that turns out to be needed and is not here gets added here first, then built.
 
