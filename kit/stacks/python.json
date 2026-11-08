@@ -1,0 +1,19 @@
+{
+  "name": "python",
+  "detect": ["pyproject.toml", "setup.py", "requirements.txt", "Pipfile"],
+  "lockfiles": ["poetry.lock", "uv.lock", "Pipfile.lock", "requirements.txt", "requirements.lock"],
+  "frameworks": {"django": "Django", "fastapi": "FastAPI", "flask": "Flask", "starlette": "Starlette", "sqlalchemy": "SQLAlchemy", "celery": "Celery", "pydantic": "Pydantic"},
+  "tools": {
+    "pytest":  {"test": "python -m pytest -q", "test_affected": "python -m pytest -q {file}"},
+    "mypy":    {"typecheck": "python -m mypy ."},
+    "pyright": {"typecheck": "pyright"},
+    "ruff":    {"lint": "ruff check {file}", "lint_all": "ruff check ."},
+    "flake8":  {"lint": "flake8 {file}", "lint_all": "flake8"},
+    "import-linter": {"boundaries": "lint-imports"},
+    "mutmut":  {"mutation": "mutmut run"}
+  },
+  "audit": "pip-audit",
+  "test_dirs": ["tests", "test"],
+  "source_dirs": ["src", "app"],
+  "install_hint": {"boundaries": "pip install import-linter", "mutation": "pip install mutmut", "typecheck": "pip install mypy"}
+}

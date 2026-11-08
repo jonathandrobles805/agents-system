@@ -2,6 +2,7 @@
 
 - Spec: `docs/specs/{{slug}}.md`
 - Diff: `{{base}}..{{head}}`
+- Head: {{head sha}}
 - Reviewer: {{agent name and model}}
 - Date: {{timestamp}}
 
