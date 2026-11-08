@@ -147,6 +147,8 @@ All agents are subagents in `~/.claude/agents/`. Each file has: frontmatter (`na
 - Hooks (frontmatter and project settings):
   - `PreToolUse` on `Edit|Write` → `guard-edit` (blocks unread or out-of-spec paths, exit 2)
   - `PreToolUse` on `Bash` → `guard-bash` (blocks `git push --force`, destructive commands, edits to settings, writes outside the worktree)
+  - `PreToolUse` on `Read` → `guard-read` (blocks `.env*`, key files, credential directories; see 10.1)
+  - `PostToolUse` on every tool → `budget-check` (time and token budget per stage; see 10.2)
   - `PostToolUse` on `Edit|Write|Bash` → `post-edit-check` (typecheck, lint, affected tests, assertion/skip diff; writes to `.log`; `decision: block` with the failure text on red)
   - `PostToolUse` on every tool → `event-log` (appends to `.events.jsonl`)
   - `Stop` → `done-check` (refuses to stop if progress.md is stale, if any done-criterion lacks a green run in the log, or if an escalation is required but not written)
