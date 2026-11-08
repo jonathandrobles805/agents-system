@@ -1,0 +1,14 @@
+{
+  "name": "go",
+  "detect": ["go.mod"],
+  "lockfiles": ["go.sum"],
+  "frameworks": {"github.com/gin-gonic/gin": "Gin", "github.com/labstack/echo": "Echo", "github.com/gofiber/fiber": "Fiber", "github.com/go-chi/chi": "Chi"},
+  "tools": {
+    "go": {"test": "go test ./...", "test_affected": "go test ./...", "typecheck": "go vet ./..."},
+    "golangci-lint": {"lint": "golangci-lint run", "lint_all": "golangci-lint run"}
+  },
+  "audit": "govulncheck ./...",
+  "test_dirs": [],
+  "source_dirs": ["cmd", "internal", "pkg"],
+  "install_hint": {"lint": "go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest"}
+}
