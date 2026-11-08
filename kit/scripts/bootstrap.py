@@ -301,7 +301,7 @@ class Bootstrap:
 
     def claude_md(self) -> str:
         cmds = self.commands()
-        dirs = "\n".join(f"- `{d['dir']}/` — {d['files']} files, mostly `{d['main_ext'] or 'mixed'}`" for d in self.det["dirs"]) or "- TODO(bootstrap: project map)"
+        dirs = "\n".join(f"- `{d['dir']}/` — {d['files']} file{'s' if d['files'] != 1 else ''}, mostly `{d['main_ext'] or 'mixed'}`" for d in self.det["dirs"]) or "- TODO(bootstrap: project map)"
         text = fill(tmpl("claude-md.md"), {
             "project": self.answers.get("project", self.root.name), "kit_version": KIT_VERSION, "date": TODAY,
             "test_cmd": cmds.get("test", "TODO"), "typecheck_cmd": cmds.get("typecheck", "none"), "lint_cmd": cmds.get("lint_all", cmds.get("lint", "none")),

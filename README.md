@@ -23,4 +23,8 @@ git clone https://github.com/jonathandrobles805/agents-system ~/agents-system
 python3 -m pytest -q kit/scripts/tests
 ```
 
-Status: Phase 1 (global layer) complete: templates, validate-docs, hook scripts, six agents. Phase 2 (`/bootstrap`) next.
+## Bootstrap a project
+
+In the project, inside Claude Code: `/bootstrap`. It detects the stack, asks the questions it must not guess (roadmap, WIP limit, layers, high-risk paths, commands), and generates `CLAUDE.md`, `ROADMAP.md`, `ARCHITECTURE.md`, `DESIGN.md`, `LESSONS.md`, `docs/`, `.claude/settings.json` (hooks), `.claude/kit.json`, `scripts/sync.sh`, and the CI workflow. Without Claude: `python3 ~/.claude/kit/scripts/bootstrap.py --repo . --detect-only`.
+
+Status: Phase 2 (`/bootstrap`, CI scripts) complete. Phase 3 (pipeline commands) next.
