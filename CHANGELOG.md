@@ -14,6 +14,10 @@ All notable changes to the kit. Each entry names the decision or lesson that cau
 - Phase 2a: `bootstrap.py` (detect stack, frameworks, tools, CI, folder map, credential files, branch drift; generate the project layer; `--answers`, `--dry-run`, `--detect-only`, `--upgrade` with backup, `--protect` via gh), stack definitions for Node, Python, Go, Rust.
 - Phase 2b: project CI template `kit/ci/github.yml` and CI scripts `ci_scope_diff`, `ci_test_count`, `ci_dep_diff`, `ci_claude_md_cap`, `ci_guards_present`, `ci_changed_docs`, `ci_review_report`, `ci_pr_size`; review template gains a `Head:` line so CI can tie a report to a commit.
 - Phase 2c: `/bootstrap` command, fixture generator `planted-faults/make_fixtures.py` (node-api, python-service).
+- Phase 3a: `lane.py` (precheck, start, stage, wip, roadmap-set, research index lookup/add, finish): worktrees at `../<repo>-lanes/<slug>` on `wt/<slug>`, lane.json, progress skeleton from the spec.
+- Phase 3b: `kit_status.py`: derived lane positions, needs-you list, drift, events summary, debt, research staleness; `--all` across projects.
+- Phase 3c: commands `/research`, `/plan`, `/implement`, `/review`, `/sync`, `/retro`, `/status`; mechanical end-to-end pipeline test; decision 0006.
+- `kitlib.review_head_ok`: a review is current when it names HEAD, or HEAD's parent when HEAD only touched the report, lane-owned docs, and tests.
 
 ### Notes
 - Project CI checks out the kit at `ref: main` until the first tagged release; `/bootstrap --upgrade` will switch projects to tags from 1.0.

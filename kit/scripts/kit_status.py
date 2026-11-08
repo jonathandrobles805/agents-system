@@ -117,7 +117,7 @@ def review_info(root: Path, rep: Path, lane_head: str | None) -> dict:
     info["fails"] = len(re.findall(r"^\|\s*R\d+\s*\|[^|]*\|\s*FAIL\s*\|", text, re.M))
     h = re.search(r"^- Head:\s*([0-9a-f]{7,40})", text, re.M)
     if h and lane_head:
-        info["head_matches"] = lane_head.startswith(h.group(1))
+        info["head_matches"] = K.review_head_ok(root, h.group(1))
     return info
 
 
