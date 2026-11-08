@@ -1,0 +1,53 @@
+{
+  "$comment": "Installed into <repo>/.claude/settings.json by /bootstrap. Versioned with the project. Hooks call kit scripts in ~/.claude/kit/scripts. Edit via /bootstrap --upgrade, not by hand during a lane.",
+  "permissions": {
+    "deny": [
+      "Read(.env)", "Read(.env.*)", "Read(**/*.pem)", "Read(**/*.key)", "Read(**/id_rsa*)", "Read(**/secrets/**)", "Read(**/credentials*)", "Read(**/.aws/**)", "Read(**/.ssh/**)",
+      "Edit(.claude/**)", "Write(.claude/**)", "Edit(.github/workflows/**)", "Write(.github/workflows/**)",
+      "Bash(git push --force*)", "Bash(git push -f*)", "Bash(git reset --hard*)", "Bash(sudo *)", "Bash(rm -rf /*)"
+    ]
+  },
+  "hooks": {
+    "PreToolUse": [
+      { "matcher": "Edit|MultiEdit|Write|NotebookEdit", "hooks": [ { "type": "command", "command": "python3 \"$HOME/.claude/kit/scripts/hook_guard_edit.py\"" } ] },
+      { "matcher": "Read|NotebookRead", "hooks": [ { "type": "command", "command": "python3 \"$HOME/.claude/kit/scripts/hook_guard_read.py\"" } ] },
+      { "matcher": "Bash", "hooks": [ { "type": "command", "command": "python3 \"$HOME/.claude/kit/scripts/hook_guard_bash.py\"" } ] }
+    ],
+    "PostToolUse": [
+      { "matcher": "Read|NotebookRead|Bash", "hooks": [ { "type": "command", "command": "python3 \"$HOME/.claude/kit/scripts/hook_read_log.py\"" } ] },
+      { "matcher": "Edit|MultiEdit|Write|Bash", "hooks": [ { "type": "command", "command": "python3 \"$HOME/.claude/kit/scripts/hook_post_edit_check.py\"", "timeout": 300 } ] },
+      { "matcher": "Write", "hooks": [ { "type": "command", "command": "python3 \"$HOME/.claude/kit/scripts/validate_docs.py\" --hook" } ] },
+      { "hooks": [
+          { "type": "command", "command": "python3 \"$HOME/.claude/kit/scripts/hook_event_log.py\"" },
+          { "type": "command", "command": "python3 \"$HOME/.claude/kit/scripts/hook_budget_check.py\"" }
+      ] }
+    ],
+    "PostToolUseFailure": [
+      { "hooks": [ { "type": "command", "command": "python3 \"$HOME/.claude/kit/scripts/hook_event_log.py\"" } ] }
+    ],
+    "SubagentStart": [
+      { "hooks": [ { "type": "command", "command": "python3 \"$HOME/.claude/kit/scripts/hook_event_log.py\"" } ] }
+    ],
+    "SubagentStop": [
+      { "hooks": [
+          { "type": "command", "command": "python3 \"$HOME/.claude/kit/scripts/hook_event_log.py\"" },
+          { "type": "command", "command": "python3 \"$HOME/.claude/kit/scripts/validate_docs.py\" --hook" }
+      ] }
+    ],
+    "Stop": [
+      { "hooks": [
+          { "type": "command", "command": "python3 \"$HOME/.claude/kit/scripts/hook_done_check.py\"" },
+          { "type": "command", "command": "python3 \"$HOME/.claude/kit/scripts/hook_notify.py\"" }
+      ] }
+    ],
+    "Notification": [
+      { "hooks": [ { "type": "command", "command": "python3 \"$HOME/.claude/kit/scripts/hook_notify.py\"" } ] }
+    ],
+    "ConfigChange": [
+      { "matcher": "project_settings|local_settings", "hooks": [ { "type": "command", "command": "python3 \"$HOME/.claude/kit/scripts/hook_config_guard.py\"" } ] }
+    ],
+    "SessionStart": [
+      { "matcher": "compact|resume", "hooks": [ { "type": "command", "command": "python3 \"$HOME/.claude/kit/scripts/hook_session_context.py\"" } ] }
+    ]
+  }
+}

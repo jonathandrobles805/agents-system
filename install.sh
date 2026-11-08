@@ -5,6 +5,7 @@
 #   default: symlink kit/agents/* and kit/commands/* into ~/.claude, and symlink kit/ as ~/.claude/kit
 #   --copy : copy instead of symlink (for machines where ~/.claude must not point outside itself)
 set -euo pipefail
+shopt -s nullglob
 
 KIT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CLAUDE_HOME="${CLAUDE_HOME:-$HOME/.claude}"

@@ -10,4 +10,17 @@ Start here:
 - `docs/research/claude-code-features.md` — verified Claude Code features with citations
 - `docs/decisions/` — why things are the way they are
 
-Status: Phase 0 (spec). Nothing is built until the spec is approved.
+## Install (per machine)
+
+```
+git clone https://github.com/jonathandrobles805/agents-system ~/agents-system
+~/agents-system/install.sh          # symlinks agents, commands, and kit/ into ~/.claude
+```
+
+## Run the kit's own checks
+
+```
+python3 -m pytest -q kit/scripts/tests
+```
+
+Status: Phase 1 (global layer) complete: templates, validate-docs, hook scripts, six agents. Phase 2 (`/bootstrap`) next.
