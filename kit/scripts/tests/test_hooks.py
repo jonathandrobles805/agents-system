@@ -382,3 +382,28 @@ def test_shell_edit_outside_spec_is_caught_post_edit(repo):
     (repo / "src" / "routes.ts").write_text("// ok\n" + (repo / "src" / "routes.ts").read_text())
     r = run_script("hook_post_edit_check.py", [], stdin=hook(post(repo, "Bash", {"command": "sed -i 's/a/b/' src/routes.ts"})))
     assert r.stdout.strip() == ""
+
+
+# ---------------- tester agent: tests-only guard + red-only stop ----------------
+
+def test_guard_tests_only(repo):
+    make_lane(repo)
+    ok = ["tests/routes.test.ts", "src/__tests__/x.test.ts", "tests/conftest.py", "tests/fixtures/data.json", "docs/specs/refund-endpoint.progress.md"]
+    bad = ["src/api/routes.ts", "src/domain/payment.ts", "package.json", "README.md"]
+    for p in ok:
+        r = run_script("hook_guard_tests_only.py", [], stdin=hook(pre(repo, "Write", {"file_path": p, "content": "x"})))
+        assert r.returncode == 0, (p, r.stderr)
+    for p in bad:
+        r = run_script("hook_guard_tests_only.py", [], stdin=hook(pre(repo, "Write", {"file_path": p, "content": "x"})))
+        assert r.returncode == 2, p
+
+
+def test_done_check_in_test_stage_needs_red_only(repo):
+    make_lane(repo, stage="test")
+    (repo / "docs/specs/refund-endpoint.log").write_text("=== run\n2 failed\n")
+    (repo / "docs/specs/refund-endpoint.progress.md").write_text(PROGRESS_TMPL.format(g1="—", g2="—", att="{{n}} of 3", fail="{{what fails}}"))
+    r = run_script("hook_done_check.py", [], stdin=hook(stop(repo)))
+    assert r.returncode == 0 and r.stdout.strip() == ""  # red runs present (log#1), no green needed in test stage
+    (repo / "docs/specs/refund-endpoint.progress.md").write_text(PROGRESS_TMPL.format(g1="—", g2="—", att="{{n}} of 3", fail="{{what fails}}").replace("refund-endpoint.log#1 | — |\n| D2", "— | — |\n| D2"))
+    r = run_script("hook_done_check.py", [], stdin=hook(stop(repo)))
+    assert json.loads(r.stdout)["decision"] == "block" and "D1" in json.loads(r.stdout)["reason"]

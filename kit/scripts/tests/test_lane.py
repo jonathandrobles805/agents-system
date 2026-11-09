@@ -137,3 +137,15 @@ def test_unknowns_budget(tmp_path):
     r = lane("unknowns", "docs/specs/refund-route.md", "--repo", str(root), "--json")
     out = json.loads(r.stdout)
     assert r.returncode == 2 and out["decision"] == "research" and out["count"] == 4
+
+
+def test_incident_record(tmp_path):
+    root, _ = project(tmp_path)
+    r = lane("incident", "--repo", str(root), "--what", "refund charged twice on retry", "--slug", "refund-route", "--pr", "https://x/pr/9")
+    assert r.returncode == 0, r.stderr
+    p = root / r.stdout.strip()
+    assert p.is_file() and p.parent.name == "incidents"
+    t = p.read_text()
+    assert "refund charged twice on retry" in t and "- Feature: refund-route" in t and "- Status: open" in t and "{{" not in t.split("## Impact")[0]
+    r2 = lane("incident", "--repo", str(root), "--what", "second")
+    assert r2.stdout.strip() != r.stdout.strip()

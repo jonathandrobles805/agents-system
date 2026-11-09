@@ -9,6 +9,7 @@
   lane.py roadmap-set <slug> <status> --repo R
   lane.py index lookup "<question>" --repo R [--json]   reuse | stale | new, from docs/research/INDEX.md
   lane.py index add "<question>" --repo R --slug S --keywords K --files F --commit C
+  lane.py incident --repo R --what "..." [--slug S] [--pr URL]   record a production incident for /retro --incident
   lane.py merged <slug> --repo R [--pr URL] at merge time: verify in git, mark ROADMAP merged (idempotent)
   lane.py finish <slug> --repo R            after retro: remove worktree and local branch, mark roadmap merged
 Exit 0 ok, 2 refused (reasons on stderr), 1 usage/git error.
@@ -257,6 +258,22 @@ def unknowns(root: Path, spec_or_draft: Path) -> dict:
                         "research": f"{count} unknowns > {MAX_UNKNOWNS}: research insufficient; stop planning and run /research"}[decision]}
 
 
+# ---------------------------------------------------------------- incidents
+
+def record_incident(root: Path, what: str, slug: str | None, pr: str | None) -> Path:
+    d = root / "docs" / "incidents"
+    d.mkdir(parents=True, exist_ok=True)
+    today = dt.date.today().isoformat()
+    n = len(list(d.glob(f"{today}-*.md"))) + 1
+    path = d / f"{today}-{n}.md"
+    tmpl = (Path(__file__).resolve().parents[1] / "templates" / "incident.md").read_text()
+    text = (tmpl.replace("{{short title}}", what[:80]).replace("{{date}}-{{n}}", f"{today}-{n}").replace("{{date}}", today)
+            .replace("{{slug or unknown}}", slug or "unknown").replace("{{url or unknown}}", pr or "unknown").replace("{{open|lesson-written}}", "open")
+            .replace("{{one paragraph, observable facts}}", what))
+    path.write_text(text)
+    return path
+
+
 # ---------------------------------------------------------------- research index
 
 def index_rows(root: Path) -> list[dict]:
@@ -328,8 +345,9 @@ def main(argv=None) -> int:
         s = sub.add_parser(name); s.add_argument("slug"); s.add_argument("--repo", default=".")
         if name == "start":
             s.add_argument("--base")
-    s = sub.add_parser("stage"); s.add_argument("slug"); s.add_argument("stage", choices=["research", "plan", "build", "review"]); s.add_argument("--repo", default=".")
+    s = sub.add_parser("stage"); s.add_argument("slug"); s.add_argument("stage", choices=["research", "plan", "test", "build", "review"]); s.add_argument("--repo", default=".")
     s = sub.add_parser("merged"); s.add_argument("slug"); s.add_argument("--repo", default="."); s.add_argument("--pr")
+    s = sub.add_parser("incident"); s.add_argument("--repo", default="."); s.add_argument("--what", required=True); s.add_argument("--slug"); s.add_argument("--pr")
     s = sub.add_parser("wip"); s.add_argument("--repo", default=".")
     s = sub.add_parser("unknowns"); s.add_argument("spec"); s.add_argument("--repo", default="."); s.add_argument("--json", action="store_true")
     s = sub.add_parser("roadmap-set"); s.add_argument("slug"); s.add_argument("status"); s.add_argument("--repo", default="."); s.add_argument("--pr"); s.add_argument("--spec")
@@ -349,6 +367,10 @@ def main(argv=None) -> int:
         return set_stage(root, a.slug, a.stage)
     if a.cmd == "finish":
         return finish(root, a.slug)
+    if a.cmd == "incident":
+        p = record_incident(root, a.what, a.slug, a.pr)
+        print(str(p.relative_to(root)))
+        return 0
     if a.cmd == "merged":
         # Verify in git before writing the word: refuse to mark a lane merged that is not an ancestor of base.
         kit = K.load_kit_json(root); base = kit.get("default_branch", "main")

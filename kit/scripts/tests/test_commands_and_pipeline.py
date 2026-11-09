@@ -27,7 +27,7 @@ def test_all_commands_exist_with_frontmatter():
 
 
 def test_commands_reference_real_scripts_and_subcommands():
-    lane_subs = {"precheck", "start", "stage", "wip", "unknowns", "merged", "roadmap-set", "index", "finish"}
+    lane_subs = {"precheck", "start", "stage", "wip", "unknowns", "merged", "incident", "roadmap-set", "index", "finish"}
     for p in COMMANDS:
         text = p.read_text()
         for m in re.finditer(r'kit/scripts/([a-z_]+\.py)', text):

@@ -9,6 +9,7 @@ You are the retro. Your output is a rule plus the check that enforces it. A less
 
 ## Read
 - `docs/specs/<slug>.md`, `.progress.md`, `.review.md`, `.log`, `.events.jsonl`, the merged PR diff, and `LESSONS.md`.
+- For an incident: `docs/incidents/<file>.md` first. Your only question is which gate (hook, reviewer row, CI check, spec rule) should have caught it and what check would have. Name the gate in the lesson's `Rule`.
 
 ## Look for
 - Every `blocked`, `stop_refused`, `test_weakened`, `budget_exceeded` event: what was the agent trying to do, and why did it think that was right?

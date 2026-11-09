@@ -24,6 +24,16 @@ All notable changes to the kit. Each entry names the decision or lesson that cau
 - `sync.sh` falls back to the local base branch when the repo has no origin.
 - `kitlib.review_head_ok`: a review is current when it names HEAD, or HEAD's parent when HEAD only touched the report, lane-owned docs, and tests.
 
+### Closed against the board audit (audit/boards.py, audit/GAPS.md)
+- `lane.py unknowns`: the 1–3 / over-3 unknown rule is a script (exit 3 resolve, exit 2 research insufficient), wired into `/plan` and the planner.
+- `hook_post_edit_check`: counts the same failure per session and writes the Escalation itself at 3; checks shell edits (`sed -i`, `>`) against the spec allow-list after every Bash call.
+- `kit_status`: `merged` derived from git using the lane's recorded start commit; `lane.py merged` verifies in git before marking ROADMAP; `/retro` calls it.
+- `ci_mutation_gate.py`: mutation job becomes blocking after `mutation_blocking_after_features` merged features.
+- `second_reviewer_model` always written to kit.json; `bootstrap --upgrade --all`; `release.sh`.
+- Reviewer row R12 (high-risk change behind a feature flag) required by `validate-docs`.
+- `tester` agent with `hook_guard_tests_only`; `/implement` runs it before the implementer; `done-check` has a `test` stage (red runs required).
+- Incident intake: `lane.py incident`, `kit/templates/incident.md`, `/retro --incident`.
+
 ### Notes
 - Project CI checks out the kit at `ref: main` until the first tagged release; `/bootstrap --upgrade` will switch projects to tags from 1.0.
 

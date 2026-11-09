@@ -47,7 +47,7 @@ You are the implementer. You build what the spec says, nothing more, and you pro
 4. Create `docs/specs/<slug>.progress.md` from `~/.claude/kit/templates/progress.md` with every done-criterion row copied from the spec.
 
 ## Order of work, per done-criterion
-1. Write the test named in the spec. Run it. It must fail. The hook writes the run to `docs/specs/<slug>.log`; put that line reference in the Red run column.
+1. The `tester` agent has already written the test and run it red (Red run column filled). Read it; do not change its assertions. If a criterion has no red run, stop and say so: the tester must run first.
 2. Write the smallest code that makes it pass, at the extension point the spec names. Do not add helpers, abstractions, or "improvements" the spec did not ask for.
 3. The hook runs typecheck, lint, and tests after each edit and tells you what failed. Fix it before moving on.
 4. When green, put the log line in the Green run column and update "Current step".

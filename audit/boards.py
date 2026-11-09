@@ -127,8 +127,9 @@ def board1() -> None:
     fl = grep(T / "architecture.md", r"Feature flags|Canary|Rollback")
     r12 = grep(T / "review.md", r"^\| R12") + grep(S / "validate_docs.py", r'"checklist-missing-r12"')
     rec(b, "Feature flag, canary, monitoring, rollback", "PARTIAL", f"template: {'; '.join(fl)}; reviewer R12 required by validator: {'; '.join(r12)}", "flag gate is scripted (R12); canary/monitoring/rollback remain the project's checklist, no kit tooling")
-    inc = grep(C / "retro.md", r"[Ii]ncident") + grep(A / "retro.md", r"[Ii]ncident")
-    rec(b, "Arrow 'Incident becomes lesson'", "PRESENT" if inc else "MISSING", "; ".join(inc) or "no mention of incidents in /retro or retro agent", "no incident intake into retro")
+    ok_i, last_i = pytest("test_lane.py::test_incident_record")
+    inc = grep(C / "retro.md", r"--incident") + grep(A / "retro.md", r"[Ii]ncident") + grep(S / "lane.py", r"def record_incident")
+    rec(b, "Arrow 'Incident becomes lesson'", "PRESENT" if ok_i and len(inc) >= 3 else "MISSING", f"{'; '.join(inc)}; test: {last_i}", "" if ok_i else "no incident intake")
 
 
 # ----------------------------------------------------------------------------------------------- board 2
@@ -176,11 +177,9 @@ def board3() -> None:
     rec(b, "Approved spec → worktree from fresh main, /sync runs", "PRESENT" if ok and sync else "PARTIAL", f"lane.py start fetches base and adds worktree; test: {last}; sync.sh generated {sync[0] if sync else 'no'}; invoked by implement.md (instruction)")
     ok, last = pytest("test_hooks.py::test_edit_unread_file_blocked", "test_hooks.py::test_edit_after_read_allowed", "test_hooks.py::test_lane_blocks_file_outside_spec")
     rec(b, "Read spec files, read log recorded; pre-edit hook blocks unread or out-of-spec file", "PRESENT" if ok else "MISSING", f"hook_read_log + hook_guard_edit; tests: {last}")
-    tf = grep(A / "implementer.md", r"It must fail")
-    dc = grep(S / "hook_done_check.py", r'"red"')
-    tester = exists("kit/agents/tester.md", "kit/scripts/hook_guard_tests_only.py")
-    rec(b, "Write tests from done-criteria, run red, logged (before code)", "PARTIAL", f"order is implementer instruction {tf[0] if tf else ''}; done-check requires a red ref at Stop {dc[0] if dc else ''}; tester agent files present: {tester or 'none'}",
-        "nothing prevents code before test; tests-first by a separate tester agent not merged")
+    ok_t, last_t = pytest("test_hooks.py::test_guard_tests_only", "test_hooks.py::test_done_check_in_test_stage_needs_red_only", "test_agents.py::test_tester_cannot_write_app_code")
+    wired_t = grep(C / "implement.md", r"Spawn the `tester` agent")
+    rec(b, "Write tests from done-criteria, run red, logged (before code)", "PRESENT" if ok_t and wired_t else "PARTIAL", f"tester agent + hook_guard_tests_only (tests only) + done-check test stage (red required); /implement runs tester first {wired_t[0] if wired_t else ''}; tests: {last_t}", "" if ok_t and wired_t else "tester not wired")
     ok, last = pytest("test_hooks.py::test_post_edit_check_runs_commands_and_blocks_on_failure", "test_hooks.py::test_post_edit_check_detects_weakened_tests", "test_hooks.py::test_shell_edit_outside_spec_is_caught_post_edit")
     rec(b, "Post-edit hook: typecheck, lint, tests, test-count(weakened), scope", "PRESENT" if ok else "PARTIAL", f"typecheck/lint/tests/weakened/shell-scope: {last}; {'; '.join(grep(S / 'hook_post_edit_check.py', r'def shell_scope_violations'))}", "" if ok else "post-edit scope not proven")
     ok, last = pytest("test_hooks.py::test_done_check_allows_when_all_green", "test_hooks.py::test_done_check_refuses_incomplete_criteria")
@@ -249,8 +248,9 @@ def board4() -> None:
     fl = grep(T / "architecture.md", r"Feature flags|Canary|Rollback")
     rv = grep(T / "review.md", r"^\| R12") + grep(S / "validate_docs.py", r'"checklist-missing-r12"')
     rec(b, "Feature flag → canary slice → error monitoring → one-command rollback", "PARTIAL", f"flag gate R12 scripted: {'; '.join(rv)}; template: {'; '.join(fl)}", "canary, monitoring, rollback stay the project's checklist (no kit tooling, by design)")
-    inc = grep(C / "retro.md", r"[Ii]ncident") + grep(A / "retro.md", r"[Ii]ncident")
-    rec(b, "Incident becomes lesson", "PRESENT" if inc else "MISSING", "; ".join(inc) or "no incident intake", "no path from an incident into /retro")
+    ok_i, last_i = pytest("test_lane.py::test_incident_record")
+    inc = grep(C / "retro.md", r"--incident") + grep(A / "retro.md", r"[Ii]ncident") + grep(S / "lane.py", r"def record_incident") + exists("kit/templates/incident.md")
+    rec(b, "Incident becomes lesson", "PRESENT" if ok_i and len(inc) >= 4 else "MISSING", f"{'; '.join(inc)}; test: {last_i}", "" if ok_i else "no path from an incident into /retro")
 
 
 def main(argv=None) -> int:

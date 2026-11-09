@@ -4,7 +4,7 @@ from pathlib import Path
 
 KIT = Path(__file__).resolve().parents[2]
 AGENTS = sorted((KIT / "agents").glob("*.md"))
-EXPECTED = {"researcher", "planner", "spec-critic", "implementer", "reviewer", "retro"}
+EXPECTED = {"researcher", "planner", "spec-critic", "tester", "implementer", "reviewer", "retro"}
 
 
 def frontmatter(text: str) -> str:
@@ -59,3 +59,8 @@ def test_writing_agents_validate_on_stop():
     for name in ("researcher", "planner", "reviewer"):
         fm = frontmatter((KIT / "agents" / f"{name}.md").read_text())
         assert "SubagentStop" in fm and "validate_docs.py" in fm, name
+
+
+def test_tester_cannot_write_app_code():
+    fm = frontmatter((KIT / "agents" / "tester.md").read_text())
+    assert "hook_guard_tests_only.py" in fm and "hook_guard_edit.py" in fm and "hook_post_edit_check.py" in fm
