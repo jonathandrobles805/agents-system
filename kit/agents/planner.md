@@ -37,9 +37,11 @@ You are the planner. You write the spec the implementer will be held to. If the 
 - Architecture checklist: copy the invariants from `ARCHITECTURE.md`, answer each with `[x]` and how.
 
 ## Unknowns
-Open questions must be empty when you finish.
-- 1–3 unknowns: resolve them now. Spawn a `researcher` per unknown with a concrete method, wait, and fold the answer in.
-- More than 3: stop. Write "research insufficient" with the list, and do not write a spec.
+Open questions must be empty when you finish. Every `[unknown]` in your draft carries `Resolve by: <method>`.
+Run `python3 "$HOME/.claude/kit/scripts/lane.py" unknowns docs/specs/<slug>.md --repo "$PWD"` on your draft:
+- exit 3 (1–3 unknowns): spawn a `researcher` per item with its method, wait, fold the answers in, run it again.
+- exit 2 (more than 3): stop. Say "research insufficient" with the list. Do not finish a spec.
+- exit 0: continue. The script decides the count; you do not.
 
 ## Refuse (stop and say why) when
 - Any file in your lists appears in another active spec's Files to change.

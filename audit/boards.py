@@ -145,11 +145,14 @@ def board2() -> None:
     req = grep(S / "validate_docs.py", r'"files to read first", "files to change", "impact analysis"') + grep(S / "validate_docs.py", r'"done-criteria-no-test"') + grep(S / "validate_docs.py", r'"non-goals"')
     rec(b, "Planner: files to read, impact analysis, assumptions, non-goals, tests per done-criterion", "PRESENT" if len(req) >= 2 else "PARTIAL", "; ".join(req[:3]))
     oq = grep(S / "validate_docs.py", r'"open-questions"')
-    cnt = grep(S / "validate_docs.py", r"unknown.*(count|> 3|more than)") + grep(S / "lane.py", r"unknown.*(count|> 3|more than)")
-    rec(b, "Unknowns left? None / 1–3 → verification task / over 3 → back to research", "PARTIAL", f"'None' enforced: {oq[0] if oq else 'no'}; counting rule in scripts: {'; '.join(cnt) if cnt else 'none'}; planner.md text only",
-        "no script counts [unknown] tags; 1–3 resolution and >3 refusal are planner instructions")
-    instruction(b, "Verification task or spike per unknown", grep(A / "planner.md", r"Spawn a `researcher` per unknown"), "planner instruction")
-    instruction(b, "More than 3 unknowns: back to research", grep(A / "planner.md", r"More than 3"), "planner instruction")
+    ok_u, last_u = pytest("test_lane.py::test_unknowns_budget")
+    wired = grep(C / "plan.md", r"lane.py\" unknowns") + grep(A / "planner.md", r"lane.py\" unknowns")
+    if ok_u and wired:
+        rec(b, "Unknowns left? None / 1–3 → verification task / over 3 → back to research", "PRESENT", f"lane.py unknowns (exit 0/3/2); test: {last_u}; wired: {'; '.join(wired)}; final spec must have none: {oq[0] if oq else ''}")
+    else:
+        rec(b, "Unknowns left? None / 1–3 → verification task / over 3 → back to research", "PARTIAL", f"'None' enforced: {oq[0] if oq else 'no'}; counting script test: {last_u}; wired: {wired or 'no'}", "no script counts [unknown] tags")
+    present_if(b, "Verification task or spike per unknown (exit 3 → one researcher per item, method required)", grep(S / "lane.py", r'"resolve": f"') + grep(C / "plan.md", r"exit 3 \(`resolve`\)"), "no resolve path")
+    present_if(b, "More than 3 unknowns: back to research (exit 2)", grep(S / "lane.py", r'"research": f"') + grep(C / "plan.md", r"exit 2 \(`research`\)"), "no research-insufficient path")
     ok, last = pytest("test_lane.py::test_precheck_refuses_overlap_and_wip")
     rec(b, "File overlap or WIP limit hit? → Spec refused, you are told why", "PRESENT" if ok else "MISSING", f"lane.py precheck; test: {last}")
     present_if(b, "Spec critic agent checks gaps and contradictions", exists("kit/agents/spec-critic.md") + grep(C / "plan.md", r"spec-critic"), "no critic")

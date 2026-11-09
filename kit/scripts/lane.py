@@ -5,6 +5,7 @@
   lane.py start <slug> --repo R [--base B]  precheck, then worktree ../<repo>-lanes/<slug> on branch wt/<slug> from fresh base; lane.json; progress skeleton
   lane.py stage <slug> <stage> --repo R     set lane.json stage (research|plan|build|review) and reset its clock
   lane.py wip --repo R                      active lanes vs WIP limit
+  lane.py unknowns <draft spec> --repo R    exit 0 none / 3 resolve (1..3, one researcher each) / 2 research insufficient (>3)
   lane.py roadmap-set <slug> <status> --repo R
   lane.py index lookup "<question>" --repo R [--json]   reuse | stale | new, from docs/research/INDEX.md
   lane.py index add "<question>" --repo R --slug S --keywords K --files F --commit C
@@ -217,6 +218,43 @@ def finish(root: Path, slug: str) -> int:
     return 0
 
 
+# ---------------------------------------------------------------- unknown budget
+
+MAX_UNKNOWNS = 3
+
+
+def unknowns(root: Path, spec_or_draft: Path) -> dict:
+    """Count [unknown] tags in a draft spec and decide: none -> proceed; 1..3 -> resolve each (a researcher per item,
+    method required); over 3 -> research insufficient, back to /research. Open questions count as unknowns."""
+    if not spec_or_draft.is_file():
+        return {"count": 0, "decision": "missing", "items": [], "error": f"{spec_or_draft} not found"}
+    lines = K.strip_html_comments(K.read_lines(spec_or_draft))
+    items = []
+    for n, t in enumerate(lines, start=1):
+        if K.TAG_UNKNOWN.search(t):
+            m = re.search(r"resolve by:\s*(.+)$", t, re.IGNORECASE)
+            items.append({"line": n, "text": t.strip()[:160], "method": m.group(1).strip() if m else None})
+    oq = K.parse_sections(lines).get("open questions")
+    if oq:
+        for n, t in oq.bullets():
+            body = t.strip()[2:].strip()
+            if body.lower() not in {"none", "none."} and not K.TAG_UNKNOWN.search(t):
+                items.append({"line": n, "text": body[:160], "method": None})
+    count = len(items)
+    if count == 0:
+        decision = "none"
+    elif count > MAX_UNKNOWNS:
+        decision = "research"
+    else:
+        decision = "resolve"
+    missing_method = [i for i in items if not i["method"]]
+    return {"count": count, "max": MAX_UNKNOWNS, "decision": decision, "items": items,
+            "missing_method": len(missing_method),
+            "message": {"none": "no unknowns; proceed to critique",
+                        "resolve": f"{count} unknown(s): spawn one researcher per item with its method, fold answers in, re-run",
+                        "research": f"{count} unknowns > {MAX_UNKNOWNS}: research insufficient; stop planning and run /research"}[decision]}
+
+
 # ---------------------------------------------------------------- research index
 
 def index_rows(root: Path) -> list[dict]:
@@ -290,6 +328,7 @@ def main(argv=None) -> int:
             s.add_argument("--base")
     s = sub.add_parser("stage"); s.add_argument("slug"); s.add_argument("stage", choices=["research", "plan", "build", "review"]); s.add_argument("--repo", default=".")
     s = sub.add_parser("wip"); s.add_argument("--repo", default=".")
+    s = sub.add_parser("unknowns"); s.add_argument("spec"); s.add_argument("--repo", default="."); s.add_argument("--json", action="store_true")
     s = sub.add_parser("roadmap-set"); s.add_argument("slug"); s.add_argument("status"); s.add_argument("--repo", default="."); s.add_argument("--pr"); s.add_argument("--spec")
     s = sub.add_parser("index"); s.add_argument("action", choices=["lookup", "add"]); s.add_argument("question", nargs="?"); s.add_argument("--repo", default=".")
     s.add_argument("--json", action="store_true"); s.add_argument("--slug"); s.add_argument("--keywords", default=""); s.add_argument("--files", default=""); s.add_argument("--commit", default="")
@@ -307,6 +346,10 @@ def main(argv=None) -> int:
         return set_stage(root, a.slug, a.stage)
     if a.cmd == "finish":
         return finish(root, a.slug)
+    if a.cmd == "unknowns":
+        res = unknowns(root, Path(a.spec) if Path(a.spec).is_absolute() else root / a.spec)
+        print(json.dumps(res, indent=2) if a.json else res["message"])
+        return {"none": 0, "resolve": 3, "research": 2, "missing": 1}[res["decision"]]
     if a.cmd == "wip":
         n, limit, lanes = wip(root)
         print(json.dumps({"in_flight": n, "limit": limit, "lanes": lanes}))
