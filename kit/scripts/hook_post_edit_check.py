@@ -8,7 +8,7 @@ Commands come from .claude/kit.json:
 Tokens: {file} = the edited file (repo-relative). A missing command is skipped.
 """
 from __future__ import annotations
-import re, subprocess, sys
+import json, re, subprocess, sys
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import kitlib as K
@@ -19,6 +19,74 @@ ADDED_SKIP = re.compile(r"^\+\s*.*(\.skip\(|\.only\(|\bxit\(|\bxdescribe\(|\bxte
 FAIL_SIGNALS = re.compile(r"(\b\d+ failed\b|\bFAIL\b|\bFAILED\b|\bError:|\berror TS\d+|\bTypeError\b|✖|✗|\bpanic:)", re.IGNORECASE)
 PASS_COUNT = re.compile(r"(\d+)\s+passed", re.IGNORECASE)
 FAIL_COUNT = re.compile(r"(\d+)\s+failed", re.IGNORECASE)
+
+
+MAX_ATTEMPTS = 3
+FAILED_TEST = re.compile(r"(?:FAILED|FAIL|✗|×|✖)\s+([^\s].*?)(?:\s+-\s|\s+\(|$)", re.M)
+
+
+def failure_signature(name: str, out: str) -> str:
+    """Stable id for 'the same failure': the failing test names when parseable, else the last meaningful lines."""
+    names = sorted({m.group(1).strip()[:120] for m in FAILED_TEST.finditer(out)})
+    if names:
+        return name + ":" + "|".join(names[:8])
+    tail = [l.strip() for l in out.splitlines() if l.strip()][-5:]
+    return name + ":" + "|".join(tail)[:400]
+
+
+def attempts_path(lane: "K.Lane", sid: str) -> Path:
+    d = lane.root / K.SESSION_DIR
+    d.mkdir(parents=True, exist_ok=True)
+    return d / (re.sub(r"[^A-Za-z0-9_.-]", "_", sid or "s") + ".attempts.json")
+
+
+def bump_attempt(lane: "K.Lane", sid: str, sig: str) -> int:
+    p = attempts_path(lane, sid)
+    data = json.loads(p.read_text()) if p.is_file() else {}
+    data[sig] = int(data.get(sig, 0)) + 1
+    p.write_text(json.dumps(data))
+    return data[sig]
+
+
+def reset_attempts(lane: "K.Lane", sid: str) -> None:
+    p = attempts_path(lane, sid)
+    if p.is_file():
+        p.write_text("{}")
+
+
+def write_escalation(lane: "K.Lane", sig: str, n: int, refs: list[str]) -> None:
+    """Fill the Escalation section of progress.md so done-check accepts the stop and the human sees why."""
+    prog = lane.progress_path
+    text = prog.read_text() if prog.is_file() else f"# Progress: {lane.slug}\n\n## Escalation\n"
+    block = (f"## Escalation\n\n- Attempts: {n} of {MAX_ATTEMPTS}\n- Failure: {sig[:300]}\n"
+             f"- Tried: {len(refs)} fix attempt(s); see {', '.join(refs[-3:]) or 'log'}\n- Needs: a human decision: the approach, the spec, or the test is wrong\n")
+    if "## Escalation" in text:
+        head, _, _ = text.partition("## Escalation")
+        text = head.rstrip() + "\n\n" + block
+    else:
+        text = text.rstrip() + "\n\n" + block
+    prog.parent.mkdir(parents=True, exist_ok=True)
+    prog.write_text(text)
+
+
+def shell_scope_violations(lane: "K.Lane") -> list[str]:
+    """After a Bash command: any modified or new file outside the spec allow-list (catches sed -i, redirects, cp, mv)."""
+    try:
+        out = subprocess.run(["git", "status", "--porcelain", "--untracked-files=all"], cwd=lane.root, capture_output=True, text=True, timeout=20).stdout
+    except Exception:
+        return []
+    _, change, create = K.spec_file_lists(lane.spec_path)
+    allowed = change + create + lane.always_allowed() + ["ROADMAP.md"]
+    bad = []
+    for line in out.splitlines():
+        rel = line[3:].strip()
+        if " -> " in rel:
+            rel = rel.split(" -> ", 1)[1]
+        if rel.startswith(".claude/"):
+            continue
+        if not K.glob_match(rel, allowed):
+            bad.append(rel)
+    return bad
 
 
 def run(cmd: str, cwd: Path, timeout: int) -> tuple[int, str]:
@@ -78,6 +146,11 @@ def main() -> int:
     log = lane.log_path if lane else root / ".claude" / "session" / "checks.log"
     events = lane.events_path if lane else root / ".claude" / "session" / "events.jsonl"
     failures: list[str] = []
+    sid = d.get("session_id", "s")
+    red_sigs: list[tuple[str, str]] = []   # (signature, log ref) for failing test/typecheck steps this call
+    any_test_green = False
+
+    nonlocal_green = [False]
 
     def step(name: str, cmd: str | None):
         if not cmd:
@@ -97,6 +170,10 @@ def main() -> int:
         if code != 0:
             tail = "\n".join(out.splitlines()[-40:])
             failures.append(f"[{name}] {cmd} -> exit {code} (log {log.name}#{line})\n{tail}")
+            if name in ("test", "typecheck"):
+                red_sigs.append((failure_signature(name, out), f"{log.name}#{line}"))
+        elif name == "test":
+            nonlocal_green[0] = True
 
     step("typecheck", cmds.get("typecheck"))
     step("lint", cmds.get("lint"))
@@ -109,6 +186,29 @@ def main() -> int:
     if weak:
         K.append_event(events, {"event": "test_weakened", "tool": "hook", "result": "fail", "summary": "; ".join(weak)})
         failures.append("[tests weakened] " + "; ".join(weak) + "\nRemoving assertions or skipping tests is not a fix. Restore them, or record why in progress.md under Uncertainties and let the reviewer decide.")
+
+    # Shell edits outside the spec (sed -i, >, cp, mv) are invisible to the pre-edit hook; catch them here.
+    if lane and d.get("tool_name") == "Bash":
+        extras = shell_scope_violations(lane)
+        if extras:
+            K.append_event(events, {"event": "blocked", "tool": "Bash", "result": "blocked", "summary": "shell edit outside spec: " + ", ".join(extras[:5])})
+            failures.append("[scope] files changed outside the spec's allow-list via shell: " + ", ".join(extras) +
+                            "\nRevert them (git checkout -- <file>) or stop and record under Escalation that the spec needs amending.")
+
+    # Attempt counter: the same failure red N times in a row is an escalation, not a fourth try.
+    if lane:
+        if nonlocal_green[0] and not red_sigs:
+            reset_attempts(lane, sid)
+        for sig, ref in red_sigs:
+            n = bump_attempt(lane, sid, sig)
+            K.append_event(events, {"event": "attempt", "tool": "hook", "result": "fail", "summary": f"attempt {n}/{MAX_ATTEMPTS}: {sig[:120]}", "ref": ref})
+            if n >= MAX_ATTEMPTS:
+                data = json.loads(attempts_path(lane, sid).read_text())
+                write_escalation(lane, sig, n, [ref])
+                K.append_event(events, {"event": "escalation", "tool": "hook", "result": "fail", "summary": f"{n} attempts on the same failure; escalation written"})
+                return K.feedback_block(f"post-edit-check: this failure has now failed {n} times in a row:\n{sig[:300]}\n\n"
+                                        "The Escalation section of progress.md has been written for you. Do not try again. "
+                                        "Make sure Current step describes where things stand, then end the turn; a human decides next.")
 
     if failures:
         return K.feedback_block("post-edit-check found problems. Fix them before continuing; do not mark anything done.\n\n" + "\n\n".join(failures))

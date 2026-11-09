@@ -180,15 +180,15 @@ def board3() -> None:
     tester = exists("kit/agents/tester.md", "kit/scripts/hook_guard_tests_only.py")
     rec(b, "Write tests from done-criteria, run red, logged (before code)", "PARTIAL", f"order is implementer instruction {tf[0] if tf else ''}; done-check requires a red ref at Stop {dc[0] if dc else ''}; tester agent files present: {tester or 'none'}",
         "nothing prevents code before test; tests-first by a separate tester agent not merged")
-    ok, last = pytest("test_hooks.py::test_post_edit_check_runs_commands_and_blocks_on_failure", "test_hooks.py::test_post_edit_check_detects_weakened_tests")
-    scope_post = grep(S / "hook_post_edit_check.py", r"allow-list|spec_file_lists|scope")
-    rec(b, "Post-edit hook: typecheck, lint, tests, test-count(weakened), scope", "PARTIAL" if ok and not scope_post else ("PRESENT" if ok else "MISSING"), f"typecheck/lint/tests/weakened: {last}; post-edit scope check: {'; '.join(scope_post) or 'none (scope is pre-edit + CI only)'}",
-        "edits made via Bash (sed -i, >) bypass guard-edit; only CI scope-diff catches them")
+    ok, last = pytest("test_hooks.py::test_post_edit_check_runs_commands_and_blocks_on_failure", "test_hooks.py::test_post_edit_check_detects_weakened_tests", "test_hooks.py::test_shell_edit_outside_spec_is_caught_post_edit")
+    rec(b, "Post-edit hook: typecheck, lint, tests, test-count(weakened), scope", "PRESENT" if ok else "PARTIAL", f"typecheck/lint/tests/weakened/shell-scope: {last}; {'; '.join(grep(S / 'hook_post_edit_check.py', r'def shell_scope_violations'))}", "" if ok else "post-edit scope not proven")
     ok, last = pytest("test_hooks.py::test_done_check_allows_when_all_green", "test_hooks.py::test_done_check_refuses_incomplete_criteria")
     rec(b, "Green → progress.md updated, green run logged (Stop refused otherwise)", "PRESENT" if ok else "MISSING", f"hook_done_check; tests: {last}; progress.md content itself is written by the agent")
-    att = [h for h in grep(S / "hook_post_edit_check.py", r"attempt") + grep(S / "hook_done_check.py", r"attempt")]
-    rec(b, "Red → Attempts under 3? → Yes: implement again / No: stop, escalate", "PARTIAL", f"script-side attempt counter: {'; '.join(att) or 'none'}; implementer.md: {'; '.join(grep(A / 'implementer.md', r'Three failed attempts'))}; done-check accepts a filled Escalation",
-        "no script counts attempts per failure; the limit is an instruction")
+    ok_a, last_a = pytest("test_hooks.py::test_attempt_counter_escalates_after_three_same_failures", "test_hooks.py::test_attempt_counter_resets_on_green_and_tracks_distinct_failures")
+    if ok_a:
+        rec(b, "Red → Attempts under 3? → Yes: implement again / No: stop, escalate", "PRESENT", f"hook_post_edit_check counts the same failure per session, writes Escalation at {'; '.join(grep(S / 'hook_post_edit_check.py', r'^MAX_ATTEMPTS'))}; tests: {last_a}")
+    else:
+        rec(b, "Red → Attempts under 3? → Yes: implement again / No: stop, escalate", "PARTIAL", f"tests: {last_a}", "attempt counter not proven")
     ok, last = pytest("test_hooks.py::test_done_check_allows_with_escalation", "test_hooks.py::test_budget_check_blocks_after_limit_and_writes_escalation")
     rec(b, "Stop, write progress.md, escalate to you with fail list", "PRESENT" if ok else "PARTIAL", f"done-check accepts escalation; budget-check writes one; tests: {last}; attempt-based escalation text is written by the agent")
     tools = grep(A / "reviewer.md", r"^tools:")
