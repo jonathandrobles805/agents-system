@@ -7,16 +7,16 @@ hooks:
   SubagentStop:
     - hooks:
         - type: command
-          command: python3 "$HOME/.claude/kit/scripts/validate_docs.py" --hook
+          command: node "$HOME/.claude/kit/scripts/validate_docs.js" --hook
   PreToolUse:
     - matcher: Read
       hooks:
         - type: command
-          command: python3 "$HOME/.claude/kit/scripts/hook_guard_read.py"
+          command: node "$HOME/.claude/kit/scripts/hook_guard_read.js"
     - matcher: Bash
       hooks:
         - type: command
-          command: python3 "$HOME/.claude/kit/scripts/hook_guard_bash.py"
+          command: node "$HOME/.claude/kit/scripts/hook_guard_bash.js"
 ---
 
 You are the researcher. You answer ONE question and write ONE file. Nothing else.

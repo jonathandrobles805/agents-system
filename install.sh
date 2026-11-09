@@ -34,11 +34,14 @@ for f in "$KIT_ROOT"/kit/commands/*.md; do
 done
 place "$KIT_ROOT/kit" "$CLAUDE_HOME/kit"
 
-# Scripts need a Python 3 interpreter; verify once.
-if ! command -v python3 >/dev/null; then
-  echo "python3 is required for kit scripts" >&2; exit 1
+# Scripts need Node.js 20 or newer (no npm packages); verify once.
+if ! command -v node >/dev/null; then
+  echo "node (v20 or newer) is required for kit scripts" >&2; exit 1
 fi
-python3 -c 'import yaml' 2>/dev/null || echo "note: python3 'pyyaml' not found; install with: pip install pyyaml" >&2
+NODE_MAJOR="$(node -p 'process.versions.node.split(".")[0]')"
+if (( NODE_MAJOR < 20 )); then
+  echo "node v20 or newer is required for kit scripts (found $(node -v))" >&2; exit 1
+fi
 
 echo "agent-kit $(cat "$KIT_ROOT/VERSION") installed into $CLAUDE_HOME ($MODE)"
 echo "agents:   $(ls "$KIT_ROOT"/kit/agents/*.md 2>/dev/null | wc -l | tr -d ' ')"

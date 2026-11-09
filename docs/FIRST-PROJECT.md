@@ -7,10 +7,10 @@ This is the step where the agents run for real for the first time. Everything be
 ```
 git clone https://github.com/jonathandrobles805/agents-system ~/agents-system
 ~/agents-system/install.sh
-python3 -m pytest -q ~/agents-system/kit/scripts/tests     # 110 tests
-python3 ~/agents-system/planted-faults/run.py               # 19/19
+(cd ~/agents-system && npm test)                             # 124 tests
+node ~/agents-system/planted-faults/run.js               # 19/19
 ```
-Requirements: Claude Code, git, python3, `gh` logged in. In Claude Code, `/agents` should list the six kit agents and `/help` the nine commands.
+Requirements: Claude Code, git, Node 20+, `gh` logged in. In Claude Code, `/agents` should list the six kit agents and `/help` the nine commands.
 
 ## 1. Pick the project and freeze the drift (you, 20 minutes)
 

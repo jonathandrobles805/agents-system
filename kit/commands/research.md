@@ -12,7 +12,7 @@ If the arguments contain `;`-separated questions, use them. Otherwise derive 2â€
 ## Step 2: check the index before spawning anything
 For each question:
 ```
-python3 "$HOME/.claude/kit/scripts/lane.py" index lookup "<question>" --repo "$PWD" --json
+node "$HOME/.claude/kit/scripts/lane.js" index lookup "<question>" --repo "$PWD" --json
 ```
 - `reuse`: do not research again. Note the slug.
 - `reverify`: spawn a `researcher` with the instruction "re-verify only the citations in docs/research/<slug>.md that touch <stale files>; keep every other finding; write the same file; bump the Commit".
@@ -23,9 +23,9 @@ Spawn all researchers in parallel in one turn. Do not answer the questions yours
 ## Step 3: register
 When each researcher finishes, add its row:
 ```
-python3 "$HOME/.claude/kit/scripts/lane.py" index add "<question>" --repo "$PWD" --slug <slug> --keywords "<5-8 words>" --files "<files cited, comma-separated>" --commit <short sha>
+node "$HOME/.claude/kit/scripts/lane.js" index add "<question>" --repo "$PWD" --slug <slug> --keywords "<5-8 words>" --files "<files cited, comma-separated>" --commit <short sha>
 ```
-Then run `python3 "$HOME/.claude/kit/scripts/validate_docs.py" docs/research/<slug>.md --repo "$PWD"` for each new file. A file that fails goes back to its researcher with the violation list; it is not registered until it passes.
+Then run `node "$HOME/.claude/kit/scripts/validate_docs.js" docs/research/<slug>.md --repo "$PWD"` for each new file. A file that fails goes back to its researcher with the violation list; it is not registered until it passes.
 
 ## Step 4: report
-List: reused, re-verified, new, and every `[unknown]` across the new files with its resolution method. Set the feature's ROADMAP status: `python3 "$HOME/.claude/kit/scripts/lane.py" roadmap-set <slug> researching --repo "$PWD"` if a slug was given. Do not write a spec.
+List: reused, re-verified, new, and every `[unknown]` across the new files with its resolution method. Set the feature's ROADMAP status: `node "$HOME/.claude/kit/scripts/lane.js" roadmap-set <slug> researching --repo "$PWD"` if a slug was given. Do not write a spec.

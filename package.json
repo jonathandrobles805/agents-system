@@ -1,0 +1,12 @@
+{
+  "name": "agents-system",
+  "private": true,
+  "type": "module",
+  "description": "Versioned Claude Code agent kit: research, plan, approve, build, review, merge, retro.",
+  "engines": { "node": ">=20" },
+  "scripts": {
+    "test": "node --test kit/scripts/tests/*.test.js",
+    "planted-faults": "node planted-faults/run.js",
+    "audit": "node audit/boards.js"
+  }
+}

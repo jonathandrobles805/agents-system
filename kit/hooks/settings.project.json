@@ -9,45 +9,45 @@
   },
   "hooks": {
     "PreToolUse": [
-      { "matcher": "Edit|MultiEdit|Write|NotebookEdit", "hooks": [ { "type": "command", "command": "python3 \"$HOME/.claude/kit/scripts/hook_guard_edit.py\"" } ] },
-      { "matcher": "Read|NotebookRead", "hooks": [ { "type": "command", "command": "python3 \"$HOME/.claude/kit/scripts/hook_guard_read.py\"" } ] },
-      { "matcher": "Bash", "hooks": [ { "type": "command", "command": "python3 \"$HOME/.claude/kit/scripts/hook_guard_bash.py\"" } ] }
+      { "matcher": "Edit|MultiEdit|Write|NotebookEdit", "hooks": [ { "type": "command", "command": "node \"$HOME/.claude/kit/scripts/hook_guard_edit.js\"" } ] },
+      { "matcher": "Read|NotebookRead", "hooks": [ { "type": "command", "command": "node \"$HOME/.claude/kit/scripts/hook_guard_read.js\"" } ] },
+      { "matcher": "Bash", "hooks": [ { "type": "command", "command": "node \"$HOME/.claude/kit/scripts/hook_guard_bash.js\"" } ] }
     ],
     "PostToolUse": [
-      { "matcher": "Read|NotebookRead|Bash", "hooks": [ { "type": "command", "command": "python3 \"$HOME/.claude/kit/scripts/hook_read_log.py\"" } ] },
-      { "matcher": "Edit|MultiEdit|Write|Bash", "hooks": [ { "type": "command", "command": "python3 \"$HOME/.claude/kit/scripts/hook_post_edit_check.py\"", "timeout": 300 } ] },
-      { "matcher": "Write", "hooks": [ { "type": "command", "command": "python3 \"$HOME/.claude/kit/scripts/validate_docs.py\" --hook" } ] },
+      { "matcher": "Read|NotebookRead|Bash", "hooks": [ { "type": "command", "command": "node \"$HOME/.claude/kit/scripts/hook_read_log.js\"" } ] },
+      { "matcher": "Edit|MultiEdit|Write|Bash", "hooks": [ { "type": "command", "command": "node \"$HOME/.claude/kit/scripts/hook_post_edit_check.js\"", "timeout": 300 } ] },
+      { "matcher": "Write", "hooks": [ { "type": "command", "command": "node \"$HOME/.claude/kit/scripts/validate_docs.js\" --hook" } ] },
       { "hooks": [
-          { "type": "command", "command": "python3 \"$HOME/.claude/kit/scripts/hook_event_log.py\"" },
-          { "type": "command", "command": "python3 \"$HOME/.claude/kit/scripts/hook_budget_check.py\"" }
+          { "type": "command", "command": "node \"$HOME/.claude/kit/scripts/hook_event_log.js\"" },
+          { "type": "command", "command": "node \"$HOME/.claude/kit/scripts/hook_budget_check.js\"" }
       ] }
     ],
     "PostToolUseFailure": [
-      { "hooks": [ { "type": "command", "command": "python3 \"$HOME/.claude/kit/scripts/hook_event_log.py\"" } ] }
+      { "hooks": [ { "type": "command", "command": "node \"$HOME/.claude/kit/scripts/hook_event_log.js\"" } ] }
     ],
     "SubagentStart": [
-      { "hooks": [ { "type": "command", "command": "python3 \"$HOME/.claude/kit/scripts/hook_event_log.py\"" } ] }
+      { "hooks": [ { "type": "command", "command": "node \"$HOME/.claude/kit/scripts/hook_event_log.js\"" } ] }
     ],
     "SubagentStop": [
       { "hooks": [
-          { "type": "command", "command": "python3 \"$HOME/.claude/kit/scripts/hook_event_log.py\"" },
-          { "type": "command", "command": "python3 \"$HOME/.claude/kit/scripts/validate_docs.py\" --hook" }
+          { "type": "command", "command": "node \"$HOME/.claude/kit/scripts/hook_event_log.js\"" },
+          { "type": "command", "command": "node \"$HOME/.claude/kit/scripts/validate_docs.js\" --hook" }
       ] }
     ],
     "Stop": [
       { "hooks": [
-          { "type": "command", "command": "python3 \"$HOME/.claude/kit/scripts/hook_done_check.py\"" },
-          { "type": "command", "command": "python3 \"$HOME/.claude/kit/scripts/hook_notify.py\"" }
+          { "type": "command", "command": "node \"$HOME/.claude/kit/scripts/hook_done_check.js\"" },
+          { "type": "command", "command": "node \"$HOME/.claude/kit/scripts/hook_notify.js\"" }
       ] }
     ],
     "Notification": [
-      { "hooks": [ { "type": "command", "command": "python3 \"$HOME/.claude/kit/scripts/hook_notify.py\"" } ] }
+      { "hooks": [ { "type": "command", "command": "node \"$HOME/.claude/kit/scripts/hook_notify.js\"" } ] }
     ],
     "ConfigChange": [
-      { "matcher": "project_settings|local_settings", "hooks": [ { "type": "command", "command": "python3 \"$HOME/.claude/kit/scripts/hook_config_guard.py\"" } ] }
+      { "matcher": "project_settings|local_settings", "hooks": [ { "type": "command", "command": "node \"$HOME/.claude/kit/scripts/hook_config_guard.js\"" } ] }
     ],
     "SessionStart": [
-      { "matcher": "compact|resume", "hooks": [ { "type": "command", "command": "python3 \"$HOME/.claude/kit/scripts/hook_session_context.py\"" } ] }
+      { "matcher": "compact|resume", "hooks": [ { "type": "command", "command": "node \"$HOME/.claude/kit/scripts/hook_session_context.js\"" } ] }
     ]
   }
 }
