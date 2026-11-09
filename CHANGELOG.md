@@ -4,6 +4,12 @@ All notable changes to the kit. Each entry names the decision or lesson that cau
 
 ## [Unreleased]
 
+### Fixed
+- Blocking hooks (`hook_guard_edit`, `hook_guard_read`, `hook_guard_bash`, `hook_guard_tests_only`, `hook_config_guard`) now run through `runGuard`: if one crashes (for example the event log cannot be written) it exits 2 and blocks, instead of exiting 1, which Claude Code treats as "carry on".
+- Projects set up by an older kit version keep hooks that point at scripts that no longer exist, so their guards silently do nothing. `ci_guards_present` now names those scripts and says to run `/bootstrap --upgrade`; `install.sh` warns about every registered project in that state (`check_projects.js`). `bootstrap.js --upgrade` migrates such a project (tested).
+- `lane.json` or `kit.json` containing `null`, a list or a scalar is treated as empty instead of crashing; an absolute `spec` path in `lane.json` is honoured.
+- The test suite no longer writes into the developer's real `~/.claude/kit-projects.json` (each test process gets its own `CLAUDE_HOME`).
+
 ### Changed
 - The whole kit is now JavaScript (Node 20+, ES modules, no npm dependencies): `kitlib`, `validate_docs`, `lane`, `kit_status`, `bootstrap`, the 12 `hook_*` scripts, the 11 `ci_*` checks, `kit/dashboard/server.js`, `planted-faults/run.js`, `audit/boards.js`, and the test suite (`node:test`, `npm test`). Every script keeps its file name (with `.js`), command-line flags, exit codes, output text and the bytes it writes; each was checked against the Python original on the same inputs before the Python was removed. Entries below that mention `.py` files describe the kit as it was when they were written.
 - Hook commands in agents and in the project settings fragment, the kit CI template, `install.sh` (checks for Node 20+), `release.sh`, and the docs now call `node ... .js`.

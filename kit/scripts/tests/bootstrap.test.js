@@ -5,7 +5,8 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { jsonDumps } from '../kitlib.js';
 import { nodeApi, pythonService, git, commitAll } from './fixtures.js';
-import { runScript, tmpPath } from './helpers.js';
+import { runScript, setEnv, tmpPath } from './helpers.js';
+import { toPythonEraKit } from './testdata.js';
 
 const KIT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 const FRAG = JSON.parse(fs.readFileSync(path.join(KIT, 'hooks', 'settings.project.json'), 'utf8'));
@@ -139,4 +140,37 @@ test('drift question appears for stale branches', (t) => {
   const det = JSON.parse(runScript('bootstrap.js', ['--repo', root, '--detect-only', '--json']).stdout);
   assert.ok(det.questions.some((q) => q.id === 'drift'));
   assert.equal(det.detection.branches[0].behind, '25');
+});
+
+// ---------------- projects set up by the Python-era kit ----------------
+
+test('upgrade moves a project set up by the Python kit onto node hooks', (t) => {
+  const root = nodeApi(path.join(tmpPath(t), 'node-api'));
+  runScript('bootstrap.js', ['--repo', root]);
+  toPythonEraKit(root);
+  commitAll(root, 'as the Python kit left it');
+  const settings = path.join(root, '.claude', 'settings.json');
+  assert.ok(fs.readFileSync(settings, 'utf8').includes('python3'));
+  const r = runScript('bootstrap.js', ['--repo', root, '--upgrade']);
+  assert.equal(r.returncode, 0, r.stderr);
+  assert.deepEqual(JSON.parse(fs.readFileSync(settings, 'utf8')).hooks, FRAG.hooks);
+  for (const rel of ['.claude/settings.json', '.claude/kit.json', '.github/workflows/kit.yml']) {
+    assert.ok(!fs.readFileSync(path.join(root, rel), 'utf8').includes('python3'), rel);
+  }
+  assert.ok(JSON.parse(fs.readFileSync(path.join(root, '.claude', 'kit.json'), 'utf8')).commands.boundaries.startsWith('node '));
+  assert.equal(runScript('ci_guards_present.js', ['--repo', root, '--kit', KIT]).returncode, 0);
+});
+
+test('check_projects warns about stale hooks until the project is upgraded', (t) => {
+  setEnv(t, 'CLAUDE_HOME', tmpPath(t));
+  const root = nodeApi(path.join(tmpPath(t), 'node-api'));
+  runScript('bootstrap.js', ['--repo', root]); // registers the project in $CLAUDE_HOME/kit-projects.json
+  assert.equal(runScript('check_projects.js', []).stdout, '');
+  toPythonEraKit(root);
+  let r = runScript('check_projects.js', []);
+  assert.equal(r.returncode, 0);
+  assert.ok(r.stdout.includes(`WARNING: ${root}`) && r.stdout.includes('hook_guard_edit.py') && r.stdout.includes('--upgrade'), r.stdout);
+  assert.equal(runScript('bootstrap.js', ['--repo', root, '--upgrade']).returncode, 0);
+  r = runScript('check_projects.js', []);
+  assert.equal(r.stdout, '');
 });

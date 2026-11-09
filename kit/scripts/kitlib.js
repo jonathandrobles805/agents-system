@@ -339,11 +339,16 @@ export function normalize(s) {
   return s.replace(/\s+/g, ' ').trim();
 }
 
+/** A decoded JSON value if it is a plain object, else {} (null, lists and scalars are not usable as config). */
+function plainObject(v) {
+  return v !== null && typeof v === 'object' && !Array.isArray(v) ? v : {};
+}
+
 export function loadKitJson(root) {
   const p = path.join(root, '.claude', 'kit.json');
   if (isFile(p)) {
     try {
-      return JSON.parse(fs.readFileSync(p, 'utf8'));
+      return plainObject(JSON.parse(fs.readFileSync(p, 'utf8')));
     } catch {
       return {};
     }
@@ -387,11 +392,12 @@ export class Lane {
   }
 
   get slug() {
-    return this.data.feature ?? '';
+    return typeof this.data.feature === 'string' ? this.data.feature : '';
   }
 
   get specPath() {
-    return path.join(this.root, this.data.spec ?? `docs/specs/${this.slug}.md`);
+    const spec = typeof this.data.spec === 'string' && this.data.spec ? this.data.spec : `docs/specs/${this.slug}.md`;
+    return path.resolve(this.root, spec);
   }
 
   get progressPath() {
@@ -422,7 +428,7 @@ export function findLane(start) {
     const f = path.join(d, LANE_FILE);
     if (isFile(f)) {
       try {
-        return new Lane(d, JSON.parse(fs.readFileSync(f, 'utf8')));
+        return new Lane(d, plainObject(JSON.parse(fs.readFileSync(f, 'utf8'))));
       } catch {
         return new Lane(d, {});
       }
@@ -514,6 +520,38 @@ export function appendLog(p, title, body) {
 export function block(reason) {
   process.stderr.write(reason + '\n');
   return 2;
+}
+
+/**
+ * Entry point for blocking hooks (PreToolUse guards, ConfigChange). Claude Code treats any exit code other than 2
+ * as "carry on", so an unexpected error must block (exit 2) instead of letting the action through (exit 1).
+ */
+export function runGuard(name, main) {
+  try {
+    process.exitCode = main();
+  } catch (e) {
+    process.stderr.write(`${name}: internal error, blocking for safety: ${e?.stack ?? e}\n`);
+    process.exitCode = 2;
+  }
+}
+
+/**
+ * Kit script names that hook commands in `settings` point at but that do not exist under `kitDir/scripts`.
+ * Hooks written by an older kit version (for example `.py` scripts) show up here, because a hook whose script is
+ * missing fails without blocking anything.
+ */
+export function staleHookScripts(settings, kitDir) {
+  const missing = new Set();
+  const hooks = settings && typeof settings === 'object' ? settings.hooks : null;
+  for (const groups of Object.values(hooks && typeof hooks === 'object' ? hooks : {})) {
+    for (const group of Array.isArray(groups) ? groups : []) {
+      for (const h of Array.isArray(group?.hooks) ? group.hooks : []) {
+        const m = /kit\/scripts\/([A-Za-z0-9_.-]+)/.exec(typeof h?.command === 'string' ? h.command : '');
+        if (m && !isFile(path.join(kitDir, 'scripts', m[1]))) missing.add(m[1]);
+      }
+    }
+  }
+  return [...missing].sort();
 }
 
 /** PostToolUse / Stop: JSON decision on stdout, exit 0. */

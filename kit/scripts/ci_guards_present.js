@@ -31,6 +31,10 @@ export function main(argv) {
   const settings = readJson(settingsP);
   if (C.truthy(C.dictGet(settings, 'disableAllHooks', null))) problems.push('disableAllHooks is set');
   const frag = readJson(C.joinPath(kit, 'hooks', 'settings.project.json'));
+  const stale = K.staleHookScripts(settings, kit);
+  if (stale.length) {
+    problems.push(`hooks point at kit scripts that do not exist in this kit (${stale.join(', ')}): this project was set up by an older kit version; run /bootstrap --upgrade`);
+  }
   const hooks = C.dictGet(settings, 'hooks', null);
   if (!isDeepStrictEqual(hooks, frag.hooks)) {
     const have = C.truthy(hooks) ? hooks : {};

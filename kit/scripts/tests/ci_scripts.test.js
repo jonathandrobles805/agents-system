@@ -6,7 +6,7 @@ import { splitlines } from '../kitlib.js';
 import * as C from '../ci_common.js';
 import * as F from './fixtures.js';
 import { SCRIPTS, runScript, makeRepo, setEnv, tmpPath } from './helpers.js';
-import { GOOD_REVIEW, spec as makeSpec, review as makeReview, write } from './testdata.js';
+import { GOOD_REVIEW, spec as makeSpec, review as makeReview, toPythonEraKit, write } from './testdata.js';
 
 const KIT = path.dirname(SCRIPTS);
 const read = (root, ...p) => fs.readFileSync(path.join(root, ...p), 'utf8');
@@ -256,4 +256,13 @@ test('review requires r12', (t) => {
   const p = write(repo, 'docs/specs/refund-endpoint.review.md', bad);
   const r = runScript('validate_docs.js', [p, '--repo', repo]);
   assert.ok(r.returncode === 2 && r.stderr.includes('checklist-missing-r12'));
+});
+
+test('guards present flags hooks written by an older kit version', (t) => {
+  const root = F.nodeApi(path.join(tmpPath(t), 'node-api'));
+  runScript('bootstrap.js', ['--repo', root]);
+  toPythonEraKit(root);
+  const r = runScript('ci_guards_present.js', ['--repo', root, '--kit', KIT]);
+  assert.equal(r.returncode, 1);
+  assert.ok(r.stderr.includes('older kit version') && r.stderr.includes('hook_guard_edit.py') && r.stderr.includes('/bootstrap --upgrade'), r.stderr);
 });

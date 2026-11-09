@@ -19,6 +19,8 @@ git clone https://github.com/jonathandrobles805/agents-system ~/agents-system
 
 Requires Node 20 or newer (the kit has no npm dependencies), git, and `gh` for GitHub features.
 
+After pulling a new kit version, run `./install.sh` again. It warns about any project that was set up by an older version and needs `node ~/.claude/kit/scripts/bootstrap.js --repo <project> --upgrade` (or `--upgrade --all`).
+
 ## Run the kit's own checks
 
 ```

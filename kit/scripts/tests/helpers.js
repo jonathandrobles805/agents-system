@@ -6,6 +6,12 @@ import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { GIT_ENV, git, commitAll } from './fixtures.js';
 
+// Tests must never touch the developer's real ~/.claude: bootstrap registers every project it sets up in
+// $CLAUDE_HOME/kit-projects.json. Each test process gets its own throwaway home.
+const TEST_HOME = fs.mkdtempSync(path.join(os.tmpdir(), 'kit-test-home-'));
+process.env.CLAUDE_HOME = TEST_HOME;
+process.on('exit', () => fs.rmSync(TEST_HOME, { recursive: true, force: true }));
+
 export const SCRIPTS = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
 /** Fresh temp dir, removed when the test ends (pytest's tmp_path). */
