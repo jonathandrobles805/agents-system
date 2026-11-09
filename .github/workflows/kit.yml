@@ -41,7 +41,7 @@ jobs:
           test -L "$CLAUDE_HOME/agents/implementer.md"
           test -L "$CLAUDE_HOME/kit"
           test -f "$CLAUDE_HOME/kit/dashboard/index.html"
-          ls "$CLAUDE_HOME/agents" | wc -l | grep -q 6
+          ls "$CLAUDE_HOME/agents" | wc -l | grep -q 7
   docs:
     name: kit docs validate themselves
     runs-on: ubuntu-latest

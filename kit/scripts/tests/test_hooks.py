@@ -14,6 +14,8 @@ def hook(d: dict) -> str:
 
 def make_lane(repo: Path, spec_text: str = GOOD_SPEC, stage: str = "build", extra: dict | None = None) -> Path:
     (repo / "docs" / "specs" / "refund-endpoint.md").write_text(spec_text)
+    subprocess.run(["git", "add", "docs/specs/refund-endpoint.md"], cwd=repo, check=True)
+    subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "spec"], cwd=repo, check=True)
     lane = {"feature": "refund-endpoint", "spec": "docs/specs/refund-endpoint.md", "stage": stage,
             "started": "2026-11-08T10:00:00", **(extra or {})}
     (repo / ".claude" / "lane.json").write_text(json.dumps(lane))
@@ -325,3 +327,83 @@ def test_config_guard_blocks_in_lane_only(repo):
     assert run_script("hook_config_guard.py", [], stdin=hook(d)).returncode == 0
     make_lane(repo)
     assert run_script("hook_config_guard.py", [], stdin=hook(d)).returncode == 2
+
+
+# ---------------- attempt counter + shell scope (post-edit) ----------------
+
+def test_attempt_counter_escalates_after_three_same_failures(repo):
+    make_lane(repo)
+    (repo / ".claude" / "kit.json").write_text(json.dumps({"commands": {"test": "sh -c 'echo \"FAIL tests/routes.test.ts > calls refund once\"; echo \"1 failed, 2 passed\"; exit 1'"}}))
+    for i in range(1, 3):
+        r = run_script("hook_post_edit_check.py", [], stdin=hook(post(repo, "Edit", {"file_path": "src/routes.ts"})))
+        out = json.loads(r.stdout)
+        assert out["decision"] == "block" and "failed" in out["reason"] and "Escalation" not in out["reason"], i
+    r = run_script("hook_post_edit_check.py", [], stdin=hook(post(repo, "Edit", {"file_path": "src/routes.ts"})))
+    out = json.loads(r.stdout)
+    assert "3 times in a row" in out["reason"]
+    prog = (repo / "docs/specs/refund-endpoint.progress.md").read_text()
+    assert "- Attempts: 3 of 3" in prog and "calls refund once" in prog
+    events = [json.loads(l)["event"] for l in (repo / "docs/specs/refund-endpoint.events.jsonl").read_text().splitlines()]
+    assert events.count("attempt") == 3 and "escalation" in events
+    # done-check now accepts the stop because the escalation is filled
+    r = run_script("hook_done_check.py", [], stdin=hook({"hook_event_name": "Stop", "session_id": SID, "cwd": str(repo), "stop_hook_active": False}))
+    assert r.returncode == 0 and r.stdout.strip() == ""
+
+
+def test_attempt_counter_resets_on_green_and_tracks_distinct_failures(repo):
+    make_lane(repo)
+    kj = repo / ".claude" / "kit.json"
+    red_a = {"commands": {"test": "sh -c 'echo \"FAIL a > first\"; exit 1'"}}
+    red_b = {"commands": {"test": "sh -c 'echo \"FAIL b > second\"; exit 1'"}}
+    green = {"commands": {"test": "sh -c 'echo \"3 passed\"'"}}
+    kj.write_text(json.dumps(red_a)); run_script("hook_post_edit_check.py", [], stdin=hook(post(repo, "Edit", {"file_path": "src/routes.ts"})))
+    kj.write_text(json.dumps(red_a)); run_script("hook_post_edit_check.py", [], stdin=hook(post(repo, "Edit", {"file_path": "src/routes.ts"})))
+    kj.write_text(json.dumps(red_b)); run_script("hook_post_edit_check.py", [], stdin=hook(post(repo, "Edit", {"file_path": "src/routes.ts"})))  # different failure: count 1
+    kj.write_text(json.dumps(green)); r = run_script("hook_post_edit_check.py", [], stdin=hook(post(repo, "Edit", {"file_path": "src/routes.ts"})))
+    assert r.stdout.strip() == ""
+    kj.write_text(json.dumps(red_a)); r = run_script("hook_post_edit_check.py", [], stdin=hook(post(repo, "Edit", {"file_path": "src/routes.ts"})))
+    assert "3 times" not in json.loads(r.stdout)["reason"]  # counter was reset by the green run
+    prog = repo / "docs/specs/refund-endpoint.progress.md"
+    assert not prog.is_file() or "Attempts: 3" not in prog.read_text()
+
+
+def test_shell_edit_outside_spec_is_caught_post_edit(repo):
+    make_lane(repo)
+    (repo / ".claude" / "kit.json").write_text(json.dumps({"commands": {"test": "true"}}))
+    # simulate `sed -i` having modified a file the spec does not list
+    (repo / "src" / "payment.ts").write_text("// edited via shell\n" + (repo / "src" / "payment.ts").read_text())
+    r = run_script("hook_post_edit_check.py", [], stdin=hook(post(repo, "Bash", {"command": "sed -i 's/a/b/' src/payment.ts"})))
+    out = json.loads(r.stdout)
+    assert out["decision"] == "block" and "[scope]" in out["reason"] and "src/payment.ts" in out["reason"]
+    ev = (repo / "docs/specs/refund-endpoint.events.jsonl").read_text()
+    assert "shell edit outside spec" in ev
+    # a shell edit inside the allow-list is fine
+    subprocess.run(["git", "checkout", "--", "src/payment.ts"], cwd=repo, check=True)
+    (repo / "src" / "routes.ts").write_text("// ok\n" + (repo / "src" / "routes.ts").read_text())
+    r = run_script("hook_post_edit_check.py", [], stdin=hook(post(repo, "Bash", {"command": "sed -i 's/a/b/' src/routes.ts"})))
+    assert r.stdout.strip() == ""
+
+
+# ---------------- tester agent: tests-only guard + red-only stop ----------------
+
+def test_guard_tests_only(repo):
+    make_lane(repo)
+    ok = ["tests/routes.test.ts", "src/__tests__/x.test.ts", "tests/conftest.py", "tests/fixtures/data.json", "docs/specs/refund-endpoint.progress.md"]
+    bad = ["src/api/routes.ts", "src/domain/payment.ts", "package.json", "README.md"]
+    for p in ok:
+        r = run_script("hook_guard_tests_only.py", [], stdin=hook(pre(repo, "Write", {"file_path": p, "content": "x"})))
+        assert r.returncode == 0, (p, r.stderr)
+    for p in bad:
+        r = run_script("hook_guard_tests_only.py", [], stdin=hook(pre(repo, "Write", {"file_path": p, "content": "x"})))
+        assert r.returncode == 2, p
+
+
+def test_done_check_in_test_stage_needs_red_only(repo):
+    make_lane(repo, stage="test")
+    (repo / "docs/specs/refund-endpoint.log").write_text("=== run\n2 failed\n")
+    (repo / "docs/specs/refund-endpoint.progress.md").write_text(PROGRESS_TMPL.format(g1="—", g2="—", att="{{n}} of 3", fail="{{what fails}}"))
+    r = run_script("hook_done_check.py", [], stdin=hook(stop(repo)))
+    assert r.returncode == 0 and r.stdout.strip() == ""  # red runs present (log#1), no green needed in test stage
+    (repo / "docs/specs/refund-endpoint.progress.md").write_text(PROGRESS_TMPL.format(g1="—", g2="—", att="{{n}} of 3", fail="{{what fails}}").replace("refund-endpoint.log#1 | — |\n| D2", "— | — |\n| D2"))
+    r = run_script("hook_done_check.py", [], stdin=hook(stop(repo)))
+    assert json.loads(r.stdout)["decision"] == "block" and "D1" in json.loads(r.stdout)["reason"]

@@ -141,8 +141,15 @@ def lane_state(root: Path, row: dict, kit: dict) -> dict:
         counts = git_or(["rev-list", "--left-right", "--count", f"{base}...HEAD"], wt)
         if counts:
             behind, ahead = (int(x) for x in counts.split())
+    # merged is a fact from git, not a word in ROADMAP: the lane branch (or its last commit) is an ancestor of base.
+    merged_in_git = False
+    branch = lane_json.get("branch") or f"wt/{slug}"
+    start_commit = lane_json.get("start_commit") or (lanes.get(slug) or {}).get("start_commit")
+    tip = git_or(["rev-parse", "--verify", "--quiet", branch], root)
+    if tip and tip != start_commit:
+        merged_in_git = subprocess.run(["git", "merge-base", "--is-ancestor", tip, base], cwd=root, capture_output=True).returncode == 0
     # position
-    if row["status"] == "merged":
+    if row["status"] == "merged" or merged_in_git:
         pos = "merged"
     elif prog["escalated"]:
         pos = "escalated"

@@ -5,10 +5,13 @@
   lane.py start <slug> --repo R [--base B]  precheck, then worktree ../<repo>-lanes/<slug> on branch wt/<slug> from fresh base; lane.json; progress skeleton
   lane.py stage <slug> <stage> --repo R     set lane.json stage (research|plan|build|review) and reset its clock
   lane.py wip --repo R                      active lanes vs WIP limit
+  lane.py unknowns <draft spec> --repo R    exit 0 none / 3 resolve (1..3, one researcher each) / 2 research insufficient (>3)
   lane.py roadmap-set <slug> <status> --repo R
   lane.py index lookup "<question>" --repo R [--json]   reuse | stale | new, from docs/research/INDEX.md
   lane.py index add "<question>" --repo R --slug S --keywords K --files F --commit C
-  lane.py finish <slug> --repo R            after merge: remove worktree and local branch, mark roadmap merged
+  lane.py incident --repo R --what "..." [--slug S] [--pr URL]   record a production incident for /retro --incident
+  lane.py merged <slug> --repo R [--pr URL] at merge time: verify in git, mark ROADMAP merged (idempotent)
+  lane.py finish <slug> --repo R            after retro: remove worktree and local branch, mark roadmap merged
 Exit 0 ok, 2 refused (reasons on stderr), 1 usage/git error.
 """
 from __future__ import annotations
@@ -152,8 +155,9 @@ def start(root: Path, slug: str, base: str | None) -> int:
         return refuse([f"git worktree add failed: {e.stderr.strip() if e.stderr else e}"])
     (wt / ".claude").mkdir(exist_ok=True)
     now = dt.datetime.now().isoformat(timespec="seconds")
+    start_commit = K.git(["rev-parse", "HEAD"], wt).strip()
     lane = {"feature": slug, "spec": f"docs/specs/{slug}.md", "stage": "build", "started": now, "created": now,
-            "base": base, "branch": branch, "budget": kit.get("budgets", {}).get("build", {})}
+            "base": base, "branch": branch, "start_commit": start_commit, "budget": kit.get("budgets", {}).get("build", {})}
     (wt / ".claude" / "lane.json").write_text(json.dumps(lane, indent=2) + "\n")
     # progress skeleton from the spec's done-criteria
     sp = spec_path(wt, slug)
@@ -173,7 +177,7 @@ def start(root: Path, slug: str, base: str | None) -> int:
     kj = root / ".claude" / "kit.json"
     if kj.is_file():
         data = json.loads(kj.read_text())
-        data.setdefault("lanes", {})[slug] = {"worktree": str(wt), "branch": branch, "started": now}
+        data.setdefault("lanes", {})[slug] = {"worktree": str(wt), "branch": branch, "started": now, "start_commit": start_commit}
         kj.write_text(json.dumps(data, indent=2) + "\n")
     print(json.dumps({"worktree": str(wt), "branch": branch, "spec": lane["spec"], "progress": str(prog.relative_to(wt))}))
     return 0
@@ -215,6 +219,59 @@ def finish(root: Path, slug: str) -> int:
     roadmap_set(root, slug, "merged", lane="—")
     print("\n".join(msgs) or "nothing to clean")
     return 0
+
+
+# ---------------------------------------------------------------- unknown budget
+
+MAX_UNKNOWNS = 3
+
+
+def unknowns(root: Path, spec_or_draft: Path) -> dict:
+    """Count [unknown] tags in a draft spec and decide: none -> proceed; 1..3 -> resolve each (a researcher per item,
+    method required); over 3 -> research insufficient, back to /research. Open questions count as unknowns."""
+    if not spec_or_draft.is_file():
+        return {"count": 0, "decision": "missing", "items": [], "error": f"{spec_or_draft} not found"}
+    lines = K.strip_html_comments(K.read_lines(spec_or_draft))
+    items = []
+    for n, t in enumerate(lines, start=1):
+        if K.TAG_UNKNOWN.search(t):
+            m = re.search(r"resolve by:\s*(.+)$", t, re.IGNORECASE)
+            items.append({"line": n, "text": t.strip()[:160], "method": m.group(1).strip() if m else None})
+    oq = K.parse_sections(lines).get("open questions")
+    if oq:
+        for n, t in oq.bullets():
+            body = t.strip()[2:].strip()
+            if body.lower() not in {"none", "none."} and not K.TAG_UNKNOWN.search(t):
+                items.append({"line": n, "text": body[:160], "method": None})
+    count = len(items)
+    if count == 0:
+        decision = "none"
+    elif count > MAX_UNKNOWNS:
+        decision = "research"
+    else:
+        decision = "resolve"
+    missing_method = [i for i in items if not i["method"]]
+    return {"count": count, "max": MAX_UNKNOWNS, "decision": decision, "items": items,
+            "missing_method": len(missing_method),
+            "message": {"none": "no unknowns; proceed to critique",
+                        "resolve": f"{count} unknown(s): spawn one researcher per item with its method, fold answers in, re-run",
+                        "research": f"{count} unknowns > {MAX_UNKNOWNS}: research insufficient; stop planning and run /research"}[decision]}
+
+
+# ---------------------------------------------------------------- incidents
+
+def record_incident(root: Path, what: str, slug: str | None, pr: str | None) -> Path:
+    d = root / "docs" / "incidents"
+    d.mkdir(parents=True, exist_ok=True)
+    today = dt.date.today().isoformat()
+    n = len(list(d.glob(f"{today}-*.md"))) + 1
+    path = d / f"{today}-{n}.md"
+    tmpl = (Path(__file__).resolve().parents[1] / "templates" / "incident.md").read_text()
+    text = (tmpl.replace("{{short title}}", what[:80]).replace("{{date}}-{{n}}", f"{today}-{n}").replace("{{date}}", today)
+            .replace("{{slug or unknown}}", slug or "unknown").replace("{{url or unknown}}", pr or "unknown").replace("{{open|lesson-written}}", "open")
+            .replace("{{one paragraph, observable facts}}", what))
+    path.write_text(text)
+    return path
 
 
 # ---------------------------------------------------------------- research index
@@ -288,8 +345,11 @@ def main(argv=None) -> int:
         s = sub.add_parser(name); s.add_argument("slug"); s.add_argument("--repo", default=".")
         if name == "start":
             s.add_argument("--base")
-    s = sub.add_parser("stage"); s.add_argument("slug"); s.add_argument("stage", choices=["research", "plan", "build", "review"]); s.add_argument("--repo", default=".")
+    s = sub.add_parser("stage"); s.add_argument("slug"); s.add_argument("stage", choices=["research", "plan", "test", "build", "review"]); s.add_argument("--repo", default=".")
+    s = sub.add_parser("merged"); s.add_argument("slug"); s.add_argument("--repo", default="."); s.add_argument("--pr")
+    s = sub.add_parser("incident"); s.add_argument("--repo", default="."); s.add_argument("--what", required=True); s.add_argument("--slug"); s.add_argument("--pr")
     s = sub.add_parser("wip"); s.add_argument("--repo", default=".")
+    s = sub.add_parser("unknowns"); s.add_argument("spec"); s.add_argument("--repo", default="."); s.add_argument("--json", action="store_true")
     s = sub.add_parser("roadmap-set"); s.add_argument("slug"); s.add_argument("status"); s.add_argument("--repo", default="."); s.add_argument("--pr"); s.add_argument("--spec")
     s = sub.add_parser("index"); s.add_argument("action", choices=["lookup", "add"]); s.add_argument("question", nargs="?"); s.add_argument("--repo", default=".")
     s.add_argument("--json", action="store_true"); s.add_argument("--slug"); s.add_argument("--keywords", default=""); s.add_argument("--files", default=""); s.add_argument("--commit", default="")
@@ -307,6 +367,29 @@ def main(argv=None) -> int:
         return set_stage(root, a.slug, a.stage)
     if a.cmd == "finish":
         return finish(root, a.slug)
+    if a.cmd == "incident":
+        p = record_incident(root, a.what, a.slug, a.pr)
+        print(str(p.relative_to(root)))
+        return 0
+    if a.cmd == "merged":
+        # Verify in git before writing the word: refuse to mark a lane merged that is not an ancestor of base.
+        kit = K.load_kit_json(root); base = kit.get("default_branch", "main")
+        tip = ""
+        try:
+            tip = K.git(["rev-parse", "--verify", "--quiet", f"wt/{a.slug}"], root).strip()
+        except subprocess.CalledProcessError:
+            pass
+        start_c = (kit.get("lanes", {}).get(a.slug) or {}).get("start_commit")
+        if tip and (tip == start_c or subprocess.run(["git", "merge-base", "--is-ancestor", tip, base], cwd=root, capture_output=True).returncode != 0):
+            return refuse([f"wt/{a.slug} is not merged into {base} yet (no lane commits in {base})"])
+        cols = {"pr": a.pr} if a.pr else {}
+        ok = roadmap_set(root, a.slug, "merged", lane="—", **cols)
+        print(f"lane {a.slug}: marked merged" if ok else f"lane {a.slug}: no ROADMAP row")
+        return 0 if ok else 2
+    if a.cmd == "unknowns":
+        res = unknowns(root, Path(a.spec) if Path(a.spec).is_absolute() else root / a.spec)
+        print(json.dumps(res, indent=2) if a.json else res["message"])
+        return {"none": 0, "resolve": 3, "research": 2, "missing": 1}[res["decision"]]
     if a.cmd == "wip":
         n, limit, lanes = wip(root)
         print(json.dumps({"in_flight": n, "limit": limit, "lanes": lanes}))

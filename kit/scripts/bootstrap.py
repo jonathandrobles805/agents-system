@@ -285,6 +285,7 @@ class Bootstrap:
             "budgets": existing.get("budgets", DEFAULT_BUDGETS),
             "mutation_threshold": existing.get("mutation_threshold", 70),
             "mutation_blocking_after_features": existing.get("mutation_blocking_after_features", 2),
+            "second_reviewer_model": existing.get("second_reviewer_model", self.answers.get("second_reviewer_model", "")),  # empty = same model family, different checklist
             "claude_md_cap_bytes": existing.get("claude_md_cap_bytes", 4000),
             "lanes": existing.get("lanes", {}),
         }
@@ -376,7 +377,7 @@ echo "sync: up to date with $BASE and tests pass"
             "lint": cmds.get("lint_all", cmds.get("lint", "echo no lint").replace("{file}", ".")),
             "boundaries": cmds.get("boundaries", "echo no boundaries lint configured").replace('"$HOME/.claude/kit/', '"${{ github.workspace }}/.kit/kit/'), "audit": cmds.get("audit", "echo no audit"),
             "mutation": cmds.get("mutation", "echo no mutation testing configured"), "default_branch": kit["default_branch"],
-            "kit_version": KIT_VERSION, "kit_ref": "main", "mutation_threshold": str(kit["mutation_threshold"]),
+            "kit_version": KIT_VERSION, "kit_ref": "main", "mutation_threshold": str(kit["mutation_threshold"]), "mutation_blocking_after": str(kit["mutation_blocking_after_features"]),
         })
         return ".github/workflows/kit.yml", text
 
@@ -465,14 +466,32 @@ def protect_branch(root: Path, branch: str, checks: list[str]) -> dict:
 
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--repo", required=True)
+    ap.add_argument("--repo", default=".")
     ap.add_argument("--answers")
     ap.add_argument("--dry-run", action="store_true")
     ap.add_argument("--detect-only", action="store_true")
     ap.add_argument("--upgrade", action="store_true")
+    ap.add_argument("--all", action="store_true", help="with --upgrade: every project in ~/.claude/kit-projects.json")
     ap.add_argument("--protect", action="store_true", help="set GitHub branch protection via gh")
     ap.add_argument("--json", action="store_true")
     a = ap.parse_args(argv)
+    if a.all:
+        if not a.upgrade:
+            print("--all is only valid with --upgrade", file=sys.stderr)
+            return 1
+        reg = Path(os.environ.get("CLAUDE_HOME", Path.home() / ".claude")) / "kit-projects.json"
+        projects = [Path(p) for p in (json.loads(reg.read_text()) if reg.is_file() else [])]
+        if not projects:
+            print("no registered projects (bootstrap registers them)", file=sys.stderr)
+            return 1
+        results = {}
+        for proj in projects:
+            if not (proj / ".git").exists():
+                results[str(proj)] = {"skipped": "not a git repo"}
+                continue
+            results[str(proj)] = Bootstrap(proj, {}, a.dry_run, True).run()
+        print(json.dumps(results, indent=2) if a.json else "\n".join(f"{k}: {len(v.get('written', []))} written, {len(v.get('backed_up', []))} backed up" if 'written' in v else f"{k}: {v}" for k, v in results.items()))
+        return 0
     root = Path(a.repo).resolve()
     if not (root / ".git").exists():
         print(f"bootstrap: {root} is not a git repository", file=sys.stderr)

@@ -17,6 +17,14 @@ Confirm the slug has a row in `ROADMAP.md` and at least one research file in `do
 ## Step 2: plan
 Spawn the `planner` agent with: the slug, the research slugs, the paths of `ARCHITECTURE.md`, `DESIGN.md`, `LESSONS.md`, `ROADMAP.md`, and the list of other specs under `docs/specs/`. It writes `docs/specs/<slug>.md`. It resolves 1–3 unknowns itself by spawning researchers; it stops with "research insufficient" at more than 3. If it stops, relay the list to the human and end.
 
+## Step 2b: unknown budget (script decides, not the planner)
+```
+python3 "$HOME/.claude/kit/scripts/lane.py" unknowns docs/specs/<slug>.md --repo "$PWD" --json
+```
+- exit 2 (`research`): more than 3 unknowns. Stop. Tell the human which questions are open and that `/research <slug>` must run again. Do not continue to critique.
+- exit 3 (`resolve`): 1–3 unknowns. For each item spawn a `researcher` with the item's `Resolve by` method (an item without a method goes back to the planner first). Then re-run the planner with the answers and run this step again.
+- exit 0 (`none`): continue.
+
 ## Step 3: critique
 Spawn `spec-critic` on `docs/specs/<slug>.md`. Then spawn the `planner` again with the instruction "answer each Critique item inline (C1 → response) and amend the spec where the critic is right; do not delete critique items". Up to two rounds.
 

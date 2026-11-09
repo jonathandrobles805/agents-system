@@ -188,6 +188,7 @@ GOOD_REVIEW = """# Review: Refund endpoint
 | R9 | Data changes | PASS | none in spec, none in diff |
 | R10 | progress.md complete | PASS | D1, D2 green refs present |
 | R11 | Adversarial test | PASS | refund.test.ts:20 unknown id returns 404 |
+| R12 | High-risk behind flag | PASS | flags.ts:12 REFUNDS_V2 gates the route |
 
 ## Adversarial tests added
 

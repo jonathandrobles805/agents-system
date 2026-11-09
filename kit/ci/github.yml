@@ -91,10 +91,27 @@ jobs:
   mutation:
     name: mutation (threshold {{mutation_threshold}}%)
     runs-on: ubuntu-latest
-    continue-on-error: true
+    # Warning-only until {{mutation_blocking_after}} features have merged; then ci_mutation_gate.py makes it blocking.
+    continue-on-error: ${{ needs.mutation-gate.outputs.blocking != 'true' }}
+    needs: mutation-gate
     steps:
       - uses: actions/checkout@v4
       - run: {{mutation}}
+
+  mutation-gate:
+    runs-on: ubuntu-latest
+    outputs:
+      blocking: ${{ steps.gate.outputs.blocking }}
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }
+      - uses: actions/checkout@v4
+        with:
+          repository: jonathandrobles805/agents-system
+          ref: {{kit_ref}}
+          path: .kit
+      - id: gate
+        run: python3 .kit/kit/scripts/ci_mutation_gate.py --repo . >> "$GITHUB_OUTPUT"
 
   dashboard:
     name: dashboard (GitHub Pages, opt-in via repository variable KIT_DASHBOARD_PAGES=true)

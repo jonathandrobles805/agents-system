@@ -1,13 +1,20 @@
 ---
-description: After a merge, run the retro agent on a lane, show the proposed lessons and enforcement changes, write LESSONS.md on the human's approval, flag global lessons for the kit, and clean up the worktree.
-argument-hint: <feature slug>
+description: After a merge, run the retro agent on a lane, show the proposed lessons and enforcement changes, write LESSONS.md on the human's approval, flag global lessons for the kit, and clean up the worktree. With --incident, turn a production incident into a lesson the same way.
+argument-hint: <feature slug> | --incident "<what happened>" [--slug <feature it came from>]
 allowed-tools: Bash, Read, Edit, Agent, AskUserQuestion
 ---
 
-Retro for feature: $ARGUMENTS
+Retro for: $ARGUMENTS
+
+## Incident mode (`--incident "<what happened>"`)
+An incident is a mistake that passed every gate. It gets the same treatment as a review failure, with the gate that should have caught it named explicitly.
+1. Record it: `python3 "$HOME/.claude/kit/scripts/lane.py" incident --repo "$PWD" --what "<what happened>" [--slug <feature>] [--pr <url>]`. This writes `docs/incidents/<date>-<n>.md` from the incident template (what, when, impact, how detected, rollback used) and prints its path.
+2. Spawn `retro` with the incident file, `LESSONS.md`, and, if a feature is named, that lane's spec, review report, and events. Its question is different from the merge retro: "which gate should have caught this, and what check would have?" The answer must name a hook, lint, test, or CI check; `text-only` requires a reason.
+3. Continue at Step 3 below (human decides, write, apply). Skip Step 5 (no worktree). Set the incident file's `Status` to `lesson-written` with the lesson's heading.
 
 ## Step 1: confirm merged
 `gh pr view <PR url from ROADMAP.md> --json state,mergedAt`. If not merged, stop; retro runs on merged work only.
+Then `git fetch origin && python3 "$HOME/.claude/kit/scripts/lane.py" merged <slug> --repo "$PWD"` so ROADMAP.md says merged even if nothing else recorded it (the script verifies it in git first).
 
 ## Step 2: retro agent
 Spawn `retro` with: the spec, progress, review, log, events (from the lane worktree if it still exists, else from `main`), the merged PR number, and `LESSONS.md`. It prints proposed lesson entries and stops. It does not write.

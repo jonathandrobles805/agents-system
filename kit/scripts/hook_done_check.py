@@ -16,7 +16,8 @@ def main() -> int:
         return 0
     cwd = Path(d.get("cwd") or ".")
     lane = K.find_lane(cwd)
-    if not lane or lane.data.get("stage", "build") != "build":
+    stage = lane.data.get("stage", "build") if lane else None
+    if not lane or stage not in ("build", "test"):
         return 0
     prog = lane.progress_path
     if not prog.is_file():
@@ -42,7 +43,8 @@ def main() -> int:
             missing.append(f"line {n}: row needs #, criterion, test, red run, green run")
             continue
         rid, red, green = cells[0], cells[3], cells[4]
-        for label, ref in (("red", red), ("green", green)):
+        checks = (("red", red),) if stage == "test" else (("red", red), ("green", green))
+        for label, ref in checks:
             m = re.search(r"#(\d+)", ref)
             if not m:
                 missing.append(f"{rid}: no {label} run reference (expected {lane.log_path.name}#<line>)")
@@ -50,7 +52,8 @@ def main() -> int:
                 missing.append(f"{rid}: {label} run ref {ref} points past the end of {lane.log_path.name} ({len(log_lines)} lines)")
     if missing:
         K.append_event(lane.events_path, {"event": "stop_refused", "tool": "hook", "result": "fail", "summary": f"{len(missing)} criteria incomplete"})
-        return K.feedback_block("done-check: not done.\n- " + "\n- ".join(missing) + "\nEither finish the criteria (each needs a red run and a green run in the log) or fill in the Escalation section, then stop.")
+        need = "a red run (tests written and failing)" if stage == "test" else "a red run and a green run in the log"
+        return K.feedback_block("done-check: not done.\n- " + "\n- ".join(missing) + f"\nEither finish the criteria (each needs {need}) or fill in the Escalation section, then stop.")
     K.append_event(lane.events_path, {"event": "stop", "tool": "hook", "result": "ok", "summary": "all done-criteria green"})
     return 0
 

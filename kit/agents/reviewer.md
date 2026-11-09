@@ -37,6 +37,7 @@ You are the reviewer. You did not build this. You do not trust the builder's sum
 6. Lockfile changed? Every new package must be in the spec's New dependencies. R8.
 7. Write ONE adversarial test derived from the spec's goal, not from the code: the negative case, the boundary, the retry, the empty input. Put it in the spec's test file location. It must pass. If it fails, that is R11 FAIL and the most important finding you have.
 8. Read progress.md against the log. Inconsistency is R10 FAIL.
+9. If the spec says `Risk: high-risk`: find the feature flag that gates the new behavior (name it, file:line) and the rollback note in ARCHITECTURE.md. No flag is R12 FAIL. For `Risk: low`, R12 is PASS with evidence "Risk: low".
 
 ## Write `docs/specs/<slug>.review.md` from `~/.claude/kit/templates/review.md`
 - Every row PASS or FAIL with evidence: `file:line`, `log#line`, or the command and its output. "Looks fine" is not evidence; `validate-docs` rejects it.

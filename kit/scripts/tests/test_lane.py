@@ -118,3 +118,34 @@ def test_index_lookup_reuse_stale_new(tmp_path):
     lane("index", "add", "How does PaymentService charge a user?", "--repo", str(root), "--slug", "payment-charge", "--keywords", "payment charge", "--files", "src/domain/payment.ts", "--commit", "deadbee")
     text = (root / "docs" / "research" / "INDEX.md").read_text()
     assert text.count("| payment-charge |") == 2 and "| superseded |" in text
+
+
+def test_unknowns_budget(tmp_path):
+    root, commit = project(tmp_path)
+    sp = root / "docs" / "specs" / "refund-route.md"
+    base = sp.read_text()
+    r = lane("unknowns", "docs/specs/refund-route.md", "--repo", str(root), "--json")
+    assert r.returncode == 0 and json.loads(r.stdout)["decision"] == "none"
+    two = base.replace("- A1. routes returns a plain object [verified: src/api/routes.ts:3-3]",
+                       "- A1. routes returns a plain object [verified: src/api/routes.ts:3-3]\n- A2. refund idempotent at provider [unknown] Resolve by: call sandbox twice\n- A3. rate limit [unknown]")
+    sp.write_text(two)
+    r = lane("unknowns", "docs/specs/refund-route.md", "--repo", str(root), "--json")
+    out = json.loads(r.stdout)
+    assert r.returncode == 3 and out["decision"] == "resolve" and out["count"] == 2 and out["missing_method"] == 1
+    four = two.replace("## Open questions\n\n- none", "## Open questions\n\n- who owns refunds?\n- which currency?")
+    sp.write_text(four)
+    r = lane("unknowns", "docs/specs/refund-route.md", "--repo", str(root), "--json")
+    out = json.loads(r.stdout)
+    assert r.returncode == 2 and out["decision"] == "research" and out["count"] == 4
+
+
+def test_incident_record(tmp_path):
+    root, _ = project(tmp_path)
+    r = lane("incident", "--repo", str(root), "--what", "refund charged twice on retry", "--slug", "refund-route", "--pr", "https://x/pr/9")
+    assert r.returncode == 0, r.stderr
+    p = root / r.stdout.strip()
+    assert p.is_file() and p.parent.name == "incidents"
+    t = p.read_text()
+    assert "refund charged twice on retry" in t and "- Feature: refund-route" in t and "- Status: open" in t and "{{" not in t.split("## Impact")[0]
+    r2 = lane("incident", "--repo", str(root), "--what", "second")
+    assert r2.stdout.strip() != r.stdout.strip()

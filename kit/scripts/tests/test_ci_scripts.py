@@ -216,6 +216,7 @@ REVIEW = """# Review: Refund route
 | R2 | Red and green runs in log | PASS | refund-route.log#3, #12 |
 | R3 | Reviewer re-ran suite | PASS | vitest run: 3 passed |
 | R4 | Changed files in allow-list | PASS | git diff --name-only: routes.ts, routes.test.ts |
+| R12 | High-risk behind flag | PASS | flags.ts:3 REFUND_ROUTE gates it |
 
 ## Adversarial tests added
 
@@ -325,3 +326,40 @@ def test_boundaries_fallback_without_layers_is_noop(tmp_path):
     run_script("bootstrap.py", ["--repo", str(root)])
     r = run_script("ci_boundaries_simple.py", ["--repo", str(root)])
     assert r.returncode == 0 and "nothing to check" in r.stdout
+
+
+def test_mutation_gate_flips_after_two_merged(tmp_path):
+    root = F.node_api(tmp_path / "node-api")
+    run_script("bootstrap.py", ["--repo", str(root)])
+    rm = root / "ROADMAP.md"
+    rm.write_text(rm.read_text().replace("| TODO(bootstrap: ROADMAP.md — feature) | TODO(bootstrap: ROADMAP.md — slug) | M1 | queued | — | — | — |",
+                                         "| A | a | M1 | merged | — | — | — |\n| B | b | M1 | building | — | — | — |"))
+    assert "blocking=false" in run_script("ci_mutation_gate.py", ["--repo", str(root)]).stdout
+    rm.write_text(rm.read_text().replace("| B | b | M1 | building |", "| B | b | M1 | merged |"))
+    assert "blocking=true" in run_script("ci_mutation_gate.py", ["--repo", str(root)]).stdout
+    wf = (root / ".github" / "workflows" / "kit.yml").read_text()
+    assert "mutation-gate" in wf and "ci_mutation_gate.py" in wf
+
+
+def test_bootstrap_writes_second_reviewer_key_and_upgrade_all(tmp_path, monkeypatch):
+    home = tmp_path / "home"; home.mkdir(); monkeypatch.setenv("CLAUDE_HOME", str(home))
+    a = F.node_api(tmp_path / "a"); b = F.python_service(tmp_path / "b")
+    for r in (a, b):
+        run_script("bootstrap.py", ["--repo", str(r)])
+        assert "second_reviewer_model" in json.loads((r / ".claude" / "kit.json").read_text())
+    reg = json.loads((home / "kit-projects.json").read_text())
+    assert str(a) in reg and str(b) in reg
+    s = json.loads((a / ".claude" / "settings.json").read_text()); s["hooks"].pop("Stop"); (a / ".claude" / "settings.json").write_text(json.dumps(s))
+    r = run_script("bootstrap.py", ["--upgrade", "--all", "--json"])
+    assert r.returncode == 0, r.stderr
+    out = json.loads(r.stdout)
+    assert ".claude/settings.json" in out[str(a)]["backed_up"] and str(b) in out
+
+
+def test_review_requires_r12(repo):
+    from test_validate_spec_review import GOOD_REVIEW
+    from test_validate_docs import write
+    bad = "\n".join(l for l in GOOD_REVIEW.splitlines() if not l.startswith("| R12")) + "\n"
+    p = write(repo, "docs/specs/refund-endpoint.review.md", bad)
+    r = run_script("validate_docs.py", [str(p), "--repo", str(repo)])
+    assert r.returncode == 2 and "checklist-missing-r12" in r.stderr
