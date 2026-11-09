@@ -17,6 +17,9 @@ All notable changes to the kit. Each entry names the decision or lesson that cau
 - Phase 3a: `lane.py` (precheck, start, stage, wip, roadmap-set, research index lookup/add, finish): worktrees at `../<repo>-lanes/<slug>` on `wt/<slug>`, lane.json, progress skeleton from the spec.
 - Phase 3b: `kit_status.py`: derived lane positions, needs-you list, drift, events summary, debt, research staleness; `--all` across projects.
 - Phase 3c: commands `/research`, `/plan`, `/implement`, `/review`, `/sync`, `/retro`, `/status`; mechanical end-to-end pipeline test; decision 0006.
+- Phase 4: `planted-faults/run.py`: all 19 faults from KIT-SPEC section 10 planted and caught (17 mechanically, 2 via project tool / kit CI); runs in kit CI on every change.
+- `ci_boundaries_simple.py`: ARCHITECTURE.md-driven import-boundary fallback for projects without dependency-cruiser / import-linter; bootstrap wires it in when no boundaries tool is found.
+- `sync.sh` falls back to the local base branch when the repo has no origin.
 - `kitlib.review_head_ok`: a review is current when it names HEAD, or HEAD's parent when HEAD only touched the report, lane-owned docs, and tests.
 
 ### Notes
