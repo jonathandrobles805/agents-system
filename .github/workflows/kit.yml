@@ -5,35 +5,45 @@ on:
     branches: [main]
   pull_request:
 
+permissions:
+  contents: read
+
 jobs:
   scripts:
-    name: script unit tests
+    name: script unit tests (node ${{ matrix.node }})
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        node: [20, 22]
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-node@v4
         with:
-          python-version: "3.12"
-      - run: python -m pip install pytest
-      - run: python -m pytest -q kit/scripts/tests
+          node-version: ${{ matrix.node }}
+      - run: npm test
       - name: planted-fault suite (all 19 faults must be caught)
-        run: python planted-faults/run.py
+        run: node planted-faults/run.js
       - name: settings fragment is valid JSON and references real scripts
         run: |
-          python - <<'PY'
-          import json, re, pathlib
-          s = json.load(open("kit/hooks/settings.project.json"))
-          scripts = set(p.name for p in pathlib.Path("kit/scripts").glob("*.py"))
-          missing = []
-          for ev, groups in s["hooks"].items():
-              for g in groups:
-                  for h in g["hooks"]:
-                      m = re.search(r"scripts/([a-z_]+\.py)", h["command"])
-                      if not m or m.group(1) not in scripts:
-                          missing.append((ev, h["command"]))
-          assert not missing, missing
-          print("settings fragment ok:", sum(len(g["hooks"]) for gs in s["hooks"].values() for g in gs), "hook entries")
-          PY
+          node --input-type=commonjs - <<'JS'
+          const fs = require("fs");
+          const s = JSON.parse(fs.readFileSync("kit/hooks/settings.project.json", "utf8"));
+          const scripts = new Set(fs.readdirSync("kit/scripts").filter((f) => f.endsWith(".js")));
+          const missing = [];
+          let n = 0;
+          for (const groups of Object.values(s.hooks)) {
+            for (const g of groups) {
+              for (const h of g.hooks) {
+                n++;
+                const m = /scripts\/([a-z_]+\.js)/.exec(h.command);
+                if (!m || !scripts.has(m[1])) missing.push(h.command);
+              }
+            }
+          }
+          if (missing.length) { console.error("missing scripts:", missing); process.exit(1); }
+          console.log("settings fragment ok:", n, "hook entries");
+          JS
       - name: install.sh is idempotent in a temp home
         run: |
           export CLAUDE_HOME="$(mktemp -d)"
@@ -47,7 +57,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-node@v4
         with:
-          python-version: "3.12"
-      - run: python kit/scripts/validate_docs.py docs/research/claude-code-features.md --repo . --type research
+          node-version: 22
+      - run: node kit/scripts/validate_docs.js docs/research/claude-code-features.md --repo . --type research

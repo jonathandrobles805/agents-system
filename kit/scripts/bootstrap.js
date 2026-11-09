@@ -1,0 +1,1061 @@
+#!/usr/bin/env node
+// bootstrap: detect a repository's stack and generate the kit's project layer (usage and answers file: see DOC below).
+import crypto from 'node:crypto';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { spawnSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
+import * as K from './kitlib.js';
+import { ArgumentParser } from './args.js';
+
+const HERE = K.realResolve(path.dirname(fileURLToPath(import.meta.url)));
+export const KIT_DIR = path.dirname(HERE);
+const VERSION_FILE = path.join(path.dirname(KIT_DIR), 'VERSION');
+export const TODAY = K.isoSeconds().slice(0, 10); // local date, like datetime.date.today().isoformat()
+export const KIT_OWNED = ['.claude/settings.json', '.claude/kit.json', '.claude/kit-manifest.json', 'scripts/sync.sh'];
+export const HUMAN_OWNED = ['CLAUDE.md', 'ROADMAP.md', 'ARCHITECTURE.md', 'DESIGN.md', 'LESSONS.md'];
+export const DEFAULT_BUDGETS = { research: { hours: 1, tool_calls: 200 }, plan: { hours: 1, tool_calls: 200 }, build: { hours: 4, tool_calls: 800 }, review: { hours: 1, tool_calls: 200 } };
+
+const DOC = `bootstrap: detect a repository's stack and generate the kit's project layer.
+
+Usage:
+  bootstrap.js --repo PATH [--answers answers.json] [--dry-run] [--json] [--protect]
+  bootstrap.js --repo PATH --detect-only --json        print detection and the questions, write nothing
+  bootstrap.js --repo PATH --upgrade [--json]          refresh kit-owned files, back up what is replaced
+
+Kit-owned files (regenerated on --upgrade): .claude/settings.json, .claude/kit.json (version, commands),
+.claude/kit-manifest.json, scripts/sync.sh, the CI workflow. Human-owned files (written once, then only the
+version stamp is touched): CLAUDE.md, ROADMAP.md, ARCHITECTURE.md, DESIGN.md, LESSONS.md, docs/.
+
+Answers file (all optional; unanswered items become TODO(bootstrap) lines the human fills):
+  {"project": "name", "wip_limit": 2, "milestones": [{"name": "...", "target": "..."}],
+   "features": [{"name": "...", "slug": "...", "milestone": "M1"}],
+   "layers": [{"name": "ui", "dirs": ["src/ui"], "imports": "application"}],
+   "invariants": ["..."], "high_risk_paths": ["src/auth", "src/billing"],
+   "commands": {"test": "...", "typecheck": "...", "lint": "..."}, "ci": "github"}`;
+
+// ----------------------------------------------------------------------------- Python-compatibility helpers
+
+const has = (o, k) => o !== null && typeof o === 'object' && Object.hasOwn(o, k);
+const pyType = (v) => (v === null || v === undefined ? 'NoneType' : Array.isArray(v) ? 'list' : typeof v === 'string' ? 'str' : typeof v === 'boolean' ? 'bool' : typeof v === 'number' ? (Number.isInteger(v) ? 'int' : 'float') : 'dict');
+/** dict.get(key, default); like Python it fails (AttributeError) when the value is not a dict. */
+function get(o, k, dflt = null) {
+  if (o === null || typeof o !== 'object' || Array.isArray(o)) throw new TypeError(`AttributeError: '${pyType(o)}' object has no attribute 'get'`);
+  return Object.hasOwn(o, k) ? o[k] : dflt;
+}
+/** dict[key] (KeyError when missing) */
+function req(o, k) {
+  if (o === null || typeof o !== 'object') throw new TypeError(`'${typeof o}' object is not subscriptable`);
+  if (!Object.hasOwn(o, k)) throw new Error(`KeyError: '${k}'`);
+  return o[k];
+}
+/** list(x) for a JSON value: lists, the keys of a dict, the characters of a str; anything else is not iterable. */
+function pyIter(v) {
+  if (Array.isArray(v)) return v;
+  if (v !== null && typeof v === 'object') return Object.keys(v);
+  if (typeof v === 'string') return Array.from(v);
+  throw new TypeError(`'${pyType(v)}' object is not iterable`);
+}
+/** Python truthiness */
+const truthy = (v) => v !== null && v !== undefined && v !== false && v !== 0 && v !== '' && !(Array.isArray(v) && v.length === 0) && !(typeof v === 'object' && !Array.isArray(v) && Object.keys(v).length === 0);
+/** Python code point ordering for sorted() on strings */
+function cpCompare(a, b) {
+  const x = Array.from(a);
+  const y = Array.from(b);
+  const n = Math.min(x.length, y.length);
+  for (let i = 0; i < n; i++) {
+    const p = x[i].codePointAt(0);
+    const q = y[i].codePointAt(0);
+    if (p !== q) return p < q ? -1 : 1;
+  }
+  return x.length - y.length < 0 ? -1 : x.length > y.length ? 1 : 0;
+}
+
+const STRICT_UTF8 = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true });
+/**
+ * Path.read_text(): UTF-8 with universal newlines ('\r\n' and '\r' become '\n'). Invalid UTF-8 raises (so a human-owned
+ * file is never rewritten from a lossy copy); with `lossy` it is replaced instead, like read_text(errors="replace").
+ */
+function readText(p, lossy = false) {
+  const buf = fs.readFileSync(p);
+  const text = lossy ? buf.toString('utf8') : STRICT_UTF8.decode(buf);
+  return text.replace(/\r\n?/g, '\n');
+}
+
+/** str.strip(): Python's whitespace set (differs from JS trim(): no U+FEFF, but U+001C..U+001F and U+0085). */
+const PY_WS = '\\t\\n\\v\\f\\r\\x1c-\\x1f \\x85\\xa0\\u1680\\u2000-\\u200a\\u2028\\u2029\\u202f\\u205f\\u3000';
+const PY_STRIP = new RegExp(`^[${PY_WS}]+|[${PY_WS}]+$`, 'g');
+const pyStrip = (s) => s.replace(PY_STRIP, '');
+
+export const KIT_VERSION = K.isFile(VERSION_FILE) ? pyStrip(readText(VERSION_FILE)) : '0.0.0';
+
+const NOT_PRINTABLE = /[\p{Cc}\p{Cf}\p{Cs}\p{Co}\p{Cn}\p{Zl}\p{Zp}\p{Zs}]/u;
+function pyReprStr(s) {
+  const q = s.includes("'") && !s.includes('"') ? '"' : "'";
+  let out = q;
+  for (const ch of s) {
+    const cp = ch.codePointAt(0);
+    if (ch === q || ch === '\\') out += '\\' + ch;
+    else if (ch === '\n') out += '\\n';
+    else if (ch === '\r') out += '\\r';
+    else if (ch === '\t') out += '\\t';
+    else if (cp < 0x20 || cp === 0x7f) out += '\\x' + cp.toString(16).padStart(2, '0');
+    else if (cp < 0x7f || (cp !== 0x20 && !NOT_PRINTABLE.test(ch))) out += ch;
+    else if (cp <= 0xff) out += '\\x' + cp.toString(16).padStart(2, '0');
+    else if (cp <= 0xffff) out += '\\u' + cp.toString(16).padStart(4, '0');
+    else out += '\\U' + cp.toString(16).padStart(8, '0');
+  }
+  return out + q;
+}
+/** repr() of a JSON-shaped value (what an f-string shows for a list or dict). */
+function pyRepr(v) {
+  if (v === null || v === undefined) return 'None';
+  if (v === true) return 'True';
+  if (v === false) return 'False';
+  if (typeof v === 'number') return String(v);
+  if (typeof v === 'string') return pyReprStr(v);
+  if (Array.isArray(v)) return '[' + v.map(pyRepr).join(', ') + ']';
+  return '{' + Object.entries(v).map(([k, x]) => pyReprStr(k) + ': ' + pyRepr(x)).join(', ') + '}';
+}
+/** str() of a JSON-shaped value. */
+const pyStr = (v) => (typeof v === 'string' ? v : pyRepr(v));
+
+/** str(Path(p)): collapse repeated slashes, drop '.' components and a trailing slash. */
+function pyPathStr(p) {
+  const abs = p.startsWith('/');
+  const parts = p.split('/').filter((x) => x !== '' && x !== '.');
+  const lead = abs ? (p.startsWith('//') && !p.startsWith('///') ? '//' : '/') : '';
+  return parts.length || abs ? lead + parts.join('/') : '.';
+}
+/** Path(p).name */
+function pyName(p) {
+  const parts = p.split('/').filter((x) => x !== '' && x !== '.');
+  return parts.length ? parts[parts.length - 1] : '';
+}
+
+/** shutil.which */
+function which(cmd) {
+  let p = process.env.PATH;
+  if (p === undefined) p = '/bin:/usr/bin';
+  if (!p) return null;
+  const ok = (fn) => {
+    try {
+      if (fs.statSync(fn).isDirectory()) return false;
+      fs.accessSync(fn, fs.constants.X_OK);
+      return true;
+    } catch {
+      return false;
+    }
+  };
+  if (path.dirname(cmd) !== '.') return ok(cmd) ? cmd : null;
+  const seen = new Set();
+  for (const dir of p.split(':')) {
+    if (seen.has(dir)) continue;
+    seen.add(dir);
+    const name = path.join(dir, cmd);
+    if (ok(name)) return name;
+  }
+  return null;
+}
+
+/** os.scandir order (raw readdir order) as Dirent objects, or null when the directory cannot be read. */
+function scandir(dir) {
+  let d;
+  try {
+    d = fs.opendirSync(dir);
+  } catch {
+    return null;
+  }
+  const out = [];
+  try {
+    for (let e = d.readSync(); e; e = d.readSync()) out.push(e);
+  } catch {
+    // like os.scandir: stop at the first error
+  } finally {
+    try {
+      d.closeSync();
+    } catch {
+      // ignore
+    }
+  }
+  return out;
+}
+
+/** Path.is_file() for a scandir entry whose full path is `full` (follows symlinks). */
+function entryIsFile(e, full) {
+  if (e.isFile()) return true;
+  if (e.isDirectory()) return false;
+  try {
+    return fs.statSync(full).isFile();
+  } catch {
+    return false;
+  }
+}
+/** DirEntry.is_dir(follow_symlinks=False) */
+function entryIsRealDir(e, full) {
+  if (e.isDirectory()) return true;
+  if (e.isSymbolicLink() || e.isFile()) return false;
+  try {
+    return fs.lstatSync(full).isDirectory();
+  } catch {
+    return false;
+  }
+}
+
+/** Path.suffix */
+function suffixOf(name) {
+  const i = name.lastIndexOf('.');
+  return i > 0 && i < name.length - 1 ? name.slice(i) : '';
+}
+
+/**
+ * The first `limit` regular files of Path(d).rglob("*") (Python 3.13 traversal order), skipping anything below a
+ * "node_modules" path component. Subtrees named node_modules are not entered (they contribute nothing).
+ */
+function rglobFiles(d, limit) {
+  const files = [];
+  if (d.split('/').includes('node_modules')) return files;
+  const listing = (dir) => {
+    const entries = scandir(dir);
+    return entries ?? [];
+  };
+  const take = (dir, entries) => {
+    for (const e of entries) {
+      if (e.name === 'node_modules') continue;
+      if (entryIsFile(e, path.join(dir, e.name))) {
+        files.push(path.join(dir, e.name));
+        if (files.length >= limit) return true;
+      }
+    }
+    return false;
+  };
+  if (take(d, listing(d))) return files;
+  const stack = [d];
+  while (stack.length) {
+    const cur = stack.pop();
+    const entries = scandir(cur);
+    if (entries === null) continue;
+    for (const e of entries) {
+      const full = path.join(cur, e.name);
+      if (e.name !== 'node_modules' && entryIsRealDir(e, full)) {
+        if (take(full, listing(full))) return files;
+        stack.push(full);
+      }
+    }
+  }
+  return files;
+}
+
+/** Expand a Python re.sub replacement string (backslash escapes). The patterns used here have no groups. */
+function pyRepl(repl) {
+  if (!repl.includes('\\')) return () => repl;
+  const esc = { a: '\x07', b: '\b', f: '\f', n: '\n', r: '\r', t: '\t', v: '\v', '\\': '\\' };
+  const isOct = (c) => c !== undefined && c >= '0' && c <= '7';
+  const isDig = (c) => c !== undefined && c >= '0' && c <= '9';
+  const parts = []; // strings, or null for "the whole match"
+  let lit = '';
+  for (let i = 0; i < repl.length; i++) {
+    const ch = repl[i];
+    if (ch !== '\\') {
+      lit += ch;
+      continue;
+    }
+    if (i + 1 >= repl.length) throw new Error('re.error: bad escape (end of pattern)');
+    const c = repl[++i];
+    if (c === 'g') {
+      const m = /^g<([^>]*)>/.exec(repl.slice(i));
+      if (!m || m[1] !== '0') throw new Error('re.error: invalid group reference');
+      parts.push(lit, null);
+      lit = '';
+      i += m[0].length - 1;
+    } else if (c === '0') {
+      let n = '0';
+      if (isOct(repl[i + 1])) {
+        n += repl[++i];
+        if (isOct(repl[i + 1])) n += repl[++i];
+      }
+      lit += String.fromCharCode(parseInt(n, 8) & 0xff);
+    } else if (isDig(c)) {
+      if (isOct(c) && isOct(repl[i + 1]) && isOct(repl[i + 2])) {
+        const v = parseInt(c + repl[i + 1] + repl[i + 2], 8);
+        if (v > 0o377) throw new Error('re.error: octal escape value outside of range 0-0o377');
+        lit += String.fromCharCode(v);
+        i += 2;
+      } else {
+        throw new Error('re.error: invalid group reference');
+      }
+    } else if (Object.hasOwn(esc, c)) {
+      lit += esc[c];
+    } else if (/[A-Za-z]/.test(c)) {
+      throw new Error(`re.error: bad escape \\${c}`);
+    } else {
+      lit += '\\' + c;
+    }
+  }
+  parts.push(lit);
+  return (m) => parts.map((x) => (x === null ? m : x)).join('');
+}
+/** re.sub(pattern, repl, text) for a global JS regex and a Python-style replacement string. */
+const reSub = (re, repl, text) => text.replace(re, pyRepl(repl));
+
+// ----------------------------------------------------------------------------- detection
+
+export function loadStacks() {
+  const dir = path.join(KIT_DIR, 'stacks');
+  return fs.readdirSync(dir)
+    .filter((n) => n.endsWith('.json'))
+    .sort(cpCompare)
+    .map((n) => JSON.parse(readText(path.join(dir, n))));
+}
+
+/** json.loads: like JSON.parse, but the bare tokens NaN, Infinity and -Infinity are accepted (read here as null). */
+export function pyJsonLoads(text) {
+  try {
+    return JSON.parse(text);
+  } catch (e) {
+    if (!/NaN|Infinity/.test(text)) throw e;
+  }
+  let out = '';
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i];
+    if (c === '"') {
+      let j = i + 1;
+      while (j < text.length && text[j] !== '"') j += text[j] === '\\' ? 2 : 1;
+      out += text.slice(i, j + 1);
+      i = j;
+    } else if (text.startsWith('-Infinity', i)) {
+      out += 'null';
+      i += 8;
+    } else if (text.startsWith('Infinity', i)) {
+      out += 'null';
+      i += 7;
+    } else if (text.startsWith('NaN', i)) {
+      out += 'null';
+      i += 2;
+    } else {
+      out += c;
+    }
+  }
+  return JSON.parse(out);
+}
+
+export function readJson(p) {
+  try {
+    return pyJsonLoads(readText(p));
+  } catch {
+    return {};
+  }
+}
+
+export function nodeDeps(root) {
+  const pj = readJson(path.join(root, 'package.json'));
+  const deps = new Set();
+  for (const k of ['dependencies', 'devDependencies']) {
+    const v = get(pj, k, {});
+    if (truthy(v) && typeof v === 'object' && !Array.isArray(v)) for (const name of Object.keys(v)) deps.add(name);
+  }
+  return deps;
+}
+
+export function pythonDeps(root) {
+  const names = new Set();
+  const pp = path.join(root, 'pyproject.toml');
+  if (K.isFile(pp)) {
+    const txt = readText(pp, true);
+    // quoted requirement specs anywhere: "fastapi>=0.110", "pytest", "ruff>=0.5; python_version>'3.8'"
+    for (const m of txt.matchAll(/"([A-Za-z][A-Za-z0-9_.\-]*)(?:\[[^\]]*\])?\s*(?:[>=<~!;,@ ][^"]*)?"/g)) names.add(m[1].toLowerCase());
+    // poetry-style tables: requests = "^2.0" / pytest = {version = "..."}
+    for (const m of txt.matchAll(/^\s*([A-Za-z][A-Za-z0-9_.\-]*)\s*=\s*["{^]/gm)) names.add(m[1].toLowerCase());
+    for (const tool of ['pytest', 'mypy', 'ruff', 'pyright', 'importlinter', 'mutmut']) {
+      if (txt.includes(`[tool.${tool}`)) names.add(tool === 'importlinter' ? 'import-linter' : tool);
+    }
+  }
+  const reqs = fs.readdirSync(root).filter((n) => K.fnmatch(n, 'requirements*.txt')).map((n) => path.join(root, n));
+  reqs.push(path.join(root, 'Pipfile'));
+  for (const req_ of reqs) {
+    if (!K.isFile(req_)) continue;
+    for (const line of K.splitlines(readText(req_, true))) {
+      const m = /^\s*([A-Za-z0-9_.\-]+)/.exec(line);
+      if (m && !pyStrip(line).startsWith('#')) names.add(m[1].toLowerCase());
+    }
+  }
+  return names;
+}
+
+export function detect(root) {
+  const stacks = loadStacks();
+  const found = stacks.filter((s) => s.detect.some((f) => K.isFile(path.join(root, f))));
+  const result = {
+    stacks: [], frameworks: [], commands: {}, missing_tools: {}, lockfiles: [], ci: null,
+    dirs: [], existing_docs: [], tokens_file: null, branches: [], worktrees: [], credential_files: [],
+  };
+  for (const s of found) {
+    result.stacks.push(s.name);
+    result.lockfiles.push(...s.lockfiles.filter((lf) => K.isFile(path.join(root, lf))));
+    let present = new Set();
+    if (s.name === 'node') {
+      const deps = nodeDeps(root);
+      present = new Set(deps);
+      result.frameworks.push(...Object.entries(s.frameworks).filter(([k]) => deps.has(k)).map(([, v]) => v));
+    } else if (s.name === 'python') {
+      present = pythonDeps(root);
+      result.frameworks.push(...Object.entries(s.frameworks).filter(([k]) => present.has(k)).map(([, v]) => v));
+    } else if (s.name === 'go') {
+      present = new Set(['go']);
+      const gm = K.isFile(path.join(root, 'go.mod')) ? readText(path.join(root, 'go.mod'), true) : '';
+      result.frameworks.push(...Object.entries(s.frameworks).filter(([k]) => gm.includes(k)).map(([, v]) => v));
+      if (which('golangci-lint')) present.add('golangci-lint');
+    } else if (s.name === 'rust') {
+      present = new Set(['cargo']);
+      const ct = K.isFile(path.join(root, 'Cargo.toml')) ? readText(path.join(root, 'Cargo.toml'), true) : '';
+      result.frameworks.push(...Object.entries(s.frameworks).filter(([k]) => ct.includes(k)).map(([, v]) => v));
+    }
+    for (const [tool, cmds] of Object.entries(s.tools)) {
+      if (present.has(tool)) {
+        for (const [k, v] of Object.entries(cmds)) {
+          if (!Object.hasOwn(result.commands, k)) result.commands[k] = v;
+        }
+      }
+    }
+    if (!Object.hasOwn(result.commands, 'audit')) result.commands.audit = s.audit;
+    for (const [want, hint] of Object.entries(s.install_hint ?? {})) {
+      if (!Object.hasOwn(result.commands, want)) result.missing_tools[want] = hint;
+    }
+  }
+  // CI
+  if (K.isDir(path.join(root, '.github'))) result.ci = 'github';
+  else if (K.isFile(path.join(root, '.gitlab-ci.yml'))) result.ci = 'gitlab';
+  // Folder map
+  const skip = new Set(['node_modules', 'venv', '.venv', 'dist', 'build', 'target', '__pycache__']);
+  const top = (scandir(root) ?? [])
+    .map((e) => e.name)
+    .filter((n) => !n.startsWith('.') && !skip.has(n) && K.isDir(path.join(root, n)))
+    .sort(cpCompare);
+  for (const name of top) {
+    const files = rglobFiles(path.join(root, name), 2000);
+    if (!files.length) continue;
+    const ext = new Map();
+    for (const f of files) {
+      const sfx = suffixOf(path.basename(f));
+      ext.set(sfx, (ext.get(sfx) ?? 0) + 1);
+    }
+    let best = '';
+    let bestN = -1;
+    for (const [sfx, n] of ext) {
+      if (n > bestN) {
+        best = sfx;
+        bestN = n;
+      }
+    }
+    result.dirs.push({ dir: name, files: files.length, main_ext: best });
+  }
+  // Existing docs and tokens
+  for (const name of ['README.md', 'ARCHITECTURE.md', 'DESIGN.md', 'CONTRIBUTING.md', 'docs']) {
+    if (fs.existsSync(path.join(root, name))) result.existing_docs.push(name);
+  }
+  for (const cand of ['tokens.css', 'src/tokens.css', 'src/styles/tokens.css', 'tailwind.config.js', 'tailwind.config.ts', 'src/theme.ts', 'theme.json', 'design-tokens.json']) {
+    if (K.isFile(path.join(root, cand))) {
+      result.tokens_file = cand;
+      break;
+    }
+  }
+  // Credential files that must never be readable by a lane
+  for (const pat of ['.env', '.env.local', '.env.production', '*.pem', '*.key', 'service-account*.json', '.aws/credentials']) {
+    if (pat.includes('*')) {
+      for (const e of scandir(root) ?? []) {
+        if (K.fnmatch(e.name, pat) && K.isFile(path.join(root, e.name))) result.credential_files.push(e.name);
+      }
+    } else if (K.isFile(path.join(root, pat))) {
+      result.credential_files.push(pat);
+    }
+  }
+  // Git state
+  try {
+    const parts = pyStrip(K.git(['symbolic-ref', '--short', 'refs/remotes/origin/HEAD'], root)).split('/');
+    result.default_branch = parts[parts.length - 1];
+  } catch {
+    result.default_branch = 'main';
+  }
+  try {
+    for (const line of K.splitlines(K.git(['for-each-ref', '--format=%(refname:short)', 'refs/heads'], root))) {
+      const b = pyStrip(line);
+      if (!b || b === result.default_branch) continue;
+      let behind;
+      let ahead;
+      try {
+        const nums = K.git(['rev-list', '--left-right', '--count', `${result.default_branch}...${b}`], root).split(/\s+/).filter(Boolean);
+        if (nums.length !== 2) throw new Error('unpack');
+        [behind, ahead] = nums;
+      } catch {
+        behind = '?';
+        ahead = '?';
+      }
+      result.branches.push({ branch: b, behind, ahead });
+    }
+  } catch {
+    // ignore
+  }
+  try {
+    for (const line of K.git(['worktree', 'list', '--porcelain'], root).split('\n\n')) {
+      const m = /^worktree (.+)$/m.exec(line);
+      const b = /^branch (.+)$/m.exec(line);
+      if (m) result.worktrees.push({ path: m[1], branch: b ? b[1].replaceAll('refs/heads/', '') : '(detached)' });
+    }
+  } catch {
+    // ignore
+  }
+  return result;
+}
+
+export function questions(det, answers) {
+  const q = [];
+  const a = (k) => get(answers, k, null);
+  if (!truthy(a('milestones')) || !truthy(a('features'))) {
+    q.push({ id: 'roadmap', question: 'What are the milestones and the first features (name + slug) in order?', why: 'ROADMAP.md is the single source of truth; it is not guessed.' });
+  }
+  if (!has(answers, 'wip_limit')) q.push({ id: 'wip_limit', question: 'WIP limit (features in flight at once)?', default: 2 });
+  if (!truthy(a('layers'))) {
+    q.push({ id: 'layers', question: 'Architecture layers and allowed dependency direction?', draft: det.dirs.map((d) => d.dir), why: 'Becomes the import-boundary lint config.' });
+  }
+  if (!truthy(a('high_risk_paths'))) {
+    q.push({ id: 'high_risk_paths', question: 'High-risk paths (auth, payments, migrations, public API, infra)?', default: K.DEFAULT_HIGH_RISK_PATHS });
+  }
+  if (!truthy(a('commands'))) {
+    q.push({ id: 'commands', question: 'Are these detected commands correct?', draft: det.commands, missing: det.missing_tools });
+  }
+  if (det.credential_files.length) {
+    q.push({ id: 'credentials', question: `Credential files found: ${pyRepr(det.credential_files)}. Lanes will be denied reading them. Confirm, or move them out of the repo.`, blocking: true });
+  }
+  if (det.branches.length) {
+    const stale = det.branches.filter((b) => b.behind !== '0' && b.behind !== '?' && parseInt(b.behind, 10) > 20);
+    if (stale.length) {
+      q.push({ id: 'drift', question: `${stale.length} branch(es) are more than 20 commits behind ${det.default_branch}. Merge, sync, or delete them before bootstrapping lanes.`, branches: stale, blocking: false });
+    }
+  }
+  return q;
+}
+
+// ----------------------------------------------------------------------------- generation
+
+export const tmpl = (name) => readText(path.join(KIT_DIR, 'templates', name));
+
+export function fill(text, values) {
+  for (const [k, v] of values) text = text.replaceAll('{{' + k + '}}', () => pyStr(v));
+  return text;
+}
+
+/** Replace any remaining {{placeholder}} with a TODO(bootstrap) marker the human can grep for. */
+export function todo(text, label) {
+  return text.replace(/\{\{([^}]*)\}\}/g, (m, g) => `TODO(bootstrap: ${label} — ${pyStrip(g)})`);
+}
+
+export const sha = (p) => crypto.createHash('sha256').update(fs.readFileSync(p)).digest('hex');
+
+const regHome = () => (process.env.CLAUDE_HOME !== undefined ? process.env.CLAUDE_HOME : path.join(os.homedir(), '.claude'));
+
+const ARCH_LAYERS = /\| \{\{ui\}\} \|.*\n\| \{\{application\}\} \|.*\n\| \{\{domain\}\} \|.*\n\| \{\{infrastructure\}\} \|.*/g;
+
+export class Bootstrap {
+  constructor(root, answers, dry, upgrade) {
+    this.root = root;
+    this.answers = answers;
+    this.dry = dry;
+    this.upgrade = upgrade;
+    this.det = detect(root);
+    this.written = [];
+    this.skipped = [];
+    this.backedUp = [];
+  }
+
+  write(rel, content, owned) {
+    const p = path.join(this.root, rel);
+    if (fs.existsSync(p)) {
+      if (owned === 'human' && !this.upgrade) {
+        this.skipped.push(rel + ' (exists, human-owned)');
+        return;
+      }
+      if (owned === 'human' && this.upgrade) {
+        // only refresh the kit version stamp line
+        const old = readText(p);
+        const nw = old.replace(/agent-kit \p{Nd}+\.\p{Nd}+\.\p{Nd}+/gu, () => `agent-kit ${KIT_VERSION}`);
+        if (nw !== old && !this.dry) {
+          fs.writeFileSync(p, nw);
+          this.written.push(rel + ' (version stamp)');
+        } else {
+          this.skipped.push(rel + ' (exists, human-owned)');
+        }
+        return;
+      }
+      if (owned === 'kit' && readText(p) === content) {
+        this.skipped.push(rel + ' (unchanged)');
+        return;
+      }
+      if (owned === 'kit' && this.upgrade && !this.dry) {
+        const bdir = path.join(this.root, '.claude', 'backup', KIT_VERSION);
+        fs.mkdirSync(bdir, { recursive: true });
+        const dst = path.join(bdir, rel.replaceAll('/', '__'));
+        fs.copyFileSync(p, dst);
+        const st = fs.statSync(p);
+        fs.utimesSync(dst, st.atime, st.mtime); // shutil.copy2 keeps the timestamps
+        this.backedUp.push(rel);
+      }
+    }
+    if (!this.dry) {
+      fs.mkdirSync(path.dirname(p), { recursive: true });
+      fs.writeFileSync(p, content);
+      if (rel.endsWith('.sh')) fs.chmodSync(p, 0o755);
+    }
+    this.written.push(rel);
+  }
+
+  // -- individual files
+  commands() {
+    const c = { ...this.det.commands };
+    const extra = get(this.answers, 'commands', {});
+    if (extra !== null && typeof extra === 'object') Object.assign(c, extra);
+    // No boundaries lint installed: use the kit's ARCHITECTURE.md-driven fallback so the gate exists from day one.
+    if (!Object.hasOwn(c, 'boundaries')) c.boundaries = 'node "$HOME/.claude/kit/scripts/ci_boundaries_simple.js" --repo .';
+    return c;
+  }
+
+  kitJson() {
+    const existing = readJson(path.join(this.root, '.claude', 'kit.json'));
+    const ans = this.answers;
+    return {
+      kit_version: KIT_VERSION,
+      bootstrapped: get(existing, 'bootstrapped', TODAY),
+      upgraded: this.upgrade ? TODAY : get(existing, 'upgraded', null),
+      project: get(ans, 'project', get(existing, 'project', pyName(this.root))),
+      stack: this.det.stacks,
+      frameworks: this.det.frameworks,
+      default_branch: get(this.det, 'default_branch', 'main'),
+      ci: get(ans, 'ci', get(existing, 'ci', this.det.ci || 'github')),
+      commands: this.commands(),
+      wip_limit: get(ans, 'wip_limit', get(existing, 'wip_limit', 2)),
+      high_risk_paths: get(ans, 'high_risk_paths', get(existing, 'high_risk_paths', K.DEFAULT_HIGH_RISK_PATHS)),
+      secret_patterns: get(existing, 'secret_patterns', []),
+      budgets: get(existing, 'budgets', DEFAULT_BUDGETS),
+      mutation_threshold: get(existing, 'mutation_threshold', 70),
+      mutation_blocking_after_features: get(existing, 'mutation_blocking_after_features', 2),
+      second_reviewer_model: get(existing, 'second_reviewer_model', get(ans, 'second_reviewer_model', '')), // empty = same model family, different checklist
+      claude_md_cap_bytes: get(existing, 'claude_md_cap_bytes', 4000),
+      lanes: get(existing, 'lanes', {}),
+    };
+  }
+
+  settingsJson() {
+    const frag = readJson(path.join(KIT_DIR, 'hooks', 'settings.project.json'));
+    delete frag.$comment;
+    const existing = readJson(path.join(this.root, '.claude', 'settings.json'));
+    const merged = { ...existing };
+    merged.hooks = req(frag, 'hooks');
+    const perms = get(existing, 'permissions', null);
+    const permsObj = truthy(perms) ? perms : {};
+    const deny = new Set([...get(permsObj, 'deny', []), ...req(req(frag, 'permissions'), 'deny')]);
+    for (const cf of this.det.credential_files) deny.add(`Read(${cf})`);
+    merged.permissions = { ...permsObj, deny: [...deny].sort(cpCompare) };
+    return K.jsonDumps(merged, { indent: 2 }) + '\n';
+  }
+
+  claudeMd() {
+    const cmds = this.commands();
+    const dirs = this.det.dirs
+      .map((d) => `- \`${d.dir}/\` — ${d.files} file${d.files !== 1 ? 's' : ''}, mostly \`${d.main_ext || 'mixed'}\``)
+      .join('\n') || '- TODO(bootstrap: project map)';
+    let text = fill(tmpl('claude-md.md'), [
+      ['project', get(this.answers, 'project', pyName(this.root))], ['kit_version', KIT_VERSION], ['date', TODAY],
+      ['test_cmd', get(cmds, 'test', 'TODO')], ['typecheck_cmd', get(cmds, 'typecheck', 'none')], ['lint_cmd', get(cmds, 'lint_all', get(cmds, 'lint', 'none'))],
+    ]);
+    text = text.replaceAll('- `{{dir}}/` — {{what lives here}}', () => dirs).replaceAll('- {{none}}', () => '- none yet');
+    return todo(text, 'CLAUDE.md');
+  }
+
+  roadmap() {
+    const ms = get(this.answers, 'milestones', null);
+    const fs_ = get(this.answers, 'features', null);
+    const msList = truthy(ms) ? ms : [];
+    const fsList = truthy(fs_) ? fs_ : [];
+    let text = fill(tmpl('roadmap.md'), [['version', KIT_VERSION], ['n', get(this.answers, 'wip_limit', 2)], ['date', TODAY]]);
+    if (msList.length) {
+      const rows = msList.map((m, i) => `| M${i + 1} | ${pyStr(req(m, 'name'))} | ${pyStr(get(m, 'target', '—'))} | ${pyStr(get(m, 'status', 'planned'))} |`).join('\n');
+      text = reSub(/\| M1 \| \{\{milestone\}\} \|.*\|/g, rows, text);
+    }
+    if (fsList.length) {
+      const rows = fsList.map((f) => `| ${pyStr(req(f, 'name'))} | ${pyStr(req(f, 'slug'))} | ${pyStr(get(f, 'milestone', 'M1'))} | queued | — | — | — |`).join('\n');
+      text = reSub(/\| \{\{feature\}\} \| \{\{slug\}\} \|.*\|/g, rows, text);
+      const queue = fsList.map((f, i) => `${i + 1}. ${pyStr(req(f, 'slug'))}`).join('\n');
+      text = text.replaceAll('1. {{slug}}', () => queue);
+    }
+    return todo(text, 'ROADMAP.md');
+  }
+
+  architecture() {
+    let text = tmpl('architecture.md').replaceAll('{{date}}', () => TODAY);
+    const layers = get(this.answers, 'layers', null);
+    if (truthy(layers)) {
+      const rows = layers.map((l) => `| ${pyStr(req(l, 'name'))} | \`${get(l, 'dirs', []).map(pyStr).join('`, `')}\` | ${pyStr(get(l, 'imports', 'nothing in the app'))} |`).join('\n');
+      text = reSub(ARCH_LAYERS, rows, text);
+    } else {
+      const draft = this.det.dirs.map((d) => `| TODO(bootstrap: layer name) | \`${d.dir}\` | TODO(bootstrap: may import from) |`).join('\n') || '| TODO(bootstrap: layer) | TODO | TODO |';
+      text = reSub(ARCH_LAYERS, draft, text);
+    }
+    const invRaw = get(this.answers, 'invariants', null);
+    const inv = truthy(invRaw) ? invRaw : [];
+    if (inv.length) {
+      const items = inv.map((i) => `- [ ] ${pyStr(i)}`).join('\n');
+      text = text.replaceAll('- [ ] {{invariant, stated so it can be checked}}', () => items);
+    }
+    const hrRaw = get(this.answers, 'high_risk_paths', null);
+    const hr = truthy(hrRaw) ? hrRaw : K.DEFAULT_HIGH_RISK_PATHS;
+    const hrText = hr.map((p) => `- \`${pyStr(p)}\``).join('\n');
+    text = text.replaceAll('- `{{path}}`', () => hrText);
+    return todo(text, 'ARCHITECTURE.md');
+  }
+
+  design() {
+    const tokens = this.det.tokens_file || 'TODO(bootstrap: tokens file path)';
+    const text = tmpl('design.md').replaceAll('{{date}}', () => TODAY).replaceAll('{{path}}', () => tokens);
+    return todo(text, 'DESIGN.md');
+  }
+
+  lessons() {
+    return '# Lessons\n\nRules the system learned. The Debt section lists rules not yet enforced by a check; keep it short.\n\n## Debt\n\n- none\n';
+  }
+
+  syncSh() {
+    const cmds = this.commands();
+    const branch = get(this.det, 'default_branch', 'main');
+    return `#!/usr/bin/env bash
+# sync: bring this worktree up to date with ${branch} and prove it still passes. Generated by agent-kit ${KIT_VERSION}.
+set -euo pipefail
+BASE="\${1:-${branch}}"
+if git remote get-url origin >/dev/null 2>&1; then
+  git fetch origin "$BASE"
+  TARGET="origin/$BASE"
+else
+  TARGET="$BASE"
+fi
+if ! git merge --no-edit "$TARGET"; then
+  echo "sync: merge conflict with $BASE. Resolve once (counts as a failed attempt), re-run tests, or escalate." >&2
+  exit 3
+fi
+${pyStr(get(cmds, 'test', 'echo "no test command configured"'))}
+echo "sync: up to date with $BASE and tests pass"
+`;
+  }
+
+  ciWorkflow() {
+    const cmds = this.commands();
+    const kit = this.kitJson();
+    const tpl = readText(path.join(KIT_DIR, 'ci', 'github.yml'));
+    const lintFallback = pyStr(get(cmds, 'lint', 'echo no lint')).replaceAll('{file}', '.');
+    const text = fill(tpl, [
+      ['test', get(cmds, 'test', 'echo no tests')], ['typecheck', get(cmds, 'typecheck', 'echo no typecheck')],
+      ['lint', get(cmds, 'lint_all', lintFallback)],
+      ['boundaries', pyStr(get(cmds, 'boundaries', 'echo no boundaries lint configured')).replaceAll('"$HOME/.claude/kit/', () => '"${{ github.workspace }}/.kit/kit/')], ['audit', get(cmds, 'audit', 'echo no audit')],
+      ['mutation', get(cmds, 'mutation', 'echo no mutation testing configured')], ['default_branch', kit.default_branch],
+      ['kit_version', KIT_VERSION], ['kit_ref', 'main'], ['mutation_threshold', pyStr(kit.mutation_threshold)], ['mutation_blocking_after', pyStr(kit.mutation_blocking_after_features)],
+    ]);
+    return ['.github/workflows/kit.yml', text];
+  }
+
+  gitignore() {
+    const p = path.join(this.root, '.gitignore');
+    const wanted = ['.claude/session/', '.claude/lane.json', '.claude/backup/', '.claude/settings.local.json'];
+    const existing = K.isFile(p) ? K.splitlines(readText(p)) : [];
+    const add = wanted.filter((w) => !existing.includes(w));
+    if (add.length && !this.dry) fs.writeFileSync(p, [...existing, '', '# agent-kit', ...add].join('\n') + '\n');
+    if (add.length) this.written.push(`.gitignore (+${add.length})`);
+  }
+
+  /** Add this repo to ~/.claude/kit-projects.json so /status --all and the dashboard find it. */
+  registerProject() {
+    const reg = path.join(regHome(), 'kit-projects.json');
+    let items;
+    try {
+      items = K.isFile(reg) ? pyJsonLoads(readText(reg)) : [];
+    } catch (e) {
+      if (!(e instanceof SyntaxError)) throw e;
+      items = [];
+    }
+    const me = pyPathStr(this.root);
+    // `str(root) not in items`, then items.append(...): a dict or a string "contains" things too, only a list can be appended to
+    let contained;
+    if (Array.isArray(items)) contained = items.includes(me);
+    else if (items !== null && typeof items === 'object') contained = Object.hasOwn(items, me);
+    else if (typeof items === 'string') contained = items.includes(me);
+    else throw new TypeError(`argument of type '${pyType(items)}' is not iterable`);
+    if (!contained) {
+      if (!Array.isArray(items)) throw new TypeError(`AttributeError: '${pyType(items)}' object has no attribute 'append'`);
+      items.push(me);
+      fs.mkdirSync(path.dirname(reg), { recursive: true });
+      fs.writeFileSync(reg, K.jsonDumps(items, { indent: 2 }) + '\n');
+    }
+  }
+
+  manifest() {
+    const files = {};
+    for (const rel of [...KIT_OWNED, '.github/workflows/kit.yml']) {
+      const p = path.join(this.root, rel);
+      if (K.isFile(p) && rel !== '.claude/kit-manifest.json') files[rel] = sha(p);
+    }
+    // the kit's own scripts (JavaScript since the port): guards-present compares these hashes against ~/.claude/kit
+    const scriptsDir = path.join(KIT_DIR, 'scripts');
+    const scripts = {};
+    for (const n of fs.readdirSync(scriptsDir).filter((x) => x.endsWith('.js')).sort(cpCompare)) scripts[n] = sha(path.join(scriptsDir, n));
+    return K.jsonDumps({ kit_version: KIT_VERSION, generated: TODAY, files, kit_scripts: scripts }, { indent: 2 }) + '\n';
+  }
+
+  run() {
+    if (!this.upgrade) {
+      this.write('CLAUDE.md', this.claudeMd(), 'human');
+      this.write('ROADMAP.md', this.roadmap(), 'human');
+      this.write('ARCHITECTURE.md', this.architecture(), 'human');
+      this.write('DESIGN.md', this.design(), 'human');
+      this.write('LESSONS.md', this.lessons(), 'human');
+      this.write('docs/research/INDEX.md', tmpl('index.md'), 'human');
+      this.write('docs/specs/README.md', '# Specs\n\nOne file per feature, from `~/.claude/kit/templates/spec.md`. Companion files: `<slug>.progress.md`, `<slug>.review.md`, `<slug>.log`, `<slug>.events.jsonl`.\n', 'human');
+      this.write('docs/decisions/0001-adopt-agent-kit.md', fill(tmpl('decision.md'), [
+        ['NNNN', '0001'], ['title', 'Adopt the agent kit'], ['date', TODAY],
+        ['what situation forced a decision', 'Agents guessed, branches drifted, and rules lived only in prompts.'],
+        ['what was decided', `Adopt agent-kit ${KIT_VERSION}: specs with provenance tags, hooks that block unread or out-of-spec edits, a fresh-context reviewer, one worktree per feature, retro after every merge.`],
+        ['alternative', 'Longer prompts and manual review'], ['why not', 'Prompts are skimmed; manual review does not scale past one lane.'],
+        ['what this makes easier, what it makes harder', 'Easier: parallel features with gates. Harder: every rule must be expressible as a check.'],
+      ]), 'human');
+    } else {
+      for (const rel of HUMAN_OWNED) {
+        if (K.isFile(path.join(this.root, rel))) this.write(rel, '', 'human');
+      }
+    }
+    this.write('.claude/kit.json', K.jsonDumps(this.kitJson(), { indent: 2 }) + '\n', 'kit');
+    this.write('.claude/settings.json', this.settingsJson(), 'kit');
+    this.write('scripts/sync.sh', this.syncSh(), 'kit');
+    const [rel, text] = this.ciWorkflow();
+    this.write(rel, text, 'kit');
+    this.gitignore();
+    if (!this.dry) {
+      this.write('.claude/kit-manifest.json', this.manifest(), 'kit');
+      this.registerProject();
+    }
+    return {
+      kit_version: KIT_VERSION, written: this.written, skipped: this.skipped, backed_up: this.backedUp,
+      detection: this.det, questions: questions(this.det, this.answers), dry_run: this.dry,
+    };
+  }
+}
+
+/** Python's str(exception) for a failed subprocess, as protect_branch put it into its result. */
+function failText(e, args, timeout) {
+  if (e && e.code === 'ETIMEDOUT') return `Command '${pyRepr(args)}' timed out after ${timeout} seconds`;
+  if (e && e.code === 'ENOENT') return `[Errno 2] No such file or directory: '${args[0]}'`;
+  if (e && e.code === 'EACCES') return `[Errno 13] Permission denied: '${args[0]}'`;
+  if (e && typeof e.status === 'number') return `Command '${pyRepr(args)}' returned non-zero exit status ${e.status}.`;
+  return String(e && e.message !== undefined ? e.message : e);
+}
+
+/** Set branch protection through gh. Returns a result dict; never throws. */
+export function protectBranch(root, branch, checks) {
+  if (!which('gh')) return { ok: false, reason: 'gh not installed' };
+  try {
+    let remote;
+    const cfg = ['git', 'config', '--get', 'remote.origin.url'];
+    try {
+      remote = pyStrip(K.git(cfg.slice(1), root));
+    } catch (e) {
+      throw Object.assign(new Error(failText(e, cfg)), { pyText: true });
+    }
+    const m = /github\.com[:/]([^/]+)\/([^/.]+)/.exec(remote);
+    if (!m) return { ok: false, reason: `origin is not GitHub: ${remote}` };
+    const [owner, repo] = [m[1], m[2]];
+    const body = { required_status_checks: { strict: true, contexts: checks }, enforce_admins: false, required_pull_request_reviews: null, restrictions: null, allow_force_pushes: false, allow_deletions: false };
+    const args = ['gh', 'api', '-X', 'PUT', `repos/${owner}/${repo}/branches/${branch}/protection`, '--input', '-'];
+    const r = spawnSync(args[0], args.slice(1), { input: K.jsonDumps(body), encoding: 'utf8', timeout: 60000 });
+    if (r.error) throw Object.assign(new Error(failText(r.error, args, 60)), { pyText: true });
+    const rc = r.status ?? -1;
+    return { ok: rc === 0, reason: rc !== 0 ? Array.from(pyStrip(r.stderr ?? '')).slice(0, 300).join('') : '', repo: `${owner}/${repo}` };
+  } catch (e) {
+    return { ok: false, reason: e && e.pyText ? e.message : failText(e, [], 0) };
+  }
+}
+
+// ----------------------------------------------------------------------------- command line
+
+const PY_USAGE = 'usage: bootstrap.js [-h] [--repo REPO] [--answers ANSWERS] [--dry-run]\n                    [--detect-only] [--upgrade] [--all] [--protect] [--json]';
+const HELP_HEAD = DOC;
+const HELP_OPTIONS = `options:
+  -h, --help         show this help message and exit
+  --repo REPO
+  --answers ANSWERS
+  --dry-run
+  --detect-only
+  --upgrade
+  --all              with --upgrade: every project in ~/.claude/kit-
+                     projects.json
+  --protect          set GitHub branch protection via gh
+  --json
+`;
+
+/**
+ * args.js has no prefix abbreviations, no "ignored explicit argument" errors, a different usage line and keeps unknown
+ * options and stray words in a different order than argparse, so this parser replays argparse's two passes itself
+ * (classify every token, then consume left to right) on top of the options declared with addArgument.
+ */
+class BootstrapParser extends ArgumentParser {
+  usage() {
+    return PY_USAGE;
+  }
+
+  parseArgs(argv) {
+    const specs = [{ flags: ['-h', '--help'], kind: 'help' }, ...this.options.map((o) => ({ flags: o.flags, kind: o.action === 'store' ? 'store' : 'flag', dest: o.dest, default: o.default }))];
+    const table = specs.flatMap((sp) => sp.flags.map((f) => [f, sp]));
+    const exact = (f) => table.find(([k]) => k === f)?.[1];
+    const label = (sp) => sp.flags.join('/');
+    // pass 1 (argparse's _parse_optional on every token before the first '--'; ambiguity is reported here)
+    const classify = (tok) => {
+      if (tok === '' || tok[0] !== '-') return { pos: true };
+      const ex = exact(tok);
+      if (ex) return { spec: ex, explicit: null };
+      if (tok.length === 1) return { pos: true };
+      const eq = tok.indexOf('=');
+      if (eq !== -1) {
+        const sp = exact(tok.slice(0, eq));
+        if (sp) return { spec: sp, explicit: tok.slice(eq + 1) };
+      }
+      let matches;
+      if (tok[1] === '-') {
+        const prefix = eq === -1 ? tok : tok.slice(0, eq);
+        matches = table.filter(([k]) => k.startsWith(prefix)).map(([k, sp]) => ({ spec: sp, opt: k, explicit: eq === -1 ? null : tok.slice(eq + 1) }));
+      } else {
+        const short = tok.slice(0, 2);
+        matches = table.filter(([k]) => k === short || k.startsWith(tok)).map(([k, sp]) => ({ spec: sp, opt: k, explicit: k === short ? tok.slice(2) : null, cluster: k === short }));
+      }
+      if (matches.length > 1) this.fail(`ambiguous option: ${tok} could match ${matches.map((m) => m.opt).join(', ')}`);
+      if (matches.length === 1) return matches[0];
+      if (/^-\d+$|^-\d*\.\d+$/.test(tok) || tok.includes(' ')) return { pos: true };
+      return { unknown: true };
+    };
+    const cls = [];
+    for (let i = 0; i < argv.length; i++) {
+      if (argv[i] === '--') {
+        cls.push({ dd: true });
+        break;
+      }
+      cls.push(classify(argv[i]));
+    }
+    // pass 2 (consume left to right; unknown options and words nobody consumed become "unrecognized arguments")
+    const ns = {};
+    for (const sp of specs) if (sp.dest) ns[sp.dest] = sp.default;
+    const extras = [];
+    const ignored = (sp, v) => this.fail(`argument ${label(sp)}: ignored explicit argument ${pyReprStr(v)}`);
+    for (let i = 0; i < cls.length; i++) {
+      const c = cls[i];
+      if (c.dd) {
+        extras.push(...argv.slice(i));
+        break;
+      }
+      if (c.pos || c.unknown) {
+        extras.push(argv[i]);
+        continue;
+      }
+      const { spec: sp, explicit } = c;
+      if (sp.kind === 'help') {
+        if (explicit !== null && !(c.cluster && explicit[0] === 'h')) ignored(sp, explicit);
+        return { help: true };
+      } else if (sp.kind === 'flag') {
+        if (explicit !== null) ignored(sp, explicit);
+        ns[sp.dest] = true;
+      } else if (explicit !== null) {
+        ns[sp.dest] = explicit;
+      } else {
+        if (!cls[i + 1] || !cls[i + 1].pos) this.fail(`argument ${label(sp)}: expected one argument`);
+        ns[sp.dest] = argv[++i];
+      }
+    }
+    if (extras.length) this.fail(`unrecognized arguments: ${extras.join(' ')}`);
+    return ns;
+  }
+}
+
+const print = (s) => process.stdout.write(s + '\n');
+const eprint = (s) => process.stderr.write(s + '\n');
+
+export function main(argv) {
+  const ap = new BootstrapParser({ prog: 'bootstrap.js', description: HELP_HEAD });
+  ap.addArgument('--repo', { default: '.' });
+  ap.addArgument('--answers');
+  ap.addArgument('--dry-run', { action: 'store_true' });
+  ap.addArgument('--detect-only', { action: 'store_true' });
+  ap.addArgument('--upgrade', { action: 'store_true' });
+  ap.addArgument('--all', { action: 'store_true', help: 'with --upgrade: every project in ~/.claude/kit-projects.json' });
+  ap.addArgument('--protect', { action: 'store_true', help: 'set GitHub branch protection via gh' });
+  ap.addArgument('--json', { action: 'store_true' });
+  const a = ap.parseArgs(argv);
+  if (a.help) {
+    process.stdout.write(`${PY_USAGE}\n\n${HELP_HEAD}\n\n${HELP_OPTIONS}`);
+    return 0;
+  }
+  if (a.all) {
+    if (!a.upgrade) {
+      eprint('--all is only valid with --upgrade');
+      return 1;
+    }
+    const reg = path.join(regHome(), 'kit-projects.json');
+    const projects = pyIter(K.isFile(reg) ? pyJsonLoads(readText(reg)) : []).map((p) => pyPathStr(p));
+    if (!projects.length) {
+      eprint('no registered projects (bootstrap registers them)');
+      return 1;
+    }
+    const results = {};
+    for (const proj of projects) {
+      if (!fs.existsSync(path.join(proj, '.git'))) {
+        results[proj] = { skipped: 'not a git repo' };
+        continue;
+      }
+      results[proj] = new Bootstrap(proj, {}, a.dry_run, true).run();
+    }
+    print(a.json
+      ? K.jsonDumps(results, { indent: 2 })
+      : Object.entries(results).map(([k, v]) => (has(v, 'written') ? `${k}: ${v.written.length} written, ${v.backed_up.length} backed up` : `${k}: ${pyRepr(v)}`)).join('\n'));
+    return 0;
+  }
+  const root = K.realResolve(a.repo);
+  if (!fs.existsSync(path.join(root, '.git'))) {
+    eprint(`bootstrap: ${root} is not a git repository`);
+    return 1;
+  }
+  const answers = a.answers ? readJson(a.answers) : {};
+  if (a.detect_only) {
+    const det = detect(root);
+    const out = { detection: det, questions: questions(det, answers) };
+    print(a.json
+      ? K.jsonDumps(out, { indent: 2 })
+      : `stacks: ${pyRepr(det.stacks)}\nframeworks: ${pyRepr(det.frameworks)}\ncommands: ${K.jsonDumps(det.commands, { indent: 2 })}\nmissing tools: ${pyRepr(det.missing_tools)}\nquestions: ${out.questions.length}`);
+    return 0;
+  }
+  const b = new Bootstrap(root, answers, a.dry_run, a.upgrade);
+  const result = b.run();
+  if (a.protect && !a.dry_run) {
+    result.branch_protection = protectBranch(root, get(b.det, 'default_branch', 'main'), ['tests', 'typecheck', 'lint', 'boundaries', 'scope-diff', 'test-count', 'dep-diff', 'secrets', 'claude-md-cap', 'guards-present', 'validate-docs', 'review-report']);
+  }
+  if (a.json) {
+    print(K.jsonDumps(result, { indent: 2 }));
+  } else {
+    print(`agent-kit ${KIT_VERSION} ${a.upgrade ? 'upgrade' : 'bootstrap'}${a.dry_run ? ' (dry run)' : ''}: ${root}`);
+    print(`stacks: ${b.det.stacks.join(', ') || 'unknown'}  frameworks: ${b.det.frameworks.join(', ') || '-'}  ci: ${b.det.ci || 'none'}`);
+    for (const w of result.written) print(`  wrote   ${w}`);
+    for (const s of result.skipped) print(`  kept    ${s}`);
+    for (const s of result.backed_up) print(`  backup  ${s}`);
+    if (result.questions.length) {
+      print('\nQuestions for the human (bootstrap does not guess these):');
+      for (const q of result.questions) print(`  [${q.id}] ${q.question}`);
+    }
+    if (Object.keys(b.det.missing_tools).length) {
+      print('\nTools not found (proposed, not installed):');
+      for (const [k, v] of Object.entries(b.det.missing_tools)) print(`  ${k}: ${v}`);
+    }
+  }
+  return 0;
+}
+
+if (K.isMain(import.meta.url)) process.exitCode = main(process.argv.slice(2));

@@ -4,6 +4,12 @@ All notable changes to the kit. Each entry names the decision or lesson that cau
 
 ## [Unreleased]
 
+### Changed
+- The whole kit is now JavaScript (Node 20+, ES modules, no npm dependencies): `kitlib`, `validate_docs`, `lane`, `kit_status`, `bootstrap`, the 12 `hook_*` scripts, the 11 `ci_*` checks, `kit/dashboard/server.js`, `planted-faults/run.js`, `audit/boards.js`, and the test suite (`node:test`, `npm test`). Every script keeps its file name (with `.js`), command-line flags, exit codes, output text and the bytes it writes; each was checked against the Python original on the same inputs before the Python was removed. Entries below that mention `.py` files describe the kit as it was when they were written.
+- Hook commands in agents and in the project settings fragment, the kit CI template, `install.sh` (checks for Node 20+), `release.sh`, and the docs now call `node ... .js`.
+- Python remains a supported target-project stack (detection, `stacks/python.json`, boundaries and dependency checks); only the kit's own implementation language changed.
+- Removed the committed `__pycache__` files.
+
 ### Added
 - Phase 0: kit specification 0.2.0 approved (docs/KIT-SPEC.md).
 - Phase 1a: kit layout, `install.sh` (idempotent, symlink or copy), 11 templates.

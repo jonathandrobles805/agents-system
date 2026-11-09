@@ -90,7 +90,7 @@
       const r = await fetch(state.live ? '/api/status' : 'status.json', { cache: 'no-store' });
       if (r.ok) data = await r.json();
     } catch (e) { /* static mode without a file */ }
-    if (!data) { main.innerHTML = '<div class="card"><div class="empty">No status.json found. Run <code>python3 ~/.claude/kit/scripts/kit_status.py --repo . --out dashboard/status.json</code>, or start the live server: <code>python3 ~/.claude/kit/dashboard/server.py --repo .</code></div></div>'; return; }
+    if (!data) { main.innerHTML = '<div class="card"><div class="empty">No status.json found. Run <code>node ~/.claude/kit/scripts/kit_status.js --repo . --out dashboard/status.json</code>, or start the live server: <code>node ~/.claude/kit/dashboard/server.js --repo .</code></div></div>'; return; }
     state.projects = Array.isArray(data) ? data : [data];
     document.getElementById('generated').textContent = (state.projects[0] && state.projects[0].generated) ? state.projects[0].generated.replace('T', ' ') : '';
     if (state.projects.length === 1 && !state.selected) state.selected = state.projects[0].project;

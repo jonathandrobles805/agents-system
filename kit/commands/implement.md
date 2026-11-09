@@ -8,14 +8,14 @@ Implement feature: $ARGUMENTS
 
 ## Step 1: start or resume the lane
 ```
-python3 "$HOME/.claude/kit/scripts/lane.py" start <slug> --repo "$PWD"
+node "$HOME/.claude/kit/scripts/lane.js" start <slug> --repo "$PWD"
 ```
 - Exit 2 with reasons: stop and relay them verbatim. Do not work around a precondition. If the reason is "worktree already exists", this is a resume: read `<worktree>/docs/specs/<slug>.progress.md` and continue from "Current step".
 - Exit 0: the JSON names the worktree, branch, spec, and progress file.
 
 Then sync and record the clock:
 ```
-cd <worktree> && bash scripts/sync.sh && python3 "$HOME/.claude/kit/scripts/lane.py" stage <slug> build --repo <main repo>
+cd <worktree> && bash scripts/sync.sh && node "$HOME/.claude/kit/scripts/lane.js" stage <slug> build --repo <main repo>
 ```
 If `sync.sh` exits 3 (merge conflict), the implementer may resolve it once as its first attempt; a second conflict is an escalation.
 
@@ -29,13 +29,13 @@ Do not give the implementer any summary of the code. It reads the files itself; 
 
 ## Step 4: after the implementer stops
 Read `docs/specs/<slug>.progress.md` in the worktree.
-- Escalation filled: `python3 "$HOME/.claude/kit/scripts/lane.py" roadmap-set <slug> escalated --repo <main repo>`, show the human the Escalation section, and stop. Nothing else.
+- Escalation filled: `node "$HOME/.claude/kit/scripts/lane.js" roadmap-set <slug> escalated --repo <main repo>`, show the human the Escalation section, and stop. Nothing else.
 - All criteria green: run the full test command from `.claude/kit.json` once more in the worktree and confirm green. Then:
 ```
 cd <worktree> && git push -u origin wt/<slug>
 gh pr create --title "<slug>: <feature>" --body-file docs/specs/<slug>.progress.md --base <default branch>
-python3 "$HOME/.claude/kit/scripts/lane.py" roadmap-set <slug> in-review --repo <main repo> --pr <PR url>
-python3 "$HOME/.claude/kit/scripts/lane.py" stage <slug> review --repo <main repo>
+node "$HOME/.claude/kit/scripts/lane.js" roadmap-set <slug> in-review --repo <main repo> --pr <PR url>
+node "$HOME/.claude/kit/scripts/lane.js" stage <slug> review --repo <main repo>
 ```
 Then run `/review <slug>`.
 

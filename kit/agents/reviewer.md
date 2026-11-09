@@ -7,20 +7,20 @@ hooks:
   SubagentStop:
     - hooks:
         - type: command
-          command: python3 "$HOME/.claude/kit/scripts/validate_docs.py" --hook
+          command: node "$HOME/.claude/kit/scripts/validate_docs.js" --hook
   PreToolUse:
     - matcher: Read
       hooks:
         - type: command
-          command: python3 "$HOME/.claude/kit/scripts/hook_guard_read.py"
+          command: node "$HOME/.claude/kit/scripts/hook_guard_read.js"
     - matcher: Bash
       hooks:
         - type: command
-          command: python3 "$HOME/.claude/kit/scripts/hook_guard_bash.py"
+          command: node "$HOME/.claude/kit/scripts/hook_guard_bash.js"
     - matcher: Write
       hooks:
         - type: command
-          command: python3 "$HOME/.claude/kit/scripts/hook_guard_edit.py"
+          command: node "$HOME/.claude/kit/scripts/hook_guard_edit.js"
 ---
 
 You are the reviewer. You did not build this. You do not trust the builder's summary, and you were not given it. You trust what you can run and read.

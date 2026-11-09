@@ -8,7 +8,7 @@ Plan feature: $ARGUMENTS
 
 ## Step 1: preconditions
 ```
-python3 "$HOME/.claude/kit/scripts/lane.py" wip --repo "$PWD"
+node "$HOME/.claude/kit/scripts/lane.js" wip --repo "$PWD"
 ```
 If exit code is 2, stop: the WIP limit is reached. Say which lanes are in flight and what the human can merge or escalate.
 
@@ -19,7 +19,7 @@ Spawn the `planner` agent with: the slug, the research slugs, the paths of `ARCH
 
 ## Step 2b: unknown budget (script decides, not the planner)
 ```
-python3 "$HOME/.claude/kit/scripts/lane.py" unknowns docs/specs/<slug>.md --repo "$PWD" --json
+node "$HOME/.claude/kit/scripts/lane.js" unknowns docs/specs/<slug>.md --repo "$PWD" --json
 ```
 - exit 2 (`research`): more than 3 unknowns. Stop. Tell the human which questions are open and that `/research <slug>` must run again. Do not continue to critique.
 - exit 3 (`resolve`): 1–3 unknowns. For each item spawn a `researcher` with the item's `Resolve by` method (an item without a method goes back to the planner first). Then re-run the planner with the answers and run this step again.
@@ -30,13 +30,13 @@ Spawn `spec-critic` on `docs/specs/<slug>.md`. Then spawn the `planner` again wi
 
 ## Step 4: validate
 ```
-python3 "$HOME/.claude/kit/scripts/validate_docs.py" docs/specs/<slug>.md --repo "$PWD"
-python3 "$HOME/.claude/kit/scripts/lane.py" precheck <slug> --repo "$PWD"
+node "$HOME/.claude/kit/scripts/validate_docs.js" docs/specs/<slug>.md --repo "$PWD"
+node "$HOME/.claude/kit/scripts/lane.js" precheck <slug> --repo "$PWD"
 ```
 `precheck` is expected to fail only on "needs 'approved'" and "no approval line" at this point. Any other reason (open questions, overlap, invalid spec) goes back to the planner. Repeat until those are the only two.
 
 ## Step 5: hand to the human
 ```
-python3 "$HOME/.claude/kit/scripts/lane.py" roadmap-set <slug> waiting-approval --repo "$PWD" --spec docs/specs/<slug>.md
+node "$HOME/.claude/kit/scripts/lane.js" roadmap-set <slug> waiting-approval --repo "$PWD" --spec docs/specs/<slug>.md
 ```
 Commit `docs/specs/<slug>.md`, `docs/research/*`, `ROADMAP.md` on a branch `spec/<slug>` and open a PR titled `spec: <feature>` whose body is the spec's Summary section. Tell the human: to approve, set `Status: approved`, fill `Approved by: <name> on <date> at <commit>`, and merge. Nothing is built before that.

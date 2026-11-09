@@ -23,7 +23,7 @@ Show the human the filled `## Done looks like` and `## Not in this goal` lists a
 
 ## Step 3: record
 - Choose a slug (kebab-case, ≤ 40 chars). Write `docs/goals/<slug>.md` from `~/.claude/kit/templates/goal.md` with `Status: agreed` and the agreed-by line.
-- Add the feature to `ROADMAP.md` Features table (`| <feature> | <slug> | <milestone> | queued | — | — | — |`) and to the `## Queue` list (ask where in the order if other items are queued). Then confirm the system sees it: `python3 "$HOME/.claude/kit/scripts/lane.py" next-step <slug> --repo "$PWD"` must answer `research`.
+- Add the feature to `ROADMAP.md` Features table (`| <feature> | <slug> | <milestone> | queued | — | — | — |`) and to the `## Queue` list (ask where in the order if other items are queued). Then confirm the system sees it: `node "$HOME/.claude/kit/scripts/lane.js" next-step <slug> --repo "$PWD"` must answer `research`.
 - Commit both on a branch `goal/<slug>`, push, open a PR titled `goal: <feature>`, and merge it (docs only; the human's agreement in this conversation is the approval).
 
 ## Step 4: hand off

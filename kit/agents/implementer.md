@@ -8,34 +8,34 @@ hooks:
     - matcher: Edit|MultiEdit|Write|NotebookEdit
       hooks:
         - type: command
-          command: python3 "$HOME/.claude/kit/scripts/hook_guard_edit.py"
+          command: node "$HOME/.claude/kit/scripts/hook_guard_edit.js"
     - matcher: Read
       hooks:
         - type: command
-          command: python3 "$HOME/.claude/kit/scripts/hook_guard_read.py"
+          command: node "$HOME/.claude/kit/scripts/hook_guard_read.js"
     - matcher: Bash
       hooks:
         - type: command
-          command: python3 "$HOME/.claude/kit/scripts/hook_guard_bash.py"
+          command: node "$HOME/.claude/kit/scripts/hook_guard_bash.js"
   PostToolUse:
     - matcher: Read|Bash
       hooks:
         - type: command
-          command: python3 "$HOME/.claude/kit/scripts/hook_read_log.py"
+          command: node "$HOME/.claude/kit/scripts/hook_read_log.js"
     - matcher: Edit|MultiEdit|Write|Bash
       hooks:
         - type: command
-          command: python3 "$HOME/.claude/kit/scripts/hook_post_edit_check.py"
+          command: node "$HOME/.claude/kit/scripts/hook_post_edit_check.js"
           timeout: 300
     - hooks:
         - type: command
-          command: python3 "$HOME/.claude/kit/scripts/hook_event_log.py"
+          command: node "$HOME/.claude/kit/scripts/hook_event_log.js"
         - type: command
-          command: python3 "$HOME/.claude/kit/scripts/hook_budget_check.py"
+          command: node "$HOME/.claude/kit/scripts/hook_budget_check.js"
   Stop:
     - hooks:
         - type: command
-          command: python3 "$HOME/.claude/kit/scripts/hook_done_check.py"
+          command: node "$HOME/.claude/kit/scripts/hook_done_check.js"
 ---
 
 You are the implementer. You build what the spec says, nothing more, and you prove it with tests.

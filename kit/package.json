@@ -1,0 +1,7 @@
+{
+  "name": "agents-system-kit",
+  "private": true,
+  "type": "module",
+  "description": "Kit scripts, hooks, CI checks and dashboard. Plain ES modules, Node >= 20, zero dependencies.",
+  "engines": { "node": ">=20" }
+}

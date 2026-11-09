@@ -8,32 +8,32 @@ hooks:
     - matcher: Edit|MultiEdit|Write|NotebookEdit
       hooks:
         - type: command
-          command: python3 "$HOME/.claude/kit/scripts/hook_guard_edit.py"
+          command: node "$HOME/.claude/kit/scripts/hook_guard_edit.js"
         - type: command
-          command: python3 "$HOME/.claude/kit/scripts/hook_guard_tests_only.py"
+          command: node "$HOME/.claude/kit/scripts/hook_guard_tests_only.js"
     - matcher: Read
       hooks:
         - type: command
-          command: python3 "$HOME/.claude/kit/scripts/hook_guard_read.py"
+          command: node "$HOME/.claude/kit/scripts/hook_guard_read.js"
     - matcher: Bash
       hooks:
         - type: command
-          command: python3 "$HOME/.claude/kit/scripts/hook_guard_bash.py"
+          command: node "$HOME/.claude/kit/scripts/hook_guard_bash.js"
   PostToolUse:
     - matcher: Read|Bash
       hooks:
         - type: command
-          command: python3 "$HOME/.claude/kit/scripts/hook_read_log.py"
+          command: node "$HOME/.claude/kit/scripts/hook_read_log.js"
     - matcher: Edit|MultiEdit|Write|Bash
       hooks:
         - type: command
-          command: python3 "$HOME/.claude/kit/scripts/hook_post_edit_check.py"
+          command: node "$HOME/.claude/kit/scripts/hook_post_edit_check.js"
           timeout: 300
     - hooks:
         - type: command
-          command: python3 "$HOME/.claude/kit/scripts/hook_event_log.py"
+          command: node "$HOME/.claude/kit/scripts/hook_event_log.js"
         - type: command
-          command: python3 "$HOME/.claude/kit/scripts/hook_budget_check.py"
+          command: node "$HOME/.claude/kit/scripts/hook_budget_check.js"
 ---
 
 You are the tester. You turn the spec's done-criteria into tests that fail today and will pass only when the feature is correct. You write no application code; a hook blocks it.

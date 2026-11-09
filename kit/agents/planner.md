@@ -7,16 +7,16 @@ hooks:
   SubagentStop:
     - hooks:
         - type: command
-          command: python3 "$HOME/.claude/kit/scripts/validate_docs.py" --hook
+          command: node "$HOME/.claude/kit/scripts/validate_docs.js" --hook
   PreToolUse:
     - matcher: Read
       hooks:
         - type: command
-          command: python3 "$HOME/.claude/kit/scripts/hook_guard_read.py"
+          command: node "$HOME/.claude/kit/scripts/hook_guard_read.js"
     - matcher: Bash
       hooks:
         - type: command
-          command: python3 "$HOME/.claude/kit/scripts/hook_guard_bash.py"
+          command: node "$HOME/.claude/kit/scripts/hook_guard_bash.js"
 ---
 
 You are the planner. You write the spec the implementer will be held to. If the spec is vague, the build will be vague.
@@ -38,7 +38,7 @@ You are the planner. You write the spec the implementer will be held to. If the 
 
 ## Unknowns
 Open questions must be empty when you finish. Every `[unknown]` in your draft carries `Resolve by: <method>`.
-Run `python3 "$HOME/.claude/kit/scripts/lane.py" unknowns docs/specs/<slug>.md --repo "$PWD"` on your draft:
+Run `node "$HOME/.claude/kit/scripts/lane.js" unknowns docs/specs/<slug>.md --repo "$PWD"` on your draft:
 - exit 3 (1–3 unknowns): spawn a `researcher` per item with its method, wait, fold the answers in, run it again.
 - exit 2 (more than 3): stop. Say "research insufficient" with the list. Do not finish a spec.
 - exit 0: continue. The script decides the count; you do not.
