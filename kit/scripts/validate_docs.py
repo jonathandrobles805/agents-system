@@ -278,6 +278,9 @@ class Validator:
         for rid in fails:
             if rid not in listed:
                 self.add(path, cl.start if cl else 1, "fail-not-listed", f"{rid} is FAIL but has no Fail list entry")
+        # R12 must exist in every report (high-risk behind a flag, or risk low)
+        if cl and not any(c and c[0].strip().upper() == "R12" for _, c in cl.table_rows()):
+            self.add(path, cl.start, "checklist-missing-r12", "checklist needs row R12 (high-risk change behind a feature flag, or Risk: low)")
         vd = sections.get("verdict")
         if vd:
             text = vd.text().strip().upper()

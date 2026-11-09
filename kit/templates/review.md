@@ -27,6 +27,7 @@
 | R9 | Data changes reversible or signed off | {{PASS|FAIL}} | {{evidence}} |
 | R10 | progress.md complete and consistent with log | {{PASS|FAIL}} | {{evidence}} |
 | R11 | Adversarial test written from the spec passes | {{PASS|FAIL}} | {{evidence}} |
+| R12 | High-risk change ships behind a feature flag (or spec says Risk: low) | {{PASS|FAIL}} | {{evidence}} |
 
 ## Adversarial tests added
 

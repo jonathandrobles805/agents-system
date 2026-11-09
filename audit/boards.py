@@ -125,7 +125,8 @@ def board1() -> None:
     instruction(b, "Arrow 'Project lesson' → LESSONS.md", grep(C / "retro.md", r"Append the entry to `LESSONS.md`"), "writing is a command instruction; format is script-validated")
     instruction(b, "Arrow 'Global lesson promoted' → kit repo", grep(C / "retro.md", r"gh issue create --repo"), "opening the kit issue is a command instruction")
     fl = grep(T / "architecture.md", r"Feature flags|Canary|Rollback")
-    rec(b, "Feature flag, canary, monitoring, rollback", "PARTIAL" if fl else "MISSING", "; ".join(fl), "template placeholders only; no reviewer check that high-risk ships behind a flag; no monitoring/rollback tooling")
+    r12 = grep(T / "review.md", r"^\| R12") + grep(S / "validate_docs.py", r'"checklist-missing-r12"')
+    rec(b, "Feature flag, canary, monitoring, rollback", "PARTIAL", f"template: {'; '.join(fl)}; reviewer R12 required by validator: {'; '.join(r12)}", "flag gate is scripted (R12); canary/monitoring/rollback remain the project's checklist, no kit tooling")
     inc = grep(C / "retro.md", r"[Ii]ncident") + grep(A / "retro.md", r"[Ii]ncident")
     rec(b, "Arrow 'Incident becomes lesson'", "PRESENT" if inc else "MISSING", "; ".join(inc) or "no mention of incidents in /retro or retro agent", "no incident intake into retro")
 
@@ -197,15 +198,14 @@ def board3() -> None:
     ok, last = pytest("test_validate_spec_review.py::test_pass_without_evidence_fails", "test_validate_spec_review.py::test_fail_row_needs_fail_list_entry_and_verdict")
     rec(b, "Checklist PASS or FAIL with file:line evidence", "PRESENT" if ok else "MISSING", f"validate_docs checklist-no-evidence, fail-not-listed, verdict-mismatch; tests: {last}")
     cfg = grep(S / "bootstrap.py", r"second_reviewer_model")
-    rec(b, "High-risk flag? → Second reviewer, different model", "PARTIAL", f"review.md: {'; '.join(grep(C / 'review.md', r'second_reviewer_model'))}; bootstrap writes the key: {cfg or 'no'}",
-        "second reviewer is a command instruction; kit.json never gets second_reviewer_model unless added by hand")
+    ok_s, last_s = pytest("test_ci_scripts.py::test_bootstrap_writes_second_reviewer_key_and_upgrade_all")
+    rec(b, "High-risk flag? → Second reviewer, different model", "PRESENT" if cfg and ok_s else "PARTIAL", f"review.md: {'; '.join(grep(C / 'review.md', r'second_reviewer_model'))}; kit.json key written by bootstrap: {cfg[0] if cfg else 'no'}; test: {last_s}", "" if cfg else "key never written",)
     ok, last = pytest("test_validate_spec_review.py::test_fail_entry_missing_fields_fails")
     rec(b, "Fail list: file, line, rule, what passing looks like", "PRESENT" if ok else "MISSING", f"validate_docs fail-entry; test: {last}")
     instruction(b, "All PASS? No → fail list → implementer → review again (3 rounds)", grep(C / "review.md", r"Fix exactly these items|after 3 FAIL rounds"), "loop is review.md instruction")
     ci = grep(KIT / "ci" / "github.yml", r"ci_scope_diff|ci_test_count|ci_dep_diff|ci_review_report|gitleaks|boundaries:|tests:")
-    mut = grep(KIT / "ci" / "github.yml", r"continue-on-error: true")
-    rec(b, "CI: full suite, import boundaries, allow-list diff, test count, mutation score, secrets, dependency diff, review report present", "PARTIAL" if mut else "PRESENT", f"jobs: {len(ci)} matches in kit/ci/github.yml; mutation job {mut[0] if mut else ''} is warning-only",
-        "mutation score never becomes blocking")
+    ok_g, last_g = pytest("test_ci_scripts.py::test_mutation_gate_flips_after_two_merged")
+    rec(b, "CI: full suite, import boundaries, allow-list diff, test count, mutation score, secrets, dependency diff, review report present", "PRESENT" if ok_g and len(ci) >= 7 else "PARTIAL", f"jobs: {len(ci)} matches in kit/ci/github.yml; mutation gate {'; '.join(grep(S / 'ci_mutation_gate.py', r'def main'))}; test: {last_g}", "" if ok_g else "mutation never blocking")
     bp = grep(S / "bootstrap.py", r'"strict": True') + grep(S / "bootstrap.py", r'"review-report"')
     rec(b, "Branch protection: up to date, checks green, review report present", "PRESENT" if len(bp) >= 2 else "PARTIAL", "; ".join(bp) + " (applied only with --protect)")
     rec(b, "You merge (never the pipeline)", "PRESENT", "; ".join(grep(C / "review.md", r"never merges") + grep(S / "hook_guard_bash.py", r"direct push to main")))
@@ -243,14 +243,12 @@ def board4() -> None:
     rm_ = grep(C / "retro.md", r"remove it from `CLAUDE.md`")
     rec(b, "CLAUDE.md size cap: enforced rules removed from text", "PARTIAL", f"cap: {cap[0] if cap else 'none'} (script, CI); removal: {rm_[0] if rm_ else 'none'} (instruction)", "removal of enforced rules from CLAUDE.md is an instruction")
     up = grep(S / "bootstrap.py", r"--upgrade")
-    allp = grep(S / "bootstrap.py", r"def register_project")
-    cmd_all = [c for c in C.glob("*.md") if re.search(r"upgrade.*(all|every) project", c.read_text())]
-    rec(b, "Applies to every project → kit version bump, /bootstrap --upgrade all projects", "PARTIAL", f"per-repo upgrade: {up[0] if up else 'none'}; project registry: {allp[0] if allp else 'none'}; all-projects command: {[str(c.relative_to(ROOT)) for c in cmd_all] or 'none'}",
-        "no command upgrades every registered project in one step; no kit release/tag process")
+    allp = grep(S / "bootstrap.py", r'"--all"') + exists("release.sh")
+    rec(b, "Applies to every project → kit version bump, /bootstrap --upgrade all projects", "PRESENT" if len(allp) >= 2 else "PARTIAL", f"per-repo: {up[0] if up else 'none'}; --upgrade --all: {allp[0] if allp else 'none'}; release.sh tags the version: {'release.sh' in allp}", "" if len(allp) >= 2 else "no all-projects upgrade")
     rec(b, "Enforcement layers: Text → Process → Code, pushed down", "PARTIAL", f"layers exist (CLAUDE.md, gates, hooks/CI); debt counted {debt_c[0] if debt_c else ''}", "nothing enforces that a text rule is pushed down over time")
     fl = grep(T / "architecture.md", r"Feature flags|Canary|Rollback")
-    rv = grep(T / "review.md", r"flag") + grep(A / "reviewer.md", r"flag")
-    rec(b, "Feature flag → canary slice → error monitoring → one-command rollback", "PARTIAL" if fl else "MISSING", f"template placeholders: {'; '.join(fl)}; reviewer flag check: {rv or 'none'}", "no reviewer row requires high-risk work behind a flag; no monitoring/rollback tooling")
+    rv = grep(T / "review.md", r"^\| R12") + grep(S / "validate_docs.py", r'"checklist-missing-r12"')
+    rec(b, "Feature flag → canary slice → error monitoring → one-command rollback", "PARTIAL", f"flag gate R12 scripted: {'; '.join(rv)}; template: {'; '.join(fl)}", "canary, monitoring, rollback stay the project's checklist (no kit tooling, by design)")
     inc = grep(C / "retro.md", r"[Ii]ncident") + grep(A / "retro.md", r"[Ii]ncident")
     rec(b, "Incident becomes lesson", "PRESENT" if inc else "MISSING", "; ".join(inc) or "no incident intake", "no path from an incident into /retro")
 
