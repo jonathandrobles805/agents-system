@@ -8,6 +8,7 @@ Retro for feature: $ARGUMENTS
 
 ## Step 1: confirm merged
 `gh pr view <PR url from ROADMAP.md> --json state,mergedAt`. If not merged, stop; retro runs on merged work only.
+Then `git fetch origin && python3 "$HOME/.claude/kit/scripts/lane.py" merged <slug> --repo "$PWD"` so ROADMAP.md says merged even if nothing else recorded it (the script verifies it in git first).
 
 ## Step 2: retro agent
 Spawn `retro` with: the spec, progress, review, log, events (from the lane worktree if it still exists, else from `main`), the merged PR number, and `LESSONS.md`. It prints proposed lesson entries and stops. It does not write.

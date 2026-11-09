@@ -93,3 +93,22 @@ def test_render_text(tmp_path):
     r = subprocess.run([sys.executable, "-I", str(SCRIPTS / "kit_status.py"), "--repo", str(root)], capture_output=True, text=True, env=ENV)
     assert r.returncode == 0 and "needs you:" in r.stdout and "queued: refund-route, other" not in r.stdout  # refund-route is approved, not queued
     assert "refund-route: approved" in r.stdout
+
+
+def test_merged_is_derived_from_git_even_if_roadmap_not_updated(tmp_path):
+    root, _ = project(tmp_path)
+    out = json.loads(run_script("lane.py", ["start", "refund-route", "--repo", str(root)]).stdout)
+    wt = Path(out["worktree"])
+    (wt / "src" / "api" / "routes.ts").write_text("// done\n")
+    F.commit_all(wt, "work")
+    # lane.py merged refuses before the merge
+    r = run_script("lane.py", ["merged", "refund-route", "--repo", str(root)])
+    assert r.returncode == 2 and "not merged" in r.stderr
+    # merge into main without touching ROADMAP or running retro
+    F.git(["merge", "-q", "--no-ff", "wt/refund-route", "-m", "merge"], root)
+    s = status(root)
+    assert lane_of(s, "refund-route")["position"] == "merged"
+    assert "| refund-route | M1 | building |" in (root / "ROADMAP.md").read_text()  # roadmap still stale: git wins
+    r = run_script("lane.py", ["merged", "refund-route", "--repo", str(root), "--pr", "https://x/pr/1"])
+    assert r.returncode == 0
+    assert "| refund-route | M1 | merged | — | — | https://x/pr/1 |" in (root / "ROADMAP.md").read_text()

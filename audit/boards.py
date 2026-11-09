@@ -209,11 +209,9 @@ def board3() -> None:
     bp = grep(S / "bootstrap.py", r'"strict": True') + grep(S / "bootstrap.py", r'"review-report"')
     rec(b, "Branch protection: up to date, checks green, review report present", "PRESENT" if len(bp) >= 2 else "PARTIAL", "; ".join(bp) + " (applied only with --protect)")
     rec(b, "You merge (never the pipeline)", "PRESENT", "; ".join(grep(C / "review.md", r"never merges") + grep(S / "hook_guard_bash.py", r"direct push to main")))
-    fin = grep(S / "lane.py", r'roadmap_set\(root, slug, "merged"')
-    kst = grep(S / "kit_status.py", r'row\["status"\] == "merged"')
-    gitm = grep(S / "kit_status.py", r"merge-base|--merged|is-ancestor")
-    rec(b, "ROADMAP.md marked done (at merge)", "PARTIAL", f"marked by lane.py finish {fin[0] if fin else ''} which /retro calls; kit_status uses ROADMAP only {kst[0] if kst else ''}; git-derived merged: {gitm or 'none'}",
-        "not marked at merge time; dashboard does not derive 'merged' from git")
+    ok_m, last_m = pytest("test_kit_status.py::test_merged_is_derived_from_git_even_if_roadmap_not_updated")
+    gitm = grep(S / "kit_status.py", r"merge-base") + grep(S / "lane.py", r'sub.add_parser\("merged"\)') + grep(C / "retro.md", r'lane.py" merged')
+    rec(b, "ROADMAP.md marked done (at merge); dashboard knows 'merged' from git", "PRESENT" if ok_m and len(gitm) >= 3 else "PARTIAL", f"{'; '.join(gitm)}; test: {last_m}", "" if ok_m else "merged not derived from git")
 
 
 # ----------------------------------------------------------------------------------------------- board 4
