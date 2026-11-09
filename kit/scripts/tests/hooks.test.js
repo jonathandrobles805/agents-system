@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import { git } from './fixtures.js';
-import { makeRepo, runScript } from './helpers.js';
+import { SCRIPTS, makeRepo, runScript } from './helpers.js';
 import { GOOD_SPEC } from './testdata.js';
 
 const SID = 'sess-1';
@@ -454,4 +454,26 @@ test('done check in test stage needs red only', (t) => {
   write(repo, 'docs/specs/refund-endpoint.progress.md', progress({ g1: '—', g2: '—', att: '{{n}} of 3', fail: '{{what fails}}' }).replaceAll('refund-endpoint.log#1 | — |\n| D2', '— | — |\n| D2'));
   r = run('hook_done_check.js', stop(repo));
   assert.ok(JSON.parse(r.stdout).decision === 'block' && JSON.parse(r.stdout).reason.includes('D1'));
+});
+
+// ---------------- guards fail closed ----------------
+// Claude Code carries on after any exit code other than 2, so a guard that crashes must exit 2, not 1.
+
+test('guards block when they crash while recording the block', (t) => {
+  const repo = makeRepo(t);
+  // .claude/session is a file, so writing the event log throws (stands in for a full disk or bad permissions)
+  write(repo, '.claude/session', 'not a directory');
+  let r = run('hook_guard_read.js', pre(repo, 'Read', { file_path: '.env' }));
+  assert.equal(r.returncode, 2);
+  assert.ok(r.stderr.includes('guard-read: internal error, blocking for safety'));
+  r = run('hook_guard_bash.js', pre(repo, 'Bash', { command: 'sudo rm -rf /' }));
+  assert.equal(r.returncode, 2);
+  assert.ok(r.stderr.includes('guard-bash: internal error, blocking for safety'));
+});
+
+test('every blocking hook runs through runGuard', () => {
+  for (const f of ['hook_guard_edit.js', 'hook_guard_read.js', 'hook_guard_bash.js', 'hook_guard_tests_only.js', 'hook_config_guard.js']) {
+    const src = fs.readFileSync(path.join(SCRIPTS, f), 'utf8');
+    assert.match(src, /K\.runGuard\('[a-z-]+', main\)/, f);
+  }
 });

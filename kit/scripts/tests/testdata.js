@@ -56,3 +56,11 @@ export function project(t, { status = 'approved', approved = true, wipLimit = 2,
   commitAll(root, 'spec');
   return { root, commit };
 }
+
+/** Rewrite a bootstrapped project's hook commands the way the Python-era kit wrote them (python3 ... .py). */
+export function toPythonEraKit(root) {
+  for (const rel of ['.claude/settings.json', '.claude/kit.json']) {
+    const p = path.join(root, rel);
+    fs.writeFileSync(p, fs.readFileSync(p, 'utf8').replace(/node (\\?"\$HOME\/\.claude\/kit\/(?:scripts|dashboard)\/[A-Za-z_]+)\.js/g, 'python3 $1.py'));
+  }
+}

@@ -43,6 +43,9 @@ if (( NODE_MAJOR < 20 )); then
   echo "node v20 or newer is required for kit scripts (found $(node -v))" >&2; exit 1
 fi
 
+# Projects set up by an older kit version keep hooks that point at scripts that no longer exist; say so.
+node "$KIT_ROOT/kit/scripts/check_projects.js" --kit "$KIT_ROOT/kit" || true
+
 echo "agent-kit $(cat "$KIT_ROOT/VERSION") installed into $CLAUDE_HOME ($MODE)"
 echo "agents:   $(ls "$KIT_ROOT"/kit/agents/*.md 2>/dev/null | wc -l | tr -d ' ')"
 echo "commands: $(ls "$KIT_ROOT"/kit/commands/*.md 2>/dev/null | wc -l | tr -d ' ')"

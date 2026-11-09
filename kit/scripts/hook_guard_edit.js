@@ -68,4 +68,4 @@ export function main() {
   return 0;
 }
 
-if (K.isMain(import.meta.url)) process.exitCode = main();
+if (K.isMain(import.meta.url)) K.runGuard('guard-edit', main);

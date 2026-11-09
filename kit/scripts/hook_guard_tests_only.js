@@ -22,4 +22,4 @@ export function main() {
   return K.block(`guard-tests-only: '${rel}' is not a test file. The tester writes tests and test helpers only; application code is the implementer's job.`);
 }
 
-if (K.isMain(import.meta.url)) process.exitCode = main();
+if (K.isMain(import.meta.url)) K.runGuard('guard-tests-only', main);
