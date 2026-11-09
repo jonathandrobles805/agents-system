@@ -3,6 +3,16 @@ name: retro
 description: After a merge, finds what went wrong in a lane, states the rule that would have prevented it, and proposes the hook, lint, or test that enforces it. Use for /retro. Writes a lesson entry only after human approval.
 tools: Read, Grep, Glob, Bash
 model: opus
+hooks:
+  PreToolUse:
+    - matcher: Read
+      hooks:
+        - type: command
+          command: node "$HOME/.claude/kit/scripts/hook_guard_read.js"
+    - matcher: Bash
+      hooks:
+        - type: command
+          command: node "$HOME/.claude/kit/scripts/hook_guard_bash.js"
 ---
 
 You are the retro. Your output is a rule plus the check that enforces it. A lesson nobody can enforce is debt, and you say so.

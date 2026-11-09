@@ -4,7 +4,14 @@ All notable changes to the kit. Each entry names the decision or lesson that cau
 
 ## [Unreleased]
 
+### Added
+- Architecture Canvas on the dashboard: five views (System, Agents, Pipeline, Dependencies, Activity) over a map derived from the kit's files, with per-project overlays (hooks installed vs kit, lane stages, running agents) and a blast-radius view. Backend: `kit/scripts/arch_manifest.js`, `kit/scripts/arch_live.js`, `GET /api/architecture`, `GET /api/history`; frontend model `kit/dashboard/model.js`. The page has no external loads.
+- `kit/manifest.json` (declared purpose of every command, agent, hook, check, script and CI job) and `kit/architecture.json` (committed snapshot of the derived map). Kit CI runs `npm run architecture:check`; `undeclared`, `declared-missing`, `dangling-reference`, `dangling-import`, `agent-name-mismatch`, `stage-mismatch`, `invalid-settings`, `invalid-declaration` and `unguarded-tool` fail the build.
+- `npm run architecture`, `architecture:update`, `architecture:check`.
+- Tests for `args.js`, `hook_notify.js` and `hook_session_context.js`, which had none (183 tests in total).
+
 ### Fixed
+- The `retro` agent (Bash and Read tools) and the `spec-critic` agent (Read tool) had no PreToolUse guard of their own, against decision 0005. Found by the new `unguarded-tool` check; both now carry `hook_guard_read.js` (and `hook_guard_bash.js` for `retro`).
 - Blocking hooks (`hook_guard_edit`, `hook_guard_read`, `hook_guard_bash`, `hook_guard_tests_only`, `hook_config_guard`) now run through `runGuard`: if one crashes (for example the event log cannot be written) it exits 2 and blocks, instead of exiting 1, which Claude Code treats as "carry on".
 - Projects set up by an older kit version keep hooks that point at scripts that no longer exist, so their guards silently do nothing. `ci_guards_present` now names those scripts and says to run `/bootstrap --upgrade`; `install.sh` warns about every registered project in that state (`check_projects.js`). `bootstrap.js --upgrade` migrates such a project (tested).
 - `lane.json` or `kit.json` containing `null`, a list or a scalar is treated as empty instead of crashing; an absolute `spec` path in `lane.json` is honoured.

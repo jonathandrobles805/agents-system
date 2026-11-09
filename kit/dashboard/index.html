@@ -3,225 +3,739 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>agent-kit dashboard</title>
+<title>agent-kit · architecture canvas</title>
 <style>
-  :root{--bg:#faf9f6;--card:#fff;--text:#2c2c2a;--muted:#5f5e5a;--hint:#888780;--border:#d3d1c7;--border2:#b4b2a9;
-    --agent-bg:#EEEDFE;--agent-fg:#3C3489;--agent-bd:#AFA9EC;--gate-bg:#E1F5EE;--gate-fg:#085041;--gate-bd:#5DCAA5;
-    --you-bg:#FAEEDA;--you-fg:#633806;--you-bd:#FAC775;--bad-bg:#FCEBEB;--bad-fg:#791F1F;--bad-bd:#F09595;--ok-bg:#EAF3DE;--ok-fg:#27500A;--ok-bd:#C0DD97}
-  @media (prefers-color-scheme:dark){:root{--bg:#1c1c1a;--card:#262624;--text:#e8e6df;--muted:#b4b2a9;--hint:#888780;--border:#444441;--border2:#5f5e5a;
-    --agent-bg:#3C3489;--agent-fg:#CECBF6;--gate-bg:#085041;--gate-fg:#9FE1CB;--you-bg:#633806;--you-fg:#FAC775;--bad-bg:#791F1F;--bad-fg:#F7C1C1;--ok-bg:#27500A;--ok-fg:#C0DD97}}
+  :root{
+    --bg:#07090C;--panel:#0E1116;--panel2:#141920;--line:#262C35;--line2:#323943;--edge:#4A525E;
+    --text:#F2F4F7;--text2:#C5CAD1;--muted:#8B929C;--green:#3DDC84;--amber:#FFB020;--red:#FF5C5C;
+    --mono:'JetBrains Mono',ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+    --sans:'Space Grotesk',system-ui,-apple-system,'Segoe UI',Helvetica,Arial,sans-serif;
+    /* names the Worktrees screen was written against */
+    --card:var(--panel);--border:var(--line);--border2:var(--line2);--hint:var(--muted);
+    --agent-bg:var(--panel2);--agent-fg:var(--text2);--agent-bd:var(--edge);
+    --gate-bg:rgba(61,220,132,.08);--gate-fg:var(--green);--gate-bd:rgba(61,220,132,.45);
+    --you-bg:rgba(255,176,32,.08);--you-fg:var(--amber);--you-bd:rgba(255,176,32,.45);
+    --bad-bg:rgba(255,92,92,.08);--bad-fg:var(--red);--bad-bd:rgba(255,92,92,.45);
+    --ok-bg:rgba(61,220,132,.08);--ok-fg:var(--green);--ok-bd:rgba(61,220,132,.45);
+  }
   *{box-sizing:border-box}
-  body{margin:0;background:var(--bg);color:var(--text);font:14px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI",Helvetica,Arial,sans-serif}
-  header{display:flex;align-items:center;gap:14px;padding:14px 22px;border-bottom:1px solid var(--border)}
-  header h1{font-size:16px;font-weight:500;margin:0}
-  header .live{font-size:12px;color:var(--muted)}
-  header .live b{font-weight:500}
-  main{max-width:1100px;margin:0 auto;padding:20px 22px 60px}
+  html,body{height:100%}
+  body{margin:0;background:var(--bg);color:var(--text);font:14px/1.5 var(--sans);overflow:hidden}
+  button{font:inherit;font-size:13px;padding:6px 12px;border-radius:8px;border:1px solid var(--line2);background:var(--panel);color:var(--text);cursor:pointer}
+  button:hover{background:var(--panel2);border-color:var(--edge)}
+  button:disabled{opacity:.5;cursor:default}
+  button:focus-visible,[tabindex]:focus-visible,select:focus-visible,input:focus-visible{outline:2px solid var(--text2);outline-offset:2px}
+  select,input{font:inherit;font-size:13px;color:var(--text);background:var(--panel);border:1px solid var(--line2);border-radius:8px;padding:5px 9px}
+  a{color:inherit}
+  code{font-family:var(--mono);font-size:12px}
+  .mono{font-family:var(--mono)}
+  .muted{color:var(--muted);font-size:12px}
+  .cap{font:500 11px/14px var(--mono);letter-spacing:.12em;color:var(--muted);text-transform:uppercase}
+  .empty{color:var(--muted);font-size:13px;padding:8px 0}
+
+  /* ---- top bar */
+  .top{height:48px;display:flex;align-items:center;gap:18px;padding:0 18px;border-bottom:1px solid var(--line);background:var(--bg)}
+  .brand{font:600 12px var(--mono);letter-spacing:.16em}
+  .tabs{display:flex;gap:4px}
+  .tab{background:none;border:0;border-radius:8px;padding:6px 12px;color:var(--muted)}
+  .tab[aria-selected=true]{color:var(--text);background:var(--panel2)}
+  .grow{flex:1}
+  .livepill{font:500 11px var(--mono);letter-spacing:.1em;color:var(--muted);display:flex;align-items:center;gap:7px}
+  .dot{width:8px;height:8px;border-radius:50%;background:var(--edge);display:inline-block}
+  .dot.on{background:var(--green)}
+  .dot.warn{background:var(--amber)}.dot.bad{background:var(--red)}
+
+  /* ---- canvas screen */
+  #arch{display:grid;grid-template-columns:232px minmax(0,1fr) 340px;height:calc(100% - 48px)}
+  .side{border-right:1px solid var(--line);padding:16px 14px;overflow:auto}
+  .side h3{margin:18px 0 8px}.side h3:first-child{margin-top:0}
+  .vi{display:flex;gap:10px;align-items:baseline;width:100%;text-align:left;background:none;border:1px solid transparent;border-radius:10px;padding:8px 10px;color:var(--text2)}
+  .vi .n{font:11px var(--mono);color:var(--muted)}
+  .vi[aria-current=true]{background:var(--panel);border-color:var(--line2);color:var(--text)}
+  .lg{display:flex;align-items:center;gap:9px;font-size:12px;color:var(--text2);padding:3px 2px}
+  .sw{width:16px;height:10px;border-radius:3px;border:2px solid var(--line2);flex:none}
+  .sw.run{border-color:var(--green)}.sw.next{border-color:var(--green);border-style:dashed}.sw.bad{border-color:var(--red)}
+  .sw.warn{border-color:var(--amber)}.sw.miss{border-color:var(--amber);border-style:dashed}
+  .proj{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:12px}
+  .proj b{font-weight:600}
+  .stagearea{display:flex;flex-direction:column;min-width:0;min-height:0}
+  .sh{padding:14px 20px 10px}
+  .sh h2{margin:0;font:600 22px/28px var(--sans)}
+  .sh p{margin:2px 0 0;color:var(--muted);font-size:12px}
+  .vp{flex:1;overflow:auto;padding:0 20px 28px}
+  .insp{border-left:1px solid var(--line);overflow:auto;padding:16px}
+
+  /* ---- svg nodes */
+  .node{cursor:pointer}
+  .node rect.box{fill:var(--panel);stroke:var(--line2);stroke-width:1}
+  .node.t-run rect.box{stroke:var(--green)}
+  .node.t-next rect.box{stroke:var(--green);stroke-dasharray:4 3}
+  .node.t-bad rect.box{stroke:var(--red)}
+  .node.t-warn rect.box{stroke:var(--amber)}
+  .node.t-miss rect.box{stroke:var(--amber);stroke-dasharray:4 3}
+  .node.sel rect.box{stroke:var(--text);stroke-width:2}
+  .node.dim{opacity:.28}
+  .node.rad rect.box{stroke:var(--amber)}
+  .node:hover rect.box{fill:var(--panel2)}
+  .node text{fill:var(--text);font:13px var(--sans);pointer-events:none}
+  .node text.k{fill:var(--muted);font:500 10px var(--mono);letter-spacing:.1em}
+  .node text.s{fill:var(--muted);font:11px var(--mono)}
+  .node text.b{font-weight:600;font-size:14px}
+  .node .tag{font:500 9px var(--mono);letter-spacing:.08em}
+  .band{fill:var(--muted);font:500 11px var(--mono);letter-spacing:.12em}
+  .edge{fill:none;stroke:var(--line2);stroke-width:1.2}
+  .edge.out{stroke:var(--text2);stroke-width:1.6}
+  .edge.in{stroke:var(--amber);stroke-width:1.8}
+  .edge.faint{opacity:.22}
+
+  /* ---- html cards used by the other views */
+  .cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:12px}
+  .ac{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:14px;cursor:pointer;min-width:0}
+  .ac:hover{border-color:var(--edge)}
+  .ac.sel{border-color:var(--text)}
+  .ac.t-run{border-color:var(--green)}.ac.t-next{border-color:var(--green);border-style:dashed}.ac.t-bad{border-color:var(--red)}.ac.t-warn{border-color:var(--amber)}
+  .ac h4{margin:2px 0 4px;font:600 17px var(--sans)}
+  .ac p{margin:4px 0;color:var(--text2);font-size:13px}
+  .chip{display:inline-block;font:11px var(--mono);padding:2px 8px;border:1px solid var(--line2);border-radius:999px;color:var(--text2);margin:2px 4px 2px 0;background:transparent;cursor:pointer}
+  .chip.static{cursor:default}
+  .chip.g{border-color:var(--green);color:var(--green)}.chip.a{border-color:var(--amber);color:var(--amber)}.chip.r{border-color:var(--red);color:var(--red)}
+  .hk{display:grid;grid-template-columns:auto 1fr;gap:2px 10px;font:11px var(--mono);color:var(--muted);margin-top:8px}
+  .hk b{color:var(--text2);font-weight:500}
+  .you{border-color:var(--amber);background:rgba(255,176,32,.05)}
+  .flow{display:flex;flex-wrap:wrap;gap:10px;align-items:stretch}
+  .stg{width:176px;background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:10px 12px;cursor:default;position:relative}
+  .stg.human{border-color:var(--amber)}
+  .stg.here{border-color:var(--green)}
+  .stg h5{margin:0 0 6px;font:600 12px var(--mono);letter-spacing:.1em;text-transform:uppercase}
+  .stg .evd{font:10px var(--mono);color:var(--muted);margin-top:6px}
+  .arrow{align-self:center;color:var(--edge);font-size:18px}
+  .tblk{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+  @media (max-width:1500px){#arch{grid-template-columns:200px minmax(0,1fr) 300px}}
+  .feed{font:12px var(--mono)}
+  .feed div{display:flex;gap:10px;padding:5px 0;border-bottom:1px solid var(--line)}
+  .feed .t{color:var(--muted);min-width:62px}.feed .k{min-width:104px}.feed .w{min-width:90px;color:var(--text2)}
+  .vio{border:1px solid var(--line);border-radius:10px;padding:8px 10px;margin-bottom:8px;font-size:12px;cursor:pointer}
+  .vio.error{border-color:var(--red)}.vio.warn{border-color:var(--amber)}
+  .vio b{font:500 10px var(--mono);letter-spacing:.1em}
+  .listbox{max-height:520px;overflow:auto;border:1px solid var(--line);border-radius:12px;background:var(--panel)}
+  .li{display:flex;justify-content:space-between;gap:8px;padding:7px 12px;border-bottom:1px solid var(--line);cursor:pointer;font-size:13px}
+  .li:hover{background:var(--panel2)}.li.sel{background:var(--panel2);box-shadow:inset 2px 0 var(--text)}
+  .li small{color:var(--muted);font:10px var(--mono)}
+  .depwrap{position:relative}
+  .depwrap .item{position:absolute;background:var(--panel);border:1px solid var(--line2);border-radius:10px;padding:6px 10px;font-size:12px;cursor:pointer;overflow:hidden}
+  .depwrap .item.in{border-color:var(--amber)}
+  .depwrap .core{position:absolute;background:var(--panel);border:1px solid var(--text);border-radius:14px;padding:12px 14px}
+
+  /* ---- inspector */
+  .insp h2{margin:2px 0 2px;font:600 22px/26px var(--sans);word-break:break-word}
+  .itabs{display:flex;gap:2px;margin:12px 0;border-bottom:1px solid var(--line)}
+  .itab{background:none;border:0;border-bottom:2px solid transparent;border-radius:0;padding:6px 10px;color:var(--muted)}
+  .itab[aria-selected=true]{color:var(--text);border-bottom-color:var(--text)}
+  .big{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin:10px 0}
+  .big div{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:8px 10px}
+  .big b{display:block;font:600 22px var(--sans)}
+  .big span{font:500 10px var(--mono);letter-spacing:.1em;color:var(--muted)}
+  .src{font:11px var(--mono);color:var(--muted);word-break:break-all}
+  .prov{font:500 9px var(--mono);letter-spacing:.1em;padding:1px 6px;border:1px solid var(--line2);border-radius:999px;color:var(--muted);vertical-align:middle;margin-left:6px}
+  .kv{display:grid;grid-template-columns:96px 1fr;gap:6px 10px;font-size:13px;margin:8px 0}
+  .kv>span:nth-child(odd){color:var(--muted);font-size:12px}
+  .hist div{padding:6px 0;border-bottom:1px solid var(--line);font-size:12px}
+  .hist b{font:11px var(--mono);color:var(--text2);margin-right:8px}
+  .btnrow{display:flex;gap:8px;margin-top:12px;flex-wrap:wrap}
+  .btnrow button[aria-pressed=true]{border-color:var(--amber);color:var(--amber)}
+
+  /* ---- worktrees screen (the lane view) */
+  #worktrees{height:calc(100% - 48px);overflow:auto}
+  #worktrees main{max-width:1100px;margin:0 auto;padding:20px 22px 60px}
   .card{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:14px 18px;margin-bottom:14px}
   .lbl{font-size:12px;color:var(--hint);margin-bottom:8px}
   .pill{display:inline-block;font-size:12px;padding:2px 9px;border-radius:999px;border:1px solid;margin:2px 4px 2px 0;white-space:nowrap}
   .agent{background:var(--agent-bg);color:var(--agent-fg);border-color:var(--agent-bd)}
   .gate{background:var(--gate-bg);color:var(--gate-fg);border-color:var(--gate-bd)}
-  .you{background:var(--you-bg);color:var(--you-fg);border-color:var(--you-bd)}
+  .you-p{background:var(--you-bg);color:var(--you-fg);border-color:var(--you-bd)}
   .bad{background:var(--bad-bg);color:var(--bad-fg);border-color:var(--bad-bd)}
   .ok{background:var(--ok-bg);color:var(--ok-fg);border-color:var(--ok-bd)}
   .neutral{background:var(--bg);color:var(--text);border-color:var(--border)}
   .row{display:flex;justify-content:space-between;align-items:center;gap:12px;padding:9px 0;border-bottom:1px solid var(--border);cursor:pointer}
   .row:last-child{border-bottom:0}
-  .row:hover{background:color-mix(in srgb,var(--card) 70%,var(--bg))}
+  .row:hover{background:var(--panel2)}
   .row .name{font-weight:500}
   .pipe{display:flex;gap:6px;align-items:flex-start}
   .stage{flex:1;min-width:0;text-align:center;font-size:12px;padding:8px 4px;border-radius:8px;border:1px solid var(--border);background:var(--bg);min-height:62px}
   .stage.gate{background:var(--gate-bg);border-color:var(--gate-bd);color:var(--gate-fg)}
   .stage.you{background:var(--you-bg);border-color:var(--you-bd);color:var(--you-fg)}
   .stage .mk{display:block;font-size:11px;padding:2px 7px;border-radius:999px;margin:6px auto 0;border:1px solid;cursor:pointer;max-width:100%;overflow:hidden;text-overflow:ellipsis}
-  .mk.sel{background:var(--agent-fg);color:var(--agent-bg);border-color:var(--agent-fg)}
+  .mk.sel{background:var(--text);color:var(--bg);border-color:var(--text)}
   .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:10px;margin:12px 0}
-  .m{background:var(--bg);border-radius:8px;padding:10px 12px}
+  .m{background:var(--bg);border-radius:8px;padding:10px 12px;border:1px solid var(--line)}
   .m .n{font-size:20px;font-weight:500}.m .t{font-size:12px;color:var(--muted)}
-  .ev{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12px;padding:4px 0;border-bottom:1px solid var(--border);display:flex;gap:10px}
+  .ev{font-family:var(--mono);font-size:12px;padding:4px 0;border-bottom:1px solid var(--border);display:flex;gap:10px}
   .ev .t{color:var(--hint);min-width:64px}.ev .k{min-width:96px}
-  .kr{color:#A32D2D}.kg{color:#3B6D11}.kb{color:#185FA5}
-  @media (prefers-color-scheme:dark){.kr{color:#F09595}.kg{color:#C0DD97}.kb{color:#85B7EB}}
-  button{font:inherit;font-size:13px;padding:6px 12px;border-radius:8px;border:1px solid var(--border2);background:var(--card);color:var(--text);cursor:pointer}
-  button:hover{background:var(--bg)}
-  button:disabled{opacity:.5;cursor:default}
-  a{color:inherit}
-  .muted{color:var(--muted);font-size:12px}
-  .empty{color:var(--hint);font-size:13px;padding:8px 0}
+  .kr{color:var(--red)}.kg{color:var(--green)}.kb{color:#85B7EB}
   .crumbs{font-size:13px;color:var(--muted);margin-bottom:10px}
   .crumbs a{cursor:pointer;text-decoration:underline}
   table{width:100%;border-collapse:collapse;font-size:13px}
   td,th{text-align:left;padding:6px 8px;border-bottom:1px solid var(--border);vertical-align:top}
   th{font-weight:500;color:var(--muted);font-size:12px}
-  pre{background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:10px;font-size:12px;overflow:auto;max-height:260px;margin:0}
+  [hidden]{display:none!important}
 </style>
 </head>
 <body>
-<header>
-  <h1>agent-kit</h1>
-  <span class="live" id="live">static · <span id="generated"></span></span>
-  <span style="flex:1"></span>
+<header class="top">
+  <span class="brand">AGENT-KIT</span>
+  <nav class="tabs" role="tablist" aria-label="Screens">
+    <button class="tab" role="tab" id="tab-arch" data-tab="arch">Architecture Canvas</button>
+    <button class="tab" role="tab" id="tab-worktrees" data-tab="worktrees">Worktrees</button>
+  </nav>
+  <span class="grow"></span>
+  <select id="projectSel" aria-label="Project" hidden></select>
+  <span class="livepill" id="live"><span class="dot" id="livedot"></span><span id="livetext">STATIC</span></span>
   <button id="refresh">Refresh</button>
 </header>
-<main id="main"><div class="empty">Loading status…</div></main>
 
-<script>
-(function () {
-  'use strict';
-  const STAGES = [
-    { id: 'research', label: 'Research', match: ['researching'] },
-    { id: 'plan', label: 'Plan', match: ['planning'] },
-    { id: 'approve', label: 'You approve', cls: 'you', match: ['waiting-approval'] },
-    { id: 'build', label: 'Build', match: ['approved', 'building', 'escalated'] },
-    { id: 'review', label: 'Review + CI', cls: 'gate', match: ['in-review'] },
-    { id: 'merge', label: 'You merge', cls: 'you', match: ['ready-to-merge'] },
-  ];
-  const POS_CLASS = { 'waiting-approval': 'you', 'ready-to-merge': 'you', escalated: 'bad', building: 'agent', 'in-review': 'gate', merged: 'ok', approved: 'agent', researching: 'agent', planning: 'agent', queued: 'neutral' };
+<div id="arch" hidden>
+  <aside class="side" aria-label="Views">
+    <div class="cap" style="margin-bottom:8px">Views</div>
+    <div id="views"></div>
+    <h3 class="cap">Legend</h3>
+    <div class="lg"><span class="sw run"></span>Running: lane events in the last 2 min</div>
+    <div class="lg"><span class="sw next"></span>Next up: a lane's next stage</div>
+    <div class="lg"><span class="sw bad"></span>Violation or failing check</div>
+    <div class="lg"><span class="sw warn"></span>Warning or modified in git</div>
+    <div class="lg"><span class="sw miss"></span>Not installed in this project</div>
+    <h3 class="cap">Project</h3>
+    <div class="proj" id="projcard"></div>
+  </aside>
+  <section class="stagearea">
+    <div class="sh"><h2 id="vtitle"></h2><p id="vsub"></p></div>
+    <div class="vp" id="view"></div>
+  </section>
+  <aside class="insp" id="inspector" aria-label="Inspector"></aside>
+</div>
 
-  const state = { projects: [], selected: null, lane: null, live: false, events: [] };
-  const main = document.getElementById('main');
-  const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
-  const pill = (txt, cls) => `<span class="pill ${cls}">${esc(txt)}</span>`;
+<div id="worktrees" hidden><main id="main"><div class="empty">Loading status…</div></main></div>
 
-  async function load() {
-    let data = null;
+<script type="module">
+'use strict';
+const $ = (s) => document.querySelector(s);
+const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+const clip = (s, n) => (String(s).length > n ? String(s).slice(0, Math.max(1, n - 1)) + '…' : String(s));
+const pill = (txt, cls) => `<span class="pill ${cls}">${esc(txt)}</span>`;
+
+const VIEWS = [
+  ['system', 'System architecture'],
+  ['agents', 'Agent organization'],
+  ['pipeline', 'Execution pipeline'],
+  ['deps', 'Dependencies'],
+  ['activity', 'Live activity'],
+];
+
+const S = {
+  live: false, V: null, tab: 'arch', view: 'system', selected: null, itab: 'overview', blast: false,
+  status: [], root: null,           // all served projects, and the one on screen
+  arch: null, idx: null,            // manifest + index
+  feed: [], lastEventAt: {}, history: new Map(), query: '', kind: '',
+  laneSel: null, laneEvents: [],    // worktrees screen
+  updated: 0,
+};
+
+// ------------------------------------------------------------------------------------------------ data
+async function getJson(url) {
+  const r = await fetch(url, { cache: 'no-store' });
+  if (!r.ok) throw new Error(`${url}: ${r.status}`);
+  return r.json();
+}
+
+async function loadStatus() {
+  let data = null;
+  try { data = await getJson(S.live ? '/api/status' : 'status.json'); } catch (e) { /* static mode without a file */ }
+  if (!data) { S.status = []; return false; }
+  S.status = Array.isArray(data) ? data : [data];
+  if (!S.status.find((p) => p.root === S.root)) S.root = S.status[0] ? S.status[0].root : null;
+  return true;
+}
+
+async function loadArch() {
+  if (!S.live || !S.V) return;
+  S.arch = await getJson('/api/architecture');
+  S.idx = S.V.index(S.arch.manifest);
+  S.updated = Date.now();
+  if (S.selected && !S.idx.byId.has(S.selected)) S.selected = null;
+  await seedEvents();
+}
+
+async function seedEvents() {
+  const o = overlay();
+  if (!o) return;
+  const merged = [];
+  for (const lane of o.lanes) {
     try {
-      const r = await fetch(state.live ? '/api/status' : 'status.json', { cache: 'no-store' });
-      if (r.ok) data = await r.json();
-    } catch (e) { /* static mode without a file */ }
-    if (!data) { main.innerHTML = '<div class="card"><div class="empty">No status.json found. Run <code>node ~/.claude/kit/scripts/kit_status.js --repo . --out dashboard/status.json</code>, or start the live server: <code>node ~/.claude/kit/dashboard/server.js --repo .</code></div></div>'; return; }
-    state.projects = Array.isArray(data) ? data : [data];
-    document.getElementById('generated').textContent = (state.projects[0] && state.projects[0].generated) ? state.projects[0].generated.replace('T', ' ') : '';
-    if (state.projects.length === 1 && !state.selected) state.selected = state.projects[0].project;
-    render();
+      const evs = await getJson(`/api/events/${encodeURIComponent(lane.slug)}?project=${encodeURIComponent(S.root)}`);
+      for (const e of evs.slice(-60)) merged.push({ ...e, lane: lane.slug });
+      const last = evs[evs.length - 1];
+      if (last && last.ts) S.lastEventAt[lane.slug] = Date.parse(last.ts) || 0;
+    } catch (e) { /* lane without an event log */ }
   }
+  S.feed = merged.sort((a, b) => (a.ts < b.ts ? -1 : 1)).slice(-200);
+}
 
-  function render() {
-    const p = state.projects.find(x => x.project === state.selected);
-    main.innerHTML = (state.projects.length > 1 ? renderIndex() : '') + (p ? renderProject(p) : '');
-    bind();
+const project = () => S.status.find((p) => p.root === S.root) || null;
+const overlay = () => (S.arch ? S.arch.projects.find((p) => p.root === S.root) || null : null);
+const states = () => (S.arch ? S.V.nodeStates(S.arch.manifest, S.idx, { git: S.arch.git, overlay: overlay(), lastEventAt: S.lastEventAt, now: Date.now() }) : new Map());
+
+// ------------------------------------------------------------------------------------------------ routing
+function parseHash() {
+  const [, tab, view, id] = location.hash.split('/');
+  return { tab: tab === 'worktrees' ? 'worktrees' : 'arch', view: VIEWS.some((v) => v[0] === view) ? view : 'system', id: id ? decodeURIComponent(id) : null };
+}
+function go({ tab = S.tab, view = S.view, id = S.selected } = {}) {
+  const h = tab === 'worktrees' ? '#/worktrees' : `#/arch/${view}${id ? '/' + encodeURIComponent(id) : ''}`;
+  if (location.hash === h) render(); else location.hash = h;
+}
+window.addEventListener('hashchange', () => {
+  const r = parseHash();
+  S.tab = r.tab; S.view = r.view;
+  S.selected = r.id && S.idx && S.idx.byId.has(r.id) ? r.id : (r.id && !S.idx ? r.id : null);
+  render();
+});
+
+// ------------------------------------------------------------------------------------------------ chrome
+function renderChrome() {
+  $('#tab-arch').setAttribute('aria-selected', S.tab === 'arch');
+  $('#tab-worktrees').setAttribute('aria-selected', S.tab === 'worktrees');
+  $('#arch').hidden = S.tab !== 'arch';
+  $('#worktrees').hidden = S.tab !== 'worktrees';
+  const sel = $('#projectSel');
+  sel.hidden = S.status.length < 2;
+  sel.innerHTML = S.status.map((p) => `<option value="${esc(p.root)}"${p.root === S.root ? ' selected' : ''}>${esc(p.project)}${S.status.filter((q) => q.project === p.project).length > 1 ? ' · ' + esc(p.root) : ''}</option>`).join('');
+  $('#livedot').className = 'dot' + (S.live ? ' on' : '');
+  $('#livetext').textContent = S.live ? 'LIVE' : 'STATIC';
+}
+
+function renderSide() {
+  $('#views').innerHTML = VIEWS.map(([k, t], i) => `<button class="vi" data-view="${k}" ${S.view === k ? 'aria-current="true"' : ''}><span class="n">0${i + 1}</span>${esc(t)}</button>`).join('');
+  const a = S.arch;
+  const g = a ? a.git : null;
+  const p = project();
+  $('#projcard').innerHTML = a
+    ? `<b>${esc(p ? p.project : 'no project')}</b><div class="muted">kit ${esc(a.manifest.kit_version || '?')} · map ${esc(a.manifest.digest.slice(0, 8))}</div>
+       <div class="muted mono">${g && g.branch ? esc(g.branch) + ' @ ' + esc(g.commit) : 'not a git checkout'}</div>
+       <div class="muted" style="margin-top:6px">${a.manifest.nodes.length} components · ${a.manifest.edges.length} links · each read from a file</div>`
+    : '<div class="muted">Needs the live server.</div>';
+}
+
+// ------------------------------------------------------------------------------------------------ svg helpers
+function nodeSvg(n, pos, st, flags) {
+  const tone = st ? st.tone : 'idle';
+  const miss = st && st.tags.some((t) => t.key === 'missing');
+  const cls = ['node', tone === 'bad' ? 't-bad' : tone === 'warn' ? (miss ? 't-miss' : 't-warn') : tone === 'run' ? 't-run' : tone === 'next' ? 't-next' : '', flags.sel ? 'sel' : '', flags.dim ? 'dim' : '', flags.rad ? 'rad' : ''].filter(Boolean).join(' ');
+  const { x, y, w, h } = pos;
+  const ids = `data-node="${esc(n.id)}" tabindex="0" role="button" aria-label="${esc(n.id)}"`;
+  let inner;
+  if (n.kind === 'agent') {
+    const hooks = (S.idx.out.get(n.id) || []).filter((e) => e.kind === 'hook').length;
+    inner = `<text class="k" x="${x + 12}" y="${y + 18}">AGENT</text><text class="b" x="${x + 12}" y="${y + 40}">${esc(clip(n.label, 20))}</text>
+      <text class="s" x="${x + 12}" y="${y + 60}">tools ${n.attrs.tools.length} · hooks ${hooks} · ${esc(n.attrs.model)}</text>`;
+  } else if (n.kind === 'hook') {
+    inner = `<text x="${x + 10}" y="${y + 20}">${esc(clip(n.label, 20))}</text><text class="s" x="${x + 10}" y="${y + 37}">${esc(clip((n.attrs.events || []).join(' · '), 21))}</text>`;
+  } else if (n.kind === 'command') {
+    inner = `<text class="mono" x="${x + 10}" y="${y + 24}">${esc('/' + n.label)}</text>`;
+  } else {
+    inner = `<text x="${x + 10}" y="${y + 18}">${esc(clip(n.label, Math.floor(w / 7.4)))}</text><text class="s" x="${x + 10}" y="${y + 33}">${esc(n.kind === 'ci-job' ? clip(n.id.split('/')[0].replace('ci-job:', ''), 22) : n.stats && n.stats.lines ? n.stats.lines + ' lines' : '')}</text>`;
   }
+  const tag = st && st.tags.find((t) => ['running', 'next', 'failing', 'violation', 'missing', 'modified'].includes(t.key));
+  const tagColor = tag && (tag.tone === 'run' || tag.tone === 'next' ? 'var(--green)' : tag.tone === 'bad' ? 'var(--red)' : 'var(--amber)');
+  const tagSvg = !tag ? '' : n.kind === 'agent'
+    ? `<text class="tag" x="${x + w - 8}" y="${y + 16}" text-anchor="end" style="fill:${tagColor}">${esc(tag.label.toUpperCase())}</text>`
+    : `<circle cx="${x + w - 11}" cy="${y + 11}" r="4" style="fill:${tagColor}"/>`;
+  const tip = [n.purpose || n.id, ...(st ? st.tags.map((t) => `${t.label}: ${t.detail}`) : [])].join('\n');
+  return `<g class="${cls}" ${ids}><title>${esc(tip)}</title><rect class="box" x="${x}" y="${y}" width="${w}" height="${h}" rx="${n.kind === 'command' ? 10 : 12}"/>${inner}${tagSvg}</g>`;
+}
 
-  function renderIndex() {
-    const rows = state.projects.map(p => {
-      const ci = p.ci_main ? (p.ci_main.conclusion || p.ci_main.status) : null;
-      return `<div class="row" data-project="${esc(p.project)}"><span class="name">${esc(p.project)}</span><span>
-        ${p.needs_you.length ? pill(`${p.needs_you.length} waiting on you`, 'you') : pill('0 waiting', 'ok')}
-        ${pill(`${p.wip.in_flight} / ${p.wip.limit} lanes`, 'agent')}
-        ${ci ? pill(`CI ${ci}`, ci === 'success' ? 'ok' : 'bad') : ''}
-        ${p.debt.text_only_lessons ? pill(`${p.debt.text_only_lessons} debt`, 'neutral') : ''}</span></div>`;
-    }).join('');
-    return `<div class="card"><div class="lbl">All projects · click one</div>${rows}</div>`;
+// ------------------------------------------------------------------------------------------------ views
+function viewSystem() {
+  const m = S.arch.manifest, V = S.V;
+  const layout = V.layoutBands(m, 1080);
+  const pos = new Map(layout.bands.flatMap((b) => b.nodes).map((n) => [n.id, n]));
+  const st = states();
+  const sel = S.selected;
+  const rad = S.blast && sel ? new Set([sel, ...V.blastRadius(m, S.idx, sel).dependents]) : null;
+  let edges = '';
+  for (const e of m.edges) {
+    const a = pos.get(e.from), b = pos.get(e.to);
+    if (!a || !b) continue;
+    const base = e.kind === 'spawns';
+    const out = sel && e.from === sel, inn = sel && e.to === sel;
+    const inRad = rad && rad.has(e.from) && rad.has(e.to);
+    if (!base && !out && !inn && !inRad) continue;
+    const cls = inn || inRad ? 'in' : out ? 'out' : sel || rad ? 'faint' : '';
+    edges += `<path class="edge ${cls}" d="${V.edgePath(a, b)}"/>`;
   }
+  const bands = layout.bands.map((b) => `<text class="band" x="20" y="${b.y + 14}">${esc(b.title)}</text>`).join('');
+  const nodes = layout.bands.flatMap((b) => b.nodes).map((p) => nodeSvg(S.idx.byId.get(p.id), p, st.get(p.id), { sel: p.id === sel, dim: rad && !rad.has(p.id), rad: rad && rad.has(p.id) && p.id !== sel })).join('');
+  const shown = layout.bands.reduce((n, b) => n + b.nodes.length, 0);
+  $('#vtitle').textContent = 'System architecture';
+  $('#vsub').textContent = `${shown} of ${m.nodes.length} components shown · orchestration, agents, gates, core scripts and CI · click a component to draw who spawns, guards or needs it`;
+  return `<svg viewBox="0 0 ${layout.width} ${layout.height}" width="100%" style="max-width:${layout.width}px" role="group" aria-label="System architecture">${bands}${edges}${nodes}</svg>`;
+}
 
-  function renderProject(p) {
-    const lanes = p.lanes || [];
-    const stages = STAGES.map(s => {
-      const here = lanes.filter(l => s.match.includes(l.position));
-      const marks = here.map(l => `<span class="mk ${l.slug === state.lane ? 'sel' : POS_CLASS[l.position] || 'agent'}" data-lane="${esc(l.slug)}" title="${esc(l.position)}">${esc(l.slug)}</span>`).join('');
-      return `<div class="stage ${s.cls || ''}">${esc(s.label)}${marks || '<span class="mk" style="visibility:hidden">·</span>'}</div>`;
-    }).join('');
-    const needs = p.needs_you.length
-      ? p.needs_you.map(n => `<div class="row" data-lane="${esc(n.slug)}"><span><span class="name">${esc(n.slug)}</span> <span class="muted">${esc(n.position)}${n.failure ? ' — ' + esc(n.failure) : ''}</span></span>${pill(n.position === 'escalated' ? 'read escalation' : n.position === 'waiting-approval' ? 'approve spec' : 'merge PR', n.position === 'escalated' ? 'bad' : 'you')}</div>`).join('')
-      : '<div class="empty">Nothing waits on you.</div>';
-    const queued = lanes.filter(l => l.position === 'queued').map(l => esc(l.slug)).join(', ');
-    const active = lanes.filter(l => !['queued', 'merged'].includes(l.position));
-    const laneRows = active.length ? active.map(l => `<div class="row" data-lane="${esc(l.slug)}"><span><span class="name">${esc(l.slug)}</span> <span class="muted">${esc(l.feature)}</span></span><span>
-        ${pill(l.position, POS_CLASS[l.position] || 'agent')}
-        ${l.worktree ? pill(`${l.behind_base} behind`, l.behind_base > 0 ? 'bad' : 'neutral') : ''}
-        ${l.progress.criteria ? pill(`${l.progress.green}/${l.progress.criteria} green`, l.progress.green === l.progress.criteria ? 'ok' : 'neutral') : ''}
-        ${l.events.blocked ? pill(`${l.events.blocked} blocked`, 'bad') : ''}
-        ${l.risk === 'high-risk' ? pill('high-risk', 'bad') : ''}</span></div>`).join('') : '<div class="empty">No active lanes.</div>';
-    const d = p.debt, r = p.research;
-    const detail = state.lane ? renderLane(p, lanes.find(l => l.slug === state.lane)) : '';
-    return `
-      ${state.projects.length > 1 ? `<div class="crumbs"><a data-back>All projects</a> › ${esc(p.project)}</div>` : ''}
-      <div class="card"><div class="lbl">${esc(p.project)} · kit ${esc(p.kit_version || '')} · WIP ${p.wip.in_flight} / ${p.wip.limit}</div>
-        <div class="pipe">${stages}</div>
-        <div class="muted" style="margin-top:8px">Position is derived from the spec, worktree, progress file, review report, and git. Agents do not report it. Click a marker.</div></div>
-      ${detail}
-      <div class="card"><div class="lbl">Needs you</div>${needs}</div>
-      <div class="card"><div class="lbl">Lanes</div>${laneRows}${queued ? `<div class="muted" style="margin-top:8px">Queued: ${queued}</div>` : ''}</div>
-      <div class="card"><div class="lbl">Health</div><div class="grid">
-        <div class="m"><div class="n">${d.text_only_lessons}</div><div class="t">text-only lessons (debt)</div></div>
-        <div class="m"><div class="n">${d.claude_md_bytes} <span class="muted">/ ${d.claude_md_cap}</span></div><div class="t">CLAUDE.md bytes</div></div>
-        <div class="m"><div class="n">${d.bootstrap_todos}</div><div class="t">bootstrap TODOs</div></div>
-        <div class="m"><div class="n">${r.questions} <span class="muted">· ${r.stale} stale</span></div><div class="t">research questions</div></div>
-        <div class="m"><div class="n">${p.ci_main ? esc(p.ci_main.conclusion || p.ci_main.status) : '—'}</div><div class="t">CI on main</div></div>
-      </div></div>`;
+function viewAgents() {
+  const m = S.arch.manifest, V = S.V, st = states();
+  const humans = m.pipeline.filter((s) => s.pause).map((s) => `<div class="ac you"><div class="cap">YOU · pause ${s.pause}</div><h4>${s.pause === 1 ? 'Approve the spec' : 'Merge the pull request'}</h4>
+      <p>The ${esc(s.id)} stage of <code>/run</code> stops here until a human acts.</p><div class="src">${esc(S.idx.byId.get('command:run').path)}:${s.line}</div></div>`).join('');
+  const agents = V.orderedNodes(m, 'agent').map((a) => {
+    const hooks = (S.idx.out.get(a.id) || []).filter((e) => e.kind === 'hook');
+    const stages = m.pipeline.filter((s) => s.agents.includes(a.label));
+    const tags = (st.get(a.id) || { tags: [] }).tags;
+    const lanes = tags.filter((t) => t.key === 'running' || t.key === 'next');
+    return `<div class="ac ${st.get(a.id).tone === 'idle' ? '' : 't-' + st.get(a.id).tone} ${a.id === S.selected ? 'sel' : ''}" data-node="${esc(a.id)}" tabindex="0" role="button">
+      <div class="cap">AGENT${tags.map((t) => ` · ${esc(t.label.toUpperCase())}`).join('')}</div><h4>${esc(a.label)}</h4>
+      <p>${esc(a.purpose || a.attrs.description)}</p>
+      ${a.writes ? `<p class="muted">writes: ${esc(a.writes)} <span class="prov">DECLARED</span></p>` : ''}
+      <div>${a.attrs.tools.map((t) => `<span class="chip static">${esc(t)}</span>`).join('')}<span class="chip static">${esc(a.attrs.model)}</span></div>
+      <div class="hk">${hooks.map((h) => `<span>${esc(h.event)}${h.matcher ? ' ' + esc(h.matcher) : ''}</span><b>${esc(S.idx.byId.get(h.to).label)}</b>`).join('') || '<span>no hooks of its own</span><b></b>'}</div>
+      <div class="muted" style="margin-top:8px">stages: ${stages.map((s) => esc(s.id)).join(', ') || 'none'}${lanes.length ? ' · ' + lanes.map((l) => esc(l.detail)).join('; ') : ''}</div></div>`;
+  }).join('');
+  $('#vtitle').textContent = 'Agent organization';
+  $('#vsub').textContent = `${V.orderedNodes(m, 'agent').length} agents, each with its own tools and guards · purposes are declared in kit/manifest.json, tools and hooks are read from the agent files`;
+  return `<div class="cards">${humans}${agents}</div>`;
+}
+
+function viewPipeline() {
+  const m = S.arch.manifest, V = S.V;
+  const stages = V.pipelineView(m, overlay());
+  const runPath = S.idx.byId.get('command:run').path;
+  const box = (s) => `<div class="stg ${s.pause ? 'human' : ''} ${s.lanes.length ? 'here' : ''}">
+      <h5>${esc(s.id)}</h5>${s.pause ? `<div class="chip a static">YOU · pause ${s.pause}</div>` : ''}
+      <div>${s.agents.map((a) => `<button class="chip" data-node="agent:${esc(a)}">${esc(a)}</button>`).join('')}${s.commands.map((c) => `<button class="chip" data-node="command:${esc(c)}">/${esc(c)}</button>`).join('')}</div>
+      ${s.lanes.map((l) => `<span class="chip g static">${esc(l)}</span>`).join('')}
+      <div class="evd">${esc(runPath)}:${s.line}</div></div>`;
+  const loop = stages.filter((s) => !['escalated', 'done', 'start'].includes(s.id));
+  const side = stages.filter((s) => ['start', 'escalated', 'done'].includes(s.id));
+  $('#vtitle').textContent = 'Execution pipeline';
+  $('#vsub').textContent = `${stages.length} stages · the stage after each is answered by lane.js next-step from files and git, never by an agent · green: a lane of ${esc((project() || {}).project || 'this project')} stands here`;
+  return `<div class="flow">${loop.map((s, i) => box(s) + (i < loop.length - 1 ? '<span class="arrow">→</span>' : '')).join('')}</div>
+    <div class="cap" style="margin:22px 0 8px">Outside the loop</div><div class="flow">${side.map(box).join('')}</div>`;
+}
+
+function viewDeps() {
+  const m = S.arch.manifest, V = S.V;
+  const list = V.searchNodes(m, S.query, S.kind || null);
+  const kinds = [...new Set(m.nodes.map((n) => n.kind))].sort();
+  const left = `<div style="width:240px;flex:none"><div style="display:flex;gap:6px;margin-bottom:8px"><input id="q" placeholder="Search components" value="${esc(S.query)}" style="flex:1;min-width:0" aria-label="Search components">
+      <select id="kindSel" aria-label="Kind"><option value="">all</option>${kinds.map((k) => `<option value="${esc(k)}"${S.kind === k ? ' selected' : ''}>${esc(V.kindLabel(k).toLowerCase())}</option>`).join('')}</select></div>
+      <div class="listbox">${list.map((n) => `<div class="li ${n.id === S.selected ? 'sel' : ''}" data-node="${esc(n.id)}" tabindex="0" role="button"><span>${esc(n.label)}</span><small>${esc(V.kindLabel(n.kind))}</small></div>`).join('') || '<div class="empty" style="padding:12px">No match.</div>'}</div></div>`;
+  $('#vtitle').textContent = 'Dependencies';
+  $('#vsub').textContent = 'Pick a component: what it depends on on the left, what breaks if it changes on the right (amber), and which tests and CI jobs run';
+  if (!S.selected) return `<div style="display:flex;gap:20px">${left}<div class="empty" style="flex:1">Select a component to see its blast radius.</div></div>`;
+  const b = V.blastRadius(m, S.idx, S.selected), n = S.idx.byId.get(S.selected);
+  const RH = 46, GH = 62, W = 600, LW = 170, CL = 215, CW = 170, RW = 200;
+  const L = b.dependsOn.slice(0, 14), R = b.groups;
+  const height = Math.max(L.length * RH, R.length * GH, 200) + 20;
+  const cy = height / 2;
+  const items = [
+    ...L.map((d, i) => ({ side: 'l', y: 10 + i * RH, h: RH - 8, html: `<div data-node="${esc(d.id)}" class="item" tabindex="0" role="button" style="left:0;width:${LW}px;top:${10 + i * RH}px;height:${RH - 8}px"><b>${esc(clip(d.label, 22))}</b><div class="src">${esc(d.kind)}${d.event ? ' ' + esc(d.event) : ''}</div></div>` })),
+    ...R.map((g, i) => ({ side: 'r', y: 10 + i * GH, h: GH - 10, html: `<div class="item in" data-group="${esc(g.kind)}" tabindex="0" role="button" style="left:${W - RW}px;width:${RW}px;top:${10 + i * GH}px;height:${GH - 10}px"><b>${g.count} of ${g.total} ${esc(g.label)}</b><div class="src">${esc(clip(g.first, 22))}${g.more ? ` +${g.more}` : ''}</div></div>` })),
+  ];
+  const lines = items.map((it) => {
+    const y = it.y + it.h / 2;
+    return it.side === 'l' ? `<path class="edge out" d="M${LW} ${y} C${LW + 22} ${y} ${CL - 22} ${cy} ${CL} ${cy}"/>` : `<path class="edge in" d="M${CL + CW} ${cy} C${CL + CW + 14} ${cy} ${W - RW - 14} ${y} ${W - RW} ${y}"/>`;
+  }).join('');
+  const sentence = b.tests.length ? `A change here runs ${b.cases} test cases in ${b.tests.length} test files${b.jobs.length ? ` and ${b.jobs.length} CI job${b.jobs.length > 1 ? 's' : ''}` : ''}.` : (b.dependents.length ? 'No test file sits in this component\'s blast radius.' : 'Nothing else needs this component.');
+  const open = S.groupOpen ? b.groups.find((g) => g.kind === S.groupOpen) : null;
+  return `<div style="display:flex;gap:20px">${left}<div style="flex:1;min-width:0"><div class="depwrap" style="height:${height}px;width:${W}px"><svg width="${W}" height="${height}" style="position:absolute;left:0;top:0">${lines}</svg>
+      ${items.map((i) => i.html).join('')}
+      <div class="core" style="left:${CL}px;top:${cy - 44}px;width:${CW}px"><div class="cap">${esc(V.kindLabel(n.kind))}</div><b>${esc(n.label)}</b><div class="muted">${b.dependents.length} dependents</div></div></div>
+      <p style="margin:12px 0 4px;color:var(--text2)">${esc(sentence)}${b.dependsOn.length > L.length ? ` Showing ${L.length} of ${b.dependsOn.length} dependencies.` : ''}${b.dependsOn.length === 0 ? ' It depends on nothing else in the kit.' : ''}</p>
+      ${open ? `<div class="cap" style="margin:12px 0 6px">${esc(open.label)} that need ${esc(n.label)}</div><div>${open.ids.map((id) => `<button class="chip" data-node="${esc(id)}">${esc(S.idx.byId.get(id).label)}</button>`).join('')}</div>` : '<div class="muted">Click a group to list its members.</div>'}</div></div>`;
+}
+
+function viewActivity() {
+  const m = S.arch.manifest;
+  const o = overlay();
+  const evs = S.feed.slice().reverse().slice(0, 120).map((e) => `<div><span class="t">${esc((e.ts || '').slice(11, 19))}</span><span class="w">${esc(e.lane || '')}</span><span class="k ${e.result === 'blocked' || e.result === 'fail' ? 'kr' : e.event === 'test' ? 'kg' : ''}">${esc(e.event)}</span><span>${esc(e.path || e.command || e.summary || e.agent || '')}</span></div>`).join('');
+  const errs = m.problems.filter((p) => p.severity === 'error'), warns = m.problems.filter((p) => p.severity === 'warn');
+  const vio = (p) => `<div class="vio ${p.severity}" ${p.component ? `data-node="${esc(p.component)}"` : ''}><b>${esc(p.severity.toUpperCase())} · ${esc(p.id)}</b><div>${esc(p.message)}</div></div>`;
+  const drift = [];
+  if (o) {
+    if (o.settings !== true) drift.push(['error', 'no hooks', `${esc((project() || {}).project)} has no usable .claude/settings.json: none of the ${o.hooks.expected} kit hooks run there`]);
+    if (o.hooks.missing.length && o.settings === true) drift.push(['error', 'missing hooks', `${o.hooks.missing.length} of ${o.hooks.expected} kit hooks are not registered: ${o.hooks.missing.slice(0, 4).map((h) => esc(h.node.replace('hook:', '') + '@' + h.event)).join(', ')}${o.hooks.missing.length > 4 ? '…' : ''}`]);
+    if (o.hooks.stale.length) drift.push(['error', 'stale hooks', `hooks name kit scripts that no longer exist: ${o.hooks.stale.map(esc).join(', ')}. Run /bootstrap --upgrade`]);
+    if (o.kit_version.project && o.kit_version.kit && o.kit_version.project !== o.kit_version.kit) drift.push(['warn', 'kit version', `project set up with kit ${esc(o.kit_version.project)}; installed kit is ${esc(o.kit_version.kit)}`]);
   }
+  $('#vtitle').textContent = 'Live activity';
+  $('#vsub').textContent = `${S.live ? 'streaming' : 'not streaming'} · events written by hooks for ${esc((project() || {}).project || 'the selected project')} · violations come from the map, drift from this project's settings`;
+  return `<div class="tblk"><div><div class="cap" style="margin-bottom:8px">Events</div><div class="feed">${evs || '<div class="empty">No events yet. Hooks write one line per tool call inside a lane.</div>'}</div></div>
+    <div><div class="cap" style="margin-bottom:8px">This project vs the kit</div>${drift.length ? drift.map(([sev, id, msg]) => `<div class="vio ${sev}"><b>${esc(sev.toUpperCase())} · ${esc(id)}</b><div>${msg}</div></div>`).join('') : '<div class="vio" style="border-color:var(--green)"><b>IN STEP</b><div>Every kit hook is registered, none is stale.</div></div>'}
+      <div class="cap" style="margin:16px 0 8px">Violations in the map (${errs.length} errors, ${warns.length} warnings)</div>${[...errs, ...warns].map(vio).join('') || '<div class="vio" style="border-color:var(--green)"><b>NONE</b><div>Every component is declared and every reference resolves.</div></div>'}</div></div>`;
+}
 
-  function renderLane(p, l) {
-    if (!l) return '';
-    const pr = l.progress, rv = l.review, ev = l.events;
-    const crit = pr.criteria ? `<tr><td>Done-criteria</td><td>${pr.green} green / ${pr.red} red / ${pr.criteria} total</td></tr>` : '';
-    const review = rv.exists ? `<tr><td>Review</td><td>${rv.verdict || '—'} · ${rv.valid ? 'valid' : 'invalid report'} · ${rv.head_matches ? 'matches HEAD' : 'stale (code changed after review)'}${rv.fails ? ` · ${rv.fails} FAIL` : ''}</td></tr>` : '<tr><td>Review</td><td>none yet</td></tr>';
-    const escal = pr.escalated ? `<tr><td class="kr">Escalation</td><td><b>${esc(pr.attempts)}</b> attempts — ${esc(pr.failure)}</td></tr>` : '';
-    const last = l.last_check ? `<tr><td>Last check</td><td class="${l.last_check.result === 'ok' ? 'kg' : 'kr'}">${esc(l.last_check.kind)}: ${esc(l.last_check.result)} — ${esc(l.last_check.summary || '')} <span class="muted">${esc((l.last_check.ts || '').replace('T', ' '))}</span></td></tr>` : '';
-    const events = state.events.length ? state.events.slice(-40).reverse().map(e => `<div class="ev"><span class="t">${esc((e.ts || '').slice(11, 19))}</span><span class="k ${e.result === 'blocked' || e.result === 'fail' ? 'kr' : e.event === 'test' ? 'kg' : e.event === 'read' ? 'kb' : ''}">${esc(e.event)}</span><span>${esc(e.path || e.command || e.summary || e.agent || '')}${e.summary && (e.path || e.command) ? ' · ' + esc(e.summary) : ''}</span></div>`).join('')
-      : `<div class="empty">${state.live ? 'No events yet.' : 'Event stream needs the live server (events.jsonl is read from the worktree).'}</div>`;
-    return `<div class="card">
-      <div style="display:flex;justify-content:space-between;align-items:center;gap:12px;margin-bottom:8px">
-        <div><div class="lbl" style="margin:0">Lane · ${esc(l.branch || l.slug)} · ${esc(l.position)}${l.stage ? ' · stage ' + esc(l.stage) : ''}</div><div style="font-size:15px;font-weight:500">${esc(l.feature)}</div></div>
-        <div style="display:flex;gap:8px">${state.live && l.worktree ? `<button data-open="${esc(l.slug)}">Open Claude in this worktree ↗</button>` : ''}${l.pr ? `<a href="${esc(l.pr)}" target="_blank" rel="noopener"><button>PR</button></a>` : ''}<button data-close>Close</button></div></div>
-      <div class="grid">
-        <div class="m"><div class="n">${pr.criteria ? `${pr.green} / ${pr.criteria}` : '—'}</div><div class="t">criteria green</div></div>
-        <div class="m"><div class="n">${l.worktree ? l.behind_base : '—'}</div><div class="t">commits behind base</div></div>
-        <div class="m"><div class="n">${ev.blocked}</div><div class="t">edits blocked by hooks</div></div>
-        <div class="m"><div class="n">${ev.tests_green} <span class="muted">/ ${ev.tests_red} red</span></div><div class="t">test runs</div></div>
-        <div class="m"><div class="n">${ev.stop_refused}</div><div class="t">stop refused</div></div>
-      </div>
-      <table>
-        <tr><td style="width:150px">Spec</td><td>${esc(l.spec || '—')} ${l.approved ? pill('approved', 'ok') : pill('not approved', 'you')} ${l.risk === 'high-risk' ? pill('high-risk', 'bad') : ''}</td></tr>
-        <tr><td>Worktree</td><td>${esc(l.worktree || '—')}${l.head ? ` <span class="muted">@ ${esc(l.head)}</span>` : ''}</td></tr>
-        ${crit}${review}${escal}${last}
-        <tr><td>Current step</td><td>${esc(pr.current_step || '—')}</td></tr>
-      </table>
-      <div class="lbl" style="margin-top:12px">Live events · written by hooks on every tool call</div>
-      <div id="events">${events}</div>
-    </div>`;
+// ------------------------------------------------------------------------------------------------ inspector
+function renderInspector() {
+  const el = $('#inspector');
+  if (!S.arch) { el.innerHTML = '<div class="muted">Select a component once the live server is running.</div>'; return; }
+  const n = S.selected ? S.idx.byId.get(S.selected) : null;
+  if (!n) {
+    const m = S.arch.manifest;
+    const errs = m.problems.filter((p) => p.severity === 'error').length, warns = m.problems.filter((p) => p.severity === 'warn').length;
+    el.innerHTML = `<div class="cap">Inspector</div><h2>Nothing selected</h2><p class="muted">Click a component to see what it is for, what depends on it, which tests cover it, and its history.</p>
+      <div class="big"><div><b>${m.nodes.length}</b><span>COMPONENTS</span></div><div><b style="color:${errs ? 'var(--red)' : 'var(--green)'}">${errs}</b><span>VIOLATIONS</span></div><div><b>${warns}</b><span>WARNINGS</span></div></div>
+      <p class="muted">The map comes from <code>kit/manifest.json</code> (what each component is for) and from the files themselves (who uses whom). A component not declared there is a violation.</p>`;
+    return;
   }
-
-  function bind() {
-    main.querySelectorAll('[data-project]').forEach(el => el.addEventListener('click', () => { state.selected = el.dataset.project; state.lane = null; state.events = []; render(); }));
-    main.querySelectorAll('[data-back]').forEach(el => el.addEventListener('click', () => { state.selected = null; state.lane = null; render(); }));
-    main.querySelectorAll('[data-lane]').forEach(el => el.addEventListener('click', e => { e.stopPropagation(); selectLane(el.dataset.lane); }));
-    main.querySelectorAll('[data-close]').forEach(el => el.addEventListener('click', () => { state.lane = null; state.events = []; render(); }));
-    main.querySelectorAll('[data-open]').forEach(el => el.addEventListener('click', async () => {
-      el.disabled = true; el.textContent = 'Opening…';
-      try { const r = await fetch(`/api/open/${encodeURIComponent(el.dataset.open)}`, { method: 'POST' }); const j = await r.json(); el.textContent = j.ok ? 'Opened in a terminal' : ('Could not open: ' + (j.error || '')); }
-      catch (err) { el.textContent = 'Could not open'; }
-    }));
+  const V = S.V, b = V.blastRadius(S.arch.manifest, S.idx, n.id), st = states().get(n.id);
+  const tabs = ['overview', 'impact', 'tests', 'history'];
+  let body = '';
+  if (S.itab === 'overview') {
+    const attrs = [];
+    if (n.kind === 'agent') attrs.push(['tools', n.attrs.tools.join(', ')], ['model', n.attrs.model]);
+    if (n.kind === 'hook') attrs.push(['runs on', (n.attrs.events || []).join(', ') || 'no event'], ['registered by', (S.idx.inn.get(n.id) || []).filter((e) => e.kind === 'hook').map((e) => S.idx.byId.get(e.from).label).join(', ') || 'nothing']);
+    if (n.kind === 'command') attrs.push(['arguments', n.attrs.argument_hint || 'none'], ['allowed tools', (n.attrs.allowed_tools || []).join(', ') || 'default']);
+    if (n.kind === 'ci-job') attrs.push(['pipeline', n.attrs.pipeline], ['steps', String(n.attrs.steps)]);
+    if (n.kind === 'settings') attrs.push(['deny rules', String(n.attrs.deny_rules)]);
+    const o = overlay();
+    if (o && n.kind === 'hook') attrs.push(['in ' + ((project() || {}).project || 'project'), o.installed_nodes.includes(n.id) ? 'registered' : 'not registered']);
+    body = `${n.purpose ? `<p>${esc(n.purpose)} <span class="prov">DECLARED</span></p>` : n.attrs.description ? `<p>${esc(n.attrs.description)}</p>` : ''}
+      ${n.writes ? `<p class="muted">writes: ${esc(n.writes)} <span class="prov">DECLARED</span></p>` : ''}
+      <div class="kv">${attrs.map(([k, v]) => `<span>${esc(k)}</span><span>${esc(v)}</span>`).join('')}<span>defined in</span><span class="src">${esc(n.path)}${n.stats && n.stats.lines ? ` · ${n.stats.lines} lines` : ''} <span class="prov">OBSERVED</span></span></div>
+      ${st.tags.map((t) => `<div class="vio ${t.tone === 'bad' ? 'error' : t.tone === 'warn' ? 'warn' : ''}"><b>${esc(t.label.toUpperCase())}</b><div>${esc(t.detail)}</div></div>`).join('')}`;
+  } else if (S.itab === 'impact') {
+    body = `<div class="big"><div><b>${b.dependents.length}</b><span>DEPENDENTS</span></div><div><b>${st.tags.filter((t) => t.key === 'violation').length}</b><span>VIOLATIONS</span></div><div><b>${b.cases}</b><span>TEST CASES</span></div></div>
+      <div class="cap" style="margin:14px 0 6px">If this changes</div>
+      ${b.groups.map((g) => `<div class="li" data-group="${esc(g.kind)}"><span>${g.count} of ${g.total} ${esc(g.label)}</span><small>${esc(g.first)}${g.more ? ' +' + g.more : ''}</small></div>`).join('') || '<div class="empty">Nothing else needs it.</div>'}
+      <div class="cap" style="margin:14px 0 6px">Depends on</div>
+      ${b.dependsOn.map((d) => `<div class="li" data-node="${esc(d.id)}"><span>${esc(d.label)} <small>${esc(d.kind)}${d.event ? ' ' + esc(d.event) : ''}</small></span><small>${esc(d.evidence.file.split('/').pop())}:${d.evidence.line}</small></div>`).join('') || '<div class="empty">Nothing in the kit.</div>'}
+      <div class="btnrow"><button id="blastBtn" aria-pressed="${S.blast}">Highlight blast radius</button></div>`;
+  } else if (S.itab === 'tests') {
+    const name = (id) => S.idx.byId.get(id);
+    body = `<div class="cap" style="margin-bottom:6px">Test files that name or import it</div>
+      ${b.directTests.map((t) => `<div class="li" data-node="${esc(t)}"><span>${esc(name(t).label)}</span><small>${name(t).stats.cases} cases</small></div>`).join('') || '<div class="vio warn"><b>NOT COVERED DIRECTLY</b><div>No test file imports or names this component.</div></div>'}
+      <div class="cap" style="margin:14px 0 6px">All tests a change can reach (${b.cases} cases)</div>
+      ${b.tests.map((t) => `<div class="li" data-node="${esc(t)}"><span>${esc(name(t).label)}</span><small>${name(t).stats.cases} cases</small></div>`).join('') || '<div class="empty">None.</div>'}
+      <div class="cap" style="margin:14px 0 6px">CI jobs that run them</div>${b.jobs.map((j) => `<div class="li" data-node="${esc(j)}"><span>${esc(name(j).label)}</span><small>${esc(j.split('/')[0].replace('ci-job:', ''))}</small></div>`).join('') || '<div class="empty">None.</div>'}
+      <p class="muted">Case counts are a static count of <code>test(</code> calls in each file.</p>`;
+  } else {
+    const h = S.history.get(n.id);
+    body = h === undefined ? '<div class="empty">Loading history…</div>' : h === null ? '<div class="empty">History unavailable.</div>'
+      : `<div class="hist">${h.map((c) => `<div><b>${esc(c.sha)}</b>${esc(c.date)} · ${esc(c.author)}<br>${esc(c.subject)}</div>`).join('') || '<div class="empty">No commits touch this file.</div>'}</div><p class="muted">From <code>git log -- ${esc(n.path)}</code></p>`;
+    if (h === undefined) loadHistory(n.id);
   }
+  const url = V.githubFileUrl(S.arch.git, n);
+  el.innerHTML = `<div class="cap">${esc(V.kindLabel(n.kind))}${st.tags.length ? ' · ' + esc(st.tags[0].label.toUpperCase()) : ''}</div><h2>${esc(n.label)}</h2><div class="src">${esc(n.path)}</div>
+    <div class="itabs" role="tablist">${tabs.map((t) => `<button class="itab" role="tab" data-itab="${t}" aria-selected="${S.itab === t}">${t[0].toUpperCase() + t.slice(1)}</button>`).join('')}</div>${body}
+    ${url ? `<div class="btnrow"><a href="${esc(url)}" target="_blank" rel="noopener"><button>Open on GitHub ↗</button></a></div>` : ''}`;
+}
 
-  async function selectLane(slug) {
-    state.lane = slug; state.events = [];
-    render();
-    if (state.live) {
-      try { const r = await fetch(`/api/events/${encodeURIComponent(slug)}?project=${encodeURIComponent(state.selected)}`); if (r.ok) state.events = await r.json(); } catch (e) { /* ignore */ }
-      render();
-    }
+async function loadHistory(id) {
+  try {
+    const r = await getJson(`/api/history?id=${encodeURIComponent(id)}`);
+    S.history.set(id, r.commits);
+  } catch (e) { S.history.set(id, null); }
+  if (S.selected === id && S.itab === 'history') renderInspector();
+}
+
+// ------------------------------------------------------------------------------------------------ screens
+function renderArch() {
+  renderSide();
+  const v = $('#view');
+  if (!S.live || !S.V) {
+    $('#vtitle').textContent = 'Architecture Canvas';
+    $('#vsub').textContent = '';
+    v.innerHTML = '<div class="empty">The architecture map is built from the repository by the live server. Start it with <code>node ~/.claude/kit/dashboard/server.js --repo .</code>. The Worktrees screen also works from a static status.json.</div>';
+    $('#inspector').innerHTML = '';
+    return;
   }
+  if (!S.arch) { v.innerHTML = '<div class="empty">Reading the repository…</div>'; return; }
+  v.innerHTML = { system: viewSystem, agents: viewAgents, pipeline: viewPipeline, deps: viewDeps, activity: viewActivity }[S.view]();
+  renderInspector();
+}
 
-  function startLive() {
-    if (!('EventSource' in window)) return;
+function render() {
+  renderChrome();
+  if (S.tab === 'arch') renderArch(); else renderWorktrees();
+}
+
+// ------------------------------------------------------------------------------------------------ worktrees
+const STAGES = [
+  { id: 'research', label: 'Research', match: ['researching'] },
+  { id: 'plan', label: 'Plan', match: ['planning'] },
+  { id: 'approve', label: 'You approve', cls: 'you', match: ['waiting-approval'] },
+  { id: 'build', label: 'Build', match: ['approved', 'building', 'escalated'] },
+  { id: 'review', label: 'Review + CI', cls: 'gate', match: ['in-review'] },
+  { id: 'merge', label: 'You merge', cls: 'you', match: ['ready-to-merge'] },
+];
+const POS_CLASS = { 'waiting-approval': 'you-p', 'ready-to-merge': 'you-p', escalated: 'bad', building: 'agent', 'in-review': 'gate', merged: 'ok', approved: 'agent', researching: 'agent', planning: 'agent', queued: 'neutral' };
+
+function renderWorktrees() {
+  const main = $('#main');
+  if (!S.status.length) { main.innerHTML = '<div class="card"><div class="empty">No status.json found. Run <code>node ~/.claude/kit/scripts/kit_status.js --repo . --out dashboard/status.json</code>, or start the live server: <code>node ~/.claude/kit/dashboard/server.js --repo .</code></div></div>'; return; }
+  const p = project();
+  main.innerHTML = (S.status.length > 1 ? renderIndex() : '') + (p ? renderProject(p) : '');
+  bindWorktrees(main);
+}
+
+function renderIndex() {
+  const rows = S.status.map((p) => {
+    const ci = p.ci_main ? (p.ci_main.conclusion || p.ci_main.status) : null;
+    return `<div class="row" data-project="${esc(p.root)}"><span class="name">${esc(p.project)}</span><span>
+      ${p.needs_you.length ? pill(`${p.needs_you.length} waiting on you`, 'you-p') : pill('0 waiting', 'ok')}
+      ${pill(`${p.wip.in_flight} / ${p.wip.limit} lanes`, 'agent')}
+      ${ci ? pill(`CI ${ci}`, ci === 'success' ? 'ok' : 'bad') : ''}
+      ${p.debt.text_only_lessons ? pill(`${p.debt.text_only_lessons} debt`, 'neutral') : ''}</span></div>`;
+  }).join('');
+  return `<div class="card"><div class="lbl">All projects · click one</div>${rows}</div>`;
+}
+
+function renderProject(p) {
+  const lanes = p.lanes || [];
+  const stages = STAGES.map((s) => {
+    const here = lanes.filter((l) => s.match.includes(l.position));
+    const marks = here.map((l) => `<span class="mk ${l.slug === S.laneSel ? 'sel' : POS_CLASS[l.position] || 'agent'}" data-lane="${esc(l.slug)}" title="${esc(l.position)}">${esc(l.slug)}</span>`).join('');
+    return `<div class="stage ${s.cls || ''}">${esc(s.label)}${marks || '<span class="mk" style="visibility:hidden">·</span>'}</div>`;
+  }).join('');
+  const needs = p.needs_you.length
+    ? p.needs_you.map((n) => `<div class="row" data-lane="${esc(n.slug)}"><span><span class="name">${esc(n.slug)}</span> <span class="muted">${esc(n.position)}${n.failure ? ' — ' + esc(n.failure) : ''}</span></span>${pill(n.position === 'escalated' ? 'read escalation' : n.position === 'waiting-approval' ? 'approve spec' : 'merge PR', n.position === 'escalated' ? 'bad' : 'you-p')}</div>`).join('')
+    : '<div class="empty">Nothing waits on you.</div>';
+  const queued = lanes.filter((l) => l.position === 'queued').map((l) => esc(l.slug)).join(', ');
+  const active = lanes.filter((l) => !['queued', 'merged'].includes(l.position));
+  const laneRows = active.length ? active.map((l) => `<div class="row" data-lane="${esc(l.slug)}"><span><span class="name">${esc(l.slug)}</span> <span class="muted">${esc(l.feature)}</span></span><span>
+      ${pill(l.position, POS_CLASS[l.position] || 'agent')}
+      ${l.worktree ? pill(`${l.behind_base} behind`, l.behind_base > 0 ? 'bad' : 'neutral') : ''}
+      ${l.progress.criteria ? pill(`${l.progress.green}/${l.progress.criteria} green`, l.progress.green === l.progress.criteria ? 'ok' : 'neutral') : ''}
+      ${l.events.blocked ? pill(`${l.events.blocked} blocked`, 'bad') : ''}
+      ${l.risk === 'high-risk' ? pill('high-risk', 'bad') : ''}</span></div>`).join('') : '<div class="empty">No active lanes.</div>';
+  const d = p.debt, r = p.research;
+  const detail = S.laneSel ? renderLane(p, lanes.find((l) => l.slug === S.laneSel)) : '';
+  return `
+    ${S.status.length > 1 ? `<div class="crumbs"><a data-back>All projects</a> › ${esc(p.project)}</div>` : ''}
+    <div class="card"><div class="lbl">${esc(p.project)} · kit ${esc(p.kit_version || '')} · WIP ${p.wip.in_flight} / ${p.wip.limit}</div>
+      <div class="pipe">${stages}</div>
+      <div class="muted" style="margin-top:8px">Position is derived from the spec, worktree, progress file, review report, and git. Agents do not report it. Click a marker.</div></div>
+    ${detail}
+    <div class="card"><div class="lbl">Needs you</div>${needs}</div>
+    <div class="card"><div class="lbl">Lanes</div>${laneRows}${queued ? `<div class="muted" style="margin-top:8px">Queued: ${queued}</div>` : ''}</div>
+    <div class="card"><div class="lbl">Health</div><div class="grid">
+      <div class="m"><div class="n">${d.text_only_lessons}</div><div class="t">text-only lessons (debt)</div></div>
+      <div class="m"><div class="n">${d.claude_md_bytes} <span class="muted">/ ${d.claude_md_cap}</span></div><div class="t">CLAUDE.md bytes</div></div>
+      <div class="m"><div class="n">${d.bootstrap_todos}</div><div class="t">bootstrap TODOs</div></div>
+      <div class="m"><div class="n">${r.questions} <span class="muted">· ${r.stale} stale</span></div><div class="t">research questions</div></div>
+      <div class="m"><div class="n">${p.ci_main ? esc(p.ci_main.conclusion || p.ci_main.status) : '—'}</div><div class="t">CI on main</div></div>
+    </div></div>`;
+}
+
+function renderLane(p, l) {
+  if (!l) return '';
+  const pr = l.progress, rv = l.review, ev = l.events;
+  const crit = pr.criteria ? `<tr><td>Done-criteria</td><td>${pr.green} green / ${pr.red} red / ${pr.criteria} total</td></tr>` : '';
+  const review = rv.exists ? `<tr><td>Review</td><td>${rv.verdict || '—'} · ${rv.valid ? 'valid' : 'invalid report'} · ${rv.head_matches ? 'matches HEAD' : 'stale (code changed after review)'}${rv.fails ? ` · ${rv.fails} FAIL` : ''}</td></tr>` : '<tr><td>Review</td><td>none yet</td></tr>';
+  const escal = pr.escalated ? `<tr><td class="kr">Escalation</td><td><b>${esc(pr.attempts)}</b> attempts — ${esc(pr.failure)}</td></tr>` : '';
+  const last = l.last_check ? `<tr><td>Last check</td><td class="${l.last_check.result === 'ok' ? 'kg' : 'kr'}">${esc(l.last_check.kind)}: ${esc(l.last_check.result)} — ${esc(l.last_check.summary || '')} <span class="muted">${esc((l.last_check.ts || '').replace('T', ' '))}</span></td></tr>` : '';
+  const events = S.laneEvents.length ? S.laneEvents.slice(-40).reverse().map((e) => `<div class="ev"><span class="t">${esc((e.ts || '').slice(11, 19))}</span><span class="k ${e.result === 'blocked' || e.result === 'fail' ? 'kr' : e.event === 'test' ? 'kg' : e.event === 'read' ? 'kb' : ''}">${esc(e.event)}</span><span>${esc(e.path || e.command || e.summary || e.agent || '')}${e.summary && (e.path || e.command) ? ' · ' + esc(e.summary) : ''}</span></div>`).join('')
+    : `<div class="empty">${S.live ? 'No events yet.' : 'Event stream needs the live server (events.jsonl is read from the worktree).'}</div>`;
+  return `<div class="card">
+    <div style="display:flex;justify-content:space-between;align-items:center;gap:12px;margin-bottom:8px">
+      <div><div class="lbl" style="margin:0">Lane · ${esc(l.branch || l.slug)} · ${esc(l.position)}${l.stage ? ' · stage ' + esc(l.stage) : ''}</div><div style="font-size:15px;font-weight:500">${esc(l.feature)}</div></div>
+      <div style="display:flex;gap:8px">${S.live && l.worktree ? `<button data-open="${esc(l.slug)}">Open Claude in this worktree ↗</button>` : ''}${l.pr ? `<a href="${esc(l.pr)}" target="_blank" rel="noopener"><button>PR</button></a>` : ''}<button data-close>Close</button></div></div>
+    <div class="grid">
+      <div class="m"><div class="n">${pr.criteria ? `${pr.green} / ${pr.criteria}` : '—'}</div><div class="t">criteria green</div></div>
+      <div class="m"><div class="n">${l.worktree ? l.behind_base : '—'}</div><div class="t">commits behind base</div></div>
+      <div class="m"><div class="n">${ev.blocked}</div><div class="t">edits blocked by hooks</div></div>
+      <div class="m"><div class="n">${ev.tests_green} <span class="muted">/ ${ev.tests_red} red</span></div><div class="t">test runs</div></div>
+      <div class="m"><div class="n">${ev.stop_refused}</div><div class="t">stop refused</div></div>
+    </div>
+    <table>
+      <tr><td style="width:150px">Spec</td><td>${esc(l.spec || '—')} ${l.approved ? pill('approved', 'ok') : pill('not approved', 'you-p')} ${l.risk === 'high-risk' ? pill('high-risk', 'bad') : ''}</td></tr>
+      <tr><td>Worktree</td><td>${esc(l.worktree || '—')}${l.head ? ` <span class="muted">@ ${esc(l.head)}</span>` : ''}</td></tr>
+      ${crit}${review}${escal}${last}
+      <tr><td>Current step</td><td>${esc(pr.current_step || '—')}</td></tr>
+    </table>
+    <div class="lbl" style="margin-top:12px">Live events · written by hooks on every tool call</div>
+    <div id="events">${events}</div>
+  </div>`;
+}
+
+function bindWorktrees(main) {
+  main.querySelectorAll('[data-project]').forEach((el) => el.addEventListener('click', () => { S.root = el.dataset.project; S.laneSel = null; S.laneEvents = []; renderWorktrees(); }));
+  main.querySelectorAll('[data-back]').forEach((el) => el.addEventListener('click', () => { S.laneSel = null; S.root = null; renderWorktrees(); }));
+  main.querySelectorAll('[data-lane]').forEach((el) => el.addEventListener('click', (e) => { e.stopPropagation(); selectLane(el.dataset.lane); }));
+  main.querySelectorAll('[data-close]').forEach((el) => el.addEventListener('click', () => { S.laneSel = null; S.laneEvents = []; renderWorktrees(); }));
+  main.querySelectorAll('[data-open]').forEach((el) => el.addEventListener('click', async () => {
+    el.disabled = true; el.textContent = 'Opening…';
+    try { const r = await fetch(`/api/open/${encodeURIComponent(el.dataset.open)}?project=${encodeURIComponent(S.root)}`, { method: 'POST' }); const j = await r.json(); el.textContent = j.ok ? 'Opened in a terminal' : ('Could not open: ' + (j.error || '')); }
+    catch (err) { el.textContent = 'Could not open'; }
+  }));
+}
+
+async function selectLane(slug) {
+  S.laneSel = slug; S.laneEvents = [];
+  renderWorktrees();
+  if (S.live) {
+    try { S.laneEvents = await getJson(`/api/events/${encodeURIComponent(slug)}?project=${encodeURIComponent(S.root)}`); } catch (e) { /* ignore */ }
+    renderWorktrees();
+  }
+}
+
+// ------------------------------------------------------------------------------------------------ events from the page
+document.addEventListener('click', (e) => {
+  const t = e.target.closest('[data-view],[data-node],[data-itab],[data-group],#blastBtn');
+  if (!t) return;
+  if (t.dataset.view) return go({ view: t.dataset.view });
+  if (t.dataset.node) {
+    const same = S.selected === t.dataset.node;
+    S.selected = t.dataset.node;
+    if (!same) { S.itab = 'overview'; S.groupOpen = null; }
+    return go({ id: S.selected });
+  }
+  if (t.dataset.itab) { S.itab = t.dataset.itab; return renderInspector(); }
+  if (t.dataset.group) { S.groupOpen = S.groupOpen === t.dataset.group && S.view === 'deps' ? null : t.dataset.group; return S.view === 'deps' ? renderArch() : go({ view: 'deps' }); }
+  if (t.id === 'blastBtn') { S.blast = !S.blast; return renderArch(); }
+});
+document.addEventListener('keydown', (e) => {
+  if ((e.key === 'Enter' || e.key === ' ') && e.target.matches('[data-node]')) { e.preventDefault(); e.target.dispatchEvent(new MouseEvent('click', { bubbles: true })); }
+});
+document.addEventListener('input', (e) => {
+  if (e.target.id === 'q') { S.query = e.target.value; const pos = e.target.selectionStart; renderArch(); const q = $('#q'); q.focus(); q.setSelectionRange(pos, pos); }
+});
+document.addEventListener('change', (e) => {
+  if (e.target.id === 'kindSel') { S.kind = e.target.value; renderArch(); }
+  if (e.target.id === 'projectSel') { S.root = e.target.value; S.laneSel = null; S.laneEvents = []; S.feed = []; seedEvents().then(render); render(); }
+});
+document.addEventListener('click', (e) => {
+  const tab = e.target.closest('[data-tab]');
+  if (tab) go({ tab: tab.dataset.tab });
+});
+$('#refresh').addEventListener('click', async () => { await loadStatus(); await loadArch(); render(); });
+
+// ------------------------------------------------------------------------------------------------ start
+async function start() {
+  try { S.V = await import('./model.js'); } catch (e) { S.V = null; }
+  const r = parseHash();
+  S.tab = r.tab; S.view = r.view; S.selected = r.id;
+  if (location.protocol.startsWith('http')) {
+    try { await getJson('/api/status'); S.live = true; } catch (e) { S.live = false; }
+  }
+  await loadStatus();
+  if (!S.live && !location.hash) S.tab = 'worktrees';
+  try { await loadArch(); } catch (e) { S.arch = null; }
+  if (S.selected && S.idx && !S.idx.byId.has(S.selected)) S.selected = null;
+  render();
+  if (S.live && 'EventSource' in window) {
     const es = new EventSource('/api/stream');
-    es.onopen = () => { state.live = true; document.getElementById('live').innerHTML = '<b>live</b> · <span id="generated"></span>'; load(); };
-    es.onmessage = m => {
-      try {
-        const msg = JSON.parse(m.data);
-        if (msg.type === 'status') { state.projects = Array.isArray(msg.data) ? msg.data : [msg.data]; const g = document.getElementById('generated'); if (g && state.projects[0]) g.textContent = (state.projects[0].generated || '').replace('T', ' '); render(); }
-        if (msg.type === 'event' && state.lane && msg.lane === state.lane) { state.events.push(msg.data); const box = document.getElementById('events'); if (box) render(); }
-      } catch (e) { /* ignore malformed */ }
+    es.onmessage = async (m) => {
+      let msg; try { msg = JSON.parse(m.data); } catch (e) { return; }
+      if (msg.type === 'status') { S.status = Array.isArray(msg.data) ? msg.data : [msg.data]; if (S.tab === 'worktrees' || S.arch) { try { await loadArch(); } catch (e) { /* keep the last map */ } } render(); }
+      if (msg.type === 'architecture') { try { await loadArch(); } catch (e) { /* keep the last map */ } render(); }
+      if (msg.type === 'event') {
+        if (msg.root === S.root) { S.feed.push({ ...msg.data, lane: msg.lane }); S.feed = S.feed.slice(-200); S.lastEventAt[msg.lane] = Date.now(); }
+        if (S.laneSel && msg.lane === S.laneSel && msg.root === S.root) S.laneEvents.push(msg.data);
+        if (S.tab === 'worktrees' && S.laneSel) renderWorktrees(); else if (S.tab === 'arch' && ['activity', 'agents', 'pipeline'].includes(S.view)) renderArch();
+      }
     };
-    es.onerror = () => { es.close(); state.live = false; };
+    es.onerror = () => { $('#livedot').className = 'dot warn'; $('#livetext').textContent = 'RECONNECTING'; };
+    es.onopen = () => { $('#livedot').className = 'dot on'; $('#livetext').textContent = 'LIVE'; };
   }
-
-  document.getElementById('refresh').addEventListener('click', load);
-  load();
-  if (location.protocol.startsWith('http')) startLive();
-})();
+}
+start();
 </script>
 </body>
 </html>

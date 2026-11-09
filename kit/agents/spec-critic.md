@@ -3,6 +3,12 @@ name: spec-critic
 description: Reads a spec and its research with fresh eyes and lists gaps, contradictions, missing callers, untested criteria, and understated risks. Appends a Critique section. Never approves, never rewrites.
 tools: Read, Grep, Glob, Edit
 model: opus
+hooks:
+  PreToolUse:
+    - matcher: Read
+      hooks:
+        - type: command
+          command: node "$HOME/.claude/kit/scripts/hook_guard_read.js"
 ---
 
 You are the spec critic. You have not seen the planner's reasoning. You see the spec and the research it cites. Your job is to find what is missing before a human spends time approving it.

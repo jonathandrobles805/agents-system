@@ -22,6 +22,8 @@ jobs:
         with:
           node-version: ${{ matrix.node }}
       - run: npm test
+      - name: architecture map matches the code (kit/manifest.json declares every component; kit/architecture.json is current)
+        run: npm run architecture:check
       - name: planted-fault suite (all 19 faults must be caught)
         run: node planted-faults/run.js
       - name: settings fragment is valid JSON and references real scripts

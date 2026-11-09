@@ -295,6 +295,7 @@ Produces `status.json` from `ROADMAP.md`, specs, progress, review reports, logs,
 - Static mode: `kit/dashboard/index.html` renders `status.json`; CI publishes it to GitHub Pages on every push.
 - Live mode: `kit/dashboard/server.js` (Node, no dependencies) watches the files, pushes updates over Server-Sent Events, streams `.events.jsonl`, and exposes "open Claude in this worktree", which launches `claude` in the lane's directory, resuming that lane's session.
 - Index page across projects: `kit-status --all` reads a list of project paths from `~/.claude/kit-projects.json`.
+- Architecture Canvas (live mode): `GET /api/architecture` returns the manifest (components, edges with file and line evidence, pipeline stages, violations) built by `kit/scripts/arch_manifest.js` from the kit's files and compared with the declared purposes in `kit/manifest.json`, plus per-project overlays (installed hooks against the kit's, kit version, lane stages). Overlays are keyed by project root, so two projects with the same name never mix. `GET /api/history?id=` returns git history for a component. The committed snapshot `kit/architecture.json` is checked in kit CI (`npm run architecture:check`). The canvas is live-mode only; static mode shows the Worktrees tab.
 
 ---
 
