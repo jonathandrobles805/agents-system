@@ -2,7 +2,7 @@
 """kit-status: derive the state of a project from files and git. Nothing here comes from an agent's summary.
 
   kit_status.py --repo R [--json] [--out status.json]
-  kit_status.py --all [--json]            every project listed in ~/.claude/kit/projects.json
+  kit_status.py --all [--json]            every project listed in ~/.claude/kit-projects.json
 
 Lane position rules (first match wins):
   merged            ROADMAP status merged
@@ -264,7 +264,7 @@ def main(argv=None) -> int:
     ap.add_argument("--out", help="also write status.json here")
     a = ap.parse_args(argv)
     if a.all:
-        reg = Path(os.environ.get("CLAUDE_HOME", Path.home() / ".claude")) / "kit" / "projects.json"
+        reg = Path(os.environ.get("CLAUDE_HOME", Path.home() / ".claude")) / "kit-projects.json"
         projects = json.loads(reg.read_text()) if reg.is_file() else []
         results = [project_status(Path(p).expanduser().resolve()) for p in projects if Path(p).expanduser().is_dir()]
         if a.json:

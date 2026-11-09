@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Notification / Stop hook: tell the human something needs them. Desktop notification by default;
-optional webhook from ~/.claude/kit/notify.json: {"webhook": "https://...", "desktop": true}. Exit 0 always."""
+optional webhook from ~/.claude/kit-notify.json: {"webhook": "https://...", "desktop": true}. Exit 0 always."""
 from __future__ import annotations
 import json, os, platform, subprocess, sys, urllib.request
 from pathlib import Path
@@ -28,7 +28,7 @@ def main() -> int:
     cwd = Path(d.get("cwd") or ".")
     lane = K.find_lane(cwd)
     ev = d.get("hook_event_name", "")
-    cfg_path = Path(os.environ.get("CLAUDE_HOME", Path.home() / ".claude")) / "kit" / "notify.json"
+    cfg_path = Path(os.environ.get("CLAUDE_HOME", Path.home() / ".claude")) / "kit-notify.json"
     cfg = {}
     if cfg_path.is_file():
         try:

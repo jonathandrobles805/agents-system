@@ -18,6 +18,8 @@ All notable changes to the kit. Each entry names the decision or lesson that cau
 - Phase 3b: `kit_status.py`: derived lane positions, needs-you list, drift, events summary, debt, research staleness; `--all` across projects.
 - Phase 3c: commands `/research`, `/plan`, `/implement`, `/review`, `/sync`, `/retro`, `/status`; mechanical end-to-end pipeline test; decision 0006.
 - Phase 4: `planted-faults/run.py`: all 19 faults from KIT-SPEC section 10 planted and caught (17 mechanically, 2 via project tool / kit CI); runs in kit CI on every change.
+- Phase 6: dashboard. `kit/dashboard/index.html` (self-contained, static via `status.json` or live) and `kit/dashboard/server.py` (stdlib: status recompute on file change, SSE push, per-lane event stream, "open Claude in this worktree" for localhost). `/dashboard` command. Optional GitHub Pages publish job in the project CI template (repository variable `KIT_DASHBOARD_PAGES=true`).
+- Bootstrap registers each project in `~/.claude/kit-projects.json` for `/status --all` and the dashboard. Notification config moves to `~/.claude/kit-notify.json`.
 - `ci_boundaries_simple.py`: ARCHITECTURE.md-driven import-boundary fallback for projects without dependency-cruiser / import-linter; bootstrap wires it in when no boundaries tool is found.
 - `sync.sh` falls back to the local base branch when the repo has no origin.
 - `kitlib.review_head_ok`: a review is current when it names HEAD, or HEAD's parent when HEAD only touched the report, lane-owned docs, and tests.
