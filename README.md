@@ -38,4 +38,8 @@ python3 planted-faults/run.py
 ```
 Plants the 19 faults from the spec (unread edit, out-of-spec edit, deleted assertion, boundary violation, missed caller, false citation, open question, undeclared dependency, committed secret, oversize CLAUDE.md, removed hook, premature done, overlapping specs, evidence-free review, secret read, budget, merge conflict, broken kit, vulnerable dependency) and shows each caught by the gate that owns it. Runs in kit CI.
 
-Status: Phases 1–4 complete. Next: first real project, then the dashboard.
+## Dashboard
+
+`/dashboard` (or `python3 ~/.claude/kit/dashboard/server.py --all`) opens a live page: every feature's position on the pipeline, what needs you, each lane's criteria, drift, review state, the hook event stream, and a button that opens Claude in a lane's worktree. Every value comes from files and git; the page never shows an agent's claim.
+
+Status: Phases 1–4 and 6 complete. Next: first real project (Phase 5 retro loop is exercised there).

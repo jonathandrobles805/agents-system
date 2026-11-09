@@ -1,0 +1,227 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>agent-kit dashboard</title>
+<style>
+  :root{--bg:#faf9f6;--card:#fff;--text:#2c2c2a;--muted:#5f5e5a;--hint:#888780;--border:#d3d1c7;--border2:#b4b2a9;
+    --agent-bg:#EEEDFE;--agent-fg:#3C3489;--agent-bd:#AFA9EC;--gate-bg:#E1F5EE;--gate-fg:#085041;--gate-bd:#5DCAA5;
+    --you-bg:#FAEEDA;--you-fg:#633806;--you-bd:#FAC775;--bad-bg:#FCEBEB;--bad-fg:#791F1F;--bad-bd:#F09595;--ok-bg:#EAF3DE;--ok-fg:#27500A;--ok-bd:#C0DD97}
+  @media (prefers-color-scheme:dark){:root{--bg:#1c1c1a;--card:#262624;--text:#e8e6df;--muted:#b4b2a9;--hint:#888780;--border:#444441;--border2:#5f5e5a;
+    --agent-bg:#3C3489;--agent-fg:#CECBF6;--gate-bg:#085041;--gate-fg:#9FE1CB;--you-bg:#633806;--you-fg:#FAC775;--bad-bg:#791F1F;--bad-fg:#F7C1C1;--ok-bg:#27500A;--ok-fg:#C0DD97}}
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--text);font:14px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI",Helvetica,Arial,sans-serif}
+  header{display:flex;align-items:center;gap:14px;padding:14px 22px;border-bottom:1px solid var(--border)}
+  header h1{font-size:16px;font-weight:500;margin:0}
+  header .live{font-size:12px;color:var(--muted)}
+  header .live b{font-weight:500}
+  main{max-width:1100px;margin:0 auto;padding:20px 22px 60px}
+  .card{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:14px 18px;margin-bottom:14px}
+  .lbl{font-size:12px;color:var(--hint);margin-bottom:8px}
+  .pill{display:inline-block;font-size:12px;padding:2px 9px;border-radius:999px;border:1px solid;margin:2px 4px 2px 0;white-space:nowrap}
+  .agent{background:var(--agent-bg);color:var(--agent-fg);border-color:var(--agent-bd)}
+  .gate{background:var(--gate-bg);color:var(--gate-fg);border-color:var(--gate-bd)}
+  .you{background:var(--you-bg);color:var(--you-fg);border-color:var(--you-bd)}
+  .bad{background:var(--bad-bg);color:var(--bad-fg);border-color:var(--bad-bd)}
+  .ok{background:var(--ok-bg);color:var(--ok-fg);border-color:var(--ok-bd)}
+  .neutral{background:var(--bg);color:var(--text);border-color:var(--border)}
+  .row{display:flex;justify-content:space-between;align-items:center;gap:12px;padding:9px 0;border-bottom:1px solid var(--border);cursor:pointer}
+  .row:last-child{border-bottom:0}
+  .row:hover{background:color-mix(in srgb,var(--card) 70%,var(--bg))}
+  .row .name{font-weight:500}
+  .pipe{display:flex;gap:6px;align-items:flex-start}
+  .stage{flex:1;min-width:0;text-align:center;font-size:12px;padding:8px 4px;border-radius:8px;border:1px solid var(--border);background:var(--bg);min-height:62px}
+  .stage.gate{background:var(--gate-bg);border-color:var(--gate-bd);color:var(--gate-fg)}
+  .stage.you{background:var(--you-bg);border-color:var(--you-bd);color:var(--you-fg)}
+  .stage .mk{display:block;font-size:11px;padding:2px 7px;border-radius:999px;margin:6px auto 0;border:1px solid;cursor:pointer;max-width:100%;overflow:hidden;text-overflow:ellipsis}
+  .mk.sel{background:var(--agent-fg);color:var(--agent-bg);border-color:var(--agent-fg)}
+  .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:10px;margin:12px 0}
+  .m{background:var(--bg);border-radius:8px;padding:10px 12px}
+  .m .n{font-size:20px;font-weight:500}.m .t{font-size:12px;color:var(--muted)}
+  .ev{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12px;padding:4px 0;border-bottom:1px solid var(--border);display:flex;gap:10px}
+  .ev .t{color:var(--hint);min-width:64px}.ev .k{min-width:96px}
+  .kr{color:#A32D2D}.kg{color:#3B6D11}.kb{color:#185FA5}
+  @media (prefers-color-scheme:dark){.kr{color:#F09595}.kg{color:#C0DD97}.kb{color:#85B7EB}}
+  button{font:inherit;font-size:13px;padding:6px 12px;border-radius:8px;border:1px solid var(--border2);background:var(--card);color:var(--text);cursor:pointer}
+  button:hover{background:var(--bg)}
+  button:disabled{opacity:.5;cursor:default}
+  a{color:inherit}
+  .muted{color:var(--muted);font-size:12px}
+  .empty{color:var(--hint);font-size:13px;padding:8px 0}
+  .crumbs{font-size:13px;color:var(--muted);margin-bottom:10px}
+  .crumbs a{cursor:pointer;text-decoration:underline}
+  table{width:100%;border-collapse:collapse;font-size:13px}
+  td,th{text-align:left;padding:6px 8px;border-bottom:1px solid var(--border);vertical-align:top}
+  th{font-weight:500;color:var(--muted);font-size:12px}
+  pre{background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:10px;font-size:12px;overflow:auto;max-height:260px;margin:0}
+</style>
+</head>
+<body>
+<header>
+  <h1>agent-kit</h1>
+  <span class="live" id="live">static · <span id="generated"></span></span>
+  <span style="flex:1"></span>
+  <button id="refresh">Refresh</button>
+</header>
+<main id="main"><div class="empty">Loading status…</div></main>
+
+<script>
+(function () {
+  'use strict';
+  const STAGES = [
+    { id: 'research', label: 'Research', match: ['researching'] },
+    { id: 'plan', label: 'Plan', match: ['planning'] },
+    { id: 'approve', label: 'You approve', cls: 'you', match: ['waiting-approval'] },
+    { id: 'build', label: 'Build', match: ['approved', 'building', 'escalated'] },
+    { id: 'review', label: 'Review + CI', cls: 'gate', match: ['in-review'] },
+    { id: 'merge', label: 'You merge', cls: 'you', match: ['ready-to-merge'] },
+  ];
+  const POS_CLASS = { 'waiting-approval': 'you', 'ready-to-merge': 'you', escalated: 'bad', building: 'agent', 'in-review': 'gate', merged: 'ok', approved: 'agent', researching: 'agent', planning: 'agent', queued: 'neutral' };
+
+  const state = { projects: [], selected: null, lane: null, live: false, events: [] };
+  const main = document.getElementById('main');
+  const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+  const pill = (txt, cls) => `<span class="pill ${cls}">${esc(txt)}</span>`;
+
+  async function load() {
+    let data = null;
+    try {
+      const r = await fetch(state.live ? '/api/status' : 'status.json', { cache: 'no-store' });
+      if (r.ok) data = await r.json();
+    } catch (e) { /* static mode without a file */ }
+    if (!data) { main.innerHTML = '<div class="card"><div class="empty">No status.json found. Run <code>python3 ~/.claude/kit/scripts/kit_status.py --repo . --out dashboard/status.json</code>, or start the live server: <code>python3 ~/.claude/kit/dashboard/server.py --repo .</code></div></div>'; return; }
+    state.projects = Array.isArray(data) ? data : [data];
+    document.getElementById('generated').textContent = (state.projects[0] && state.projects[0].generated) ? state.projects[0].generated.replace('T', ' ') : '';
+    if (state.projects.length === 1 && !state.selected) state.selected = state.projects[0].project;
+    render();
+  }
+
+  function render() {
+    const p = state.projects.find(x => x.project === state.selected);
+    main.innerHTML = (state.projects.length > 1 ? renderIndex() : '') + (p ? renderProject(p) : '');
+    bind();
+  }
+
+  function renderIndex() {
+    const rows = state.projects.map(p => {
+      const ci = p.ci_main ? (p.ci_main.conclusion || p.ci_main.status) : null;
+      return `<div class="row" data-project="${esc(p.project)}"><span class="name">${esc(p.project)}</span><span>
+        ${p.needs_you.length ? pill(`${p.needs_you.length} waiting on you`, 'you') : pill('0 waiting', 'ok')}
+        ${pill(`${p.wip.in_flight} / ${p.wip.limit} lanes`, 'agent')}
+        ${ci ? pill(`CI ${ci}`, ci === 'success' ? 'ok' : 'bad') : ''}
+        ${p.debt.text_only_lessons ? pill(`${p.debt.text_only_lessons} debt`, 'neutral') : ''}</span></div>`;
+    }).join('');
+    return `<div class="card"><div class="lbl">All projects · click one</div>${rows}</div>`;
+  }
+
+  function renderProject(p) {
+    const lanes = p.lanes || [];
+    const stages = STAGES.map(s => {
+      const here = lanes.filter(l => s.match.includes(l.position));
+      const marks = here.map(l => `<span class="mk ${l.slug === state.lane ? 'sel' : POS_CLASS[l.position] || 'agent'}" data-lane="${esc(l.slug)}" title="${esc(l.position)}">${esc(l.slug)}</span>`).join('');
+      return `<div class="stage ${s.cls || ''}">${esc(s.label)}${marks || '<span class="mk" style="visibility:hidden">·</span>'}</div>`;
+    }).join('');
+    const needs = p.needs_you.length
+      ? p.needs_you.map(n => `<div class="row" data-lane="${esc(n.slug)}"><span><span class="name">${esc(n.slug)}</span> <span class="muted">${esc(n.position)}${n.failure ? ' — ' + esc(n.failure) : ''}</span></span>${pill(n.position === 'escalated' ? 'read escalation' : n.position === 'waiting-approval' ? 'approve spec' : 'merge PR', n.position === 'escalated' ? 'bad' : 'you')}</div>`).join('')
+      : '<div class="empty">Nothing waits on you.</div>';
+    const queued = lanes.filter(l => l.position === 'queued').map(l => esc(l.slug)).join(', ');
+    const active = lanes.filter(l => !['queued', 'merged'].includes(l.position));
+    const laneRows = active.length ? active.map(l => `<div class="row" data-lane="${esc(l.slug)}"><span><span class="name">${esc(l.slug)}</span> <span class="muted">${esc(l.feature)}</span></span><span>
+        ${pill(l.position, POS_CLASS[l.position] || 'agent')}
+        ${l.worktree ? pill(`${l.behind_base} behind`, l.behind_base > 0 ? 'bad' : 'neutral') : ''}
+        ${l.progress.criteria ? pill(`${l.progress.green}/${l.progress.criteria} green`, l.progress.green === l.progress.criteria ? 'ok' : 'neutral') : ''}
+        ${l.events.blocked ? pill(`${l.events.blocked} blocked`, 'bad') : ''}
+        ${l.risk === 'high-risk' ? pill('high-risk', 'bad') : ''}</span></div>`).join('') : '<div class="empty">No active lanes.</div>';
+    const d = p.debt, r = p.research;
+    const detail = state.lane ? renderLane(p, lanes.find(l => l.slug === state.lane)) : '';
+    return `
+      ${state.projects.length > 1 ? `<div class="crumbs"><a data-back>All projects</a> › ${esc(p.project)}</div>` : ''}
+      <div class="card"><div class="lbl">${esc(p.project)} · kit ${esc(p.kit_version || '')} · WIP ${p.wip.in_flight} / ${p.wip.limit}</div>
+        <div class="pipe">${stages}</div>
+        <div class="muted" style="margin-top:8px">Position is derived from the spec, worktree, progress file, review report, and git. Agents do not report it. Click a marker.</div></div>
+      ${detail}
+      <div class="card"><div class="lbl">Needs you</div>${needs}</div>
+      <div class="card"><div class="lbl">Lanes</div>${laneRows}${queued ? `<div class="muted" style="margin-top:8px">Queued: ${queued}</div>` : ''}</div>
+      <div class="card"><div class="lbl">Health</div><div class="grid">
+        <div class="m"><div class="n">${d.text_only_lessons}</div><div class="t">text-only lessons (debt)</div></div>
+        <div class="m"><div class="n">${d.claude_md_bytes} <span class="muted">/ ${d.claude_md_cap}</span></div><div class="t">CLAUDE.md bytes</div></div>
+        <div class="m"><div class="n">${d.bootstrap_todos}</div><div class="t">bootstrap TODOs</div></div>
+        <div class="m"><div class="n">${r.questions} <span class="muted">· ${r.stale} stale</span></div><div class="t">research questions</div></div>
+        <div class="m"><div class="n">${p.ci_main ? esc(p.ci_main.conclusion || p.ci_main.status) : '—'}</div><div class="t">CI on main</div></div>
+      </div></div>`;
+  }
+
+  function renderLane(p, l) {
+    if (!l) return '';
+    const pr = l.progress, rv = l.review, ev = l.events;
+    const crit = pr.criteria ? `<tr><td>Done-criteria</td><td>${pr.green} green / ${pr.red} red / ${pr.criteria} total</td></tr>` : '';
+    const review = rv.exists ? `<tr><td>Review</td><td>${rv.verdict || '—'} · ${rv.valid ? 'valid' : 'invalid report'} · ${rv.head_matches ? 'matches HEAD' : 'stale (code changed after review)'}${rv.fails ? ` · ${rv.fails} FAIL` : ''}</td></tr>` : '<tr><td>Review</td><td>none yet</td></tr>';
+    const escal = pr.escalated ? `<tr><td class="kr">Escalation</td><td><b>${esc(pr.attempts)}</b> attempts — ${esc(pr.failure)}</td></tr>` : '';
+    const last = l.last_check ? `<tr><td>Last check</td><td class="${l.last_check.result === 'ok' ? 'kg' : 'kr'}">${esc(l.last_check.kind)}: ${esc(l.last_check.result)} — ${esc(l.last_check.summary || '')} <span class="muted">${esc((l.last_check.ts || '').replace('T', ' '))}</span></td></tr>` : '';
+    const events = state.events.length ? state.events.slice(-40).reverse().map(e => `<div class="ev"><span class="t">${esc((e.ts || '').slice(11, 19))}</span><span class="k ${e.result === 'blocked' || e.result === 'fail' ? 'kr' : e.event === 'test' ? 'kg' : e.event === 'read' ? 'kb' : ''}">${esc(e.event)}</span><span>${esc(e.path || e.command || e.summary || e.agent || '')}${e.summary && (e.path || e.command) ? ' · ' + esc(e.summary) : ''}</span></div>`).join('')
+      : `<div class="empty">${state.live ? 'No events yet.' : 'Event stream needs the live server (events.jsonl is read from the worktree).'}</div>`;
+    return `<div class="card">
+      <div style="display:flex;justify-content:space-between;align-items:center;gap:12px;margin-bottom:8px">
+        <div><div class="lbl" style="margin:0">Lane · ${esc(l.branch || l.slug)} · ${esc(l.position)}${l.stage ? ' · stage ' + esc(l.stage) : ''}</div><div style="font-size:15px;font-weight:500">${esc(l.feature)}</div></div>
+        <div style="display:flex;gap:8px">${state.live && l.worktree ? `<button data-open="${esc(l.slug)}">Open Claude in this worktree ↗</button>` : ''}${l.pr ? `<a href="${esc(l.pr)}" target="_blank" rel="noopener"><button>PR</button></a>` : ''}<button data-close>Close</button></div></div>
+      <div class="grid">
+        <div class="m"><div class="n">${pr.criteria ? `${pr.green} / ${pr.criteria}` : '—'}</div><div class="t">criteria green</div></div>
+        <div class="m"><div class="n">${l.worktree ? l.behind_base : '—'}</div><div class="t">commits behind base</div></div>
+        <div class="m"><div class="n">${ev.blocked}</div><div class="t">edits blocked by hooks</div></div>
+        <div class="m"><div class="n">${ev.tests_green} <span class="muted">/ ${ev.tests_red} red</span></div><div class="t">test runs</div></div>
+        <div class="m"><div class="n">${ev.stop_refused}</div><div class="t">stop refused</div></div>
+      </div>
+      <table>
+        <tr><td style="width:150px">Spec</td><td>${esc(l.spec || '—')} ${l.approved ? pill('approved', 'ok') : pill('not approved', 'you')} ${l.risk === 'high-risk' ? pill('high-risk', 'bad') : ''}</td></tr>
+        <tr><td>Worktree</td><td>${esc(l.worktree || '—')}${l.head ? ` <span class="muted">@ ${esc(l.head)}</span>` : ''}</td></tr>
+        ${crit}${review}${escal}${last}
+        <tr><td>Current step</td><td>${esc(pr.current_step || '—')}</td></tr>
+      </table>
+      <div class="lbl" style="margin-top:12px">Live events · written by hooks on every tool call</div>
+      <div id="events">${events}</div>
+    </div>`;
+  }
+
+  function bind() {
+    main.querySelectorAll('[data-project]').forEach(el => el.addEventListener('click', () => { state.selected = el.dataset.project; state.lane = null; state.events = []; render(); }));
+    main.querySelectorAll('[data-back]').forEach(el => el.addEventListener('click', () => { state.selected = null; state.lane = null; render(); }));
+    main.querySelectorAll('[data-lane]').forEach(el => el.addEventListener('click', e => { e.stopPropagation(); selectLane(el.dataset.lane); }));
+    main.querySelectorAll('[data-close]').forEach(el => el.addEventListener('click', () => { state.lane = null; state.events = []; render(); }));
+    main.querySelectorAll('[data-open]').forEach(el => el.addEventListener('click', async () => {
+      el.disabled = true; el.textContent = 'Opening…';
+      try { const r = await fetch(`/api/open/${encodeURIComponent(el.dataset.open)}`, { method: 'POST' }); const j = await r.json(); el.textContent = j.ok ? 'Opened in a terminal' : ('Could not open: ' + (j.error || '')); }
+      catch (err) { el.textContent = 'Could not open'; }
+    }));
+  }
+
+  async function selectLane(slug) {
+    state.lane = slug; state.events = [];
+    render();
+    if (state.live) {
+      try { const r = await fetch(`/api/events/${encodeURIComponent(slug)}?project=${encodeURIComponent(state.selected)}`); if (r.ok) state.events = await r.json(); } catch (e) { /* ignore */ }
+      render();
+    }
+  }
+
+  function startLive() {
+    if (!('EventSource' in window)) return;
+    const es = new EventSource('/api/stream');
+    es.onopen = () => { state.live = true; document.getElementById('live').innerHTML = '<b>live</b> · <span id="generated"></span>'; load(); };
+    es.onmessage = m => {
+      try {
+        const msg = JSON.parse(m.data);
+        if (msg.type === 'status') { state.projects = Array.isArray(msg.data) ? msg.data : [msg.data]; const g = document.getElementById('generated'); if (g && state.projects[0]) g.textContent = (state.projects[0].generated || '').replace('T', ' '); render(); }
+        if (msg.type === 'event' && state.lane && msg.lane === state.lane) { state.events.push(msg.data); const box = document.getElementById('events'); if (box) render(); }
+      } catch (e) { /* ignore malformed */ }
+    };
+    es.onerror = () => { es.close(); state.live = false; };
+  }
+
+  document.getElementById('refresh').addEventListener('click', load);
+  load();
+  if (location.protocol.startsWith('http')) startLive();
+})();
+</script>
+</body>
+</html>

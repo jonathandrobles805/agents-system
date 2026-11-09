@@ -292,9 +292,9 @@ Produces `status.json` from `ROADMAP.md`, specs, progress, review reports, logs,
 
 ### 9.3 Dashboard
 
-- Static mode: `dashboard/index.html` renders `status.json`; CI publishes it to GitHub Pages on every push.
-- Live mode: `dashboard/server` (Node) watches the files, pushes updates over a websocket, streams `.events.jsonl`, and exposes "open Claude in this worktree", which launches `claude` in the lane's directory, resuming that lane's session.
-- Index page across projects: `kit-status --all` reads a list of project paths from `~/.claude/kit/projects.json`.
+- Static mode: `kit/dashboard/index.html` renders `status.json`; CI publishes it to GitHub Pages on every push.
+- Live mode: `kit/dashboard/server.py` (Python, stdlib) watches the files, pushes updates over a websocket, streams `.events.jsonl`, and exposes "open Claude in this worktree", which launches `claude` in the lane's directory, resuming that lane's session.
+- Index page across projects: `kit-status --all` reads a list of project paths from `~/.claude/kit-projects.json`.
 
 ---
 
@@ -351,7 +351,7 @@ Lanes never hold production credentials. `/bootstrap` checks for credential file
 
 ## 10.3 Notifications
 
-A `Notification` hook and the `Stop` hook send a message when: a spec is waiting for approval, a PR is ready to merge, a lane escalated, a budget was exceeded, or CI went red on `main`. Channel is configured in `~/.claude/kit/notify.json`: desktop notification by default, with optional Slack webhook or email. The dashboard shows the same items; notifications exist so you do not have to look.
+A `Notification` hook and the `Stop` hook send a message when: a spec is waiting for approval, a PR is ready to merge, a lane escalated, a budget was exceeded, or CI went red on `main`. Channel is configured in `~/.claude/kit-notify.json`: desktop notification by default, with optional Slack webhook or email. The dashboard shows the same items; notifications exist so you do not have to look.
 
 ## 10.4 Model per agent
 

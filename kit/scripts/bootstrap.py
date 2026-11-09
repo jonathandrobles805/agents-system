@@ -390,6 +390,18 @@ echo "sync: up to date with $BASE and tests pass"
         if add:
             self.written.append(".gitignore (+%d)" % len(add))
 
+    def register_project(self) -> None:
+        """Add this repo to ~/.claude/kit-projects.json so /status --all and the dashboard find it."""
+        reg = Path(os.environ.get("CLAUDE_HOME", Path.home() / ".claude")) / "kit-projects.json"
+        try:
+            items = json.loads(reg.read_text()) if reg.is_file() else []
+        except json.JSONDecodeError:
+            items = []
+        if str(self.root) not in items:
+            items.append(str(self.root))
+            reg.parent.mkdir(parents=True, exist_ok=True)
+            reg.write_text(json.dumps(items, indent=2) + "\n")
+
     def manifest(self) -> str:
         files = {}
         for rel in KIT_OWNED + [".github/workflows/kit.yml"]:
@@ -427,6 +439,7 @@ echo "sync: up to date with $BASE and tests pass"
         self.gitignore()
         if not self.dry:
             self.write(".claude/kit-manifest.json", self.manifest(), "kit")
+            self.register_project()
         return {"kit_version": KIT_VERSION, "written": self.written, "skipped": self.skipped, "backed_up": self.backed_up,
                 "detection": self.det, "questions": questions(self.det, self.answers), "dry_run": self.dry}
 

@@ -13,7 +13,7 @@ from test_ci_scripts import SPEC, REVIEW
 
 KIT = SCRIPTS.parent
 COMMANDS = sorted((KIT / "commands").glob("*.md"))
-EXPECTED = {"bootstrap", "research", "plan", "implement", "review", "sync", "retro", "status"}
+EXPECTED = {"bootstrap", "research", "plan", "implement", "review", "sync", "retro", "status", "dashboard"}
 
 
 def test_all_commands_exist_with_frontmatter():
