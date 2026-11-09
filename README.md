@@ -42,4 +42,4 @@ Plants the 19 faults from the spec (unread edit, out-of-spec edit, deleted asser
 
 `/dashboard` (or `python3 ~/.claude/kit/dashboard/server.py --all`) opens a live page: every feature's position on the pipeline, what needs you, each lane's criteria, drift, review state, the hook event stream, and a button that opens Claude in a lane's worktree. Every value comes from files and git; the page never shows an agent's claim.
 
-Status: Phases 1–4 and 6 complete. Next: first real project (Phase 5 retro loop is exercised there).
+Status: Phases 1–4 and 6 complete. Next: `docs/FIRST-PROJECT.md`.
