@@ -25,13 +25,7 @@ def main(argv=None) -> int:
     m = re.search(r"^- Head:\s*([0-9a-f]{7,40})", text, re.M)
     if not m:
         return C.fail("review-report: no '- Head: <sha>' line; the report must name the commit it reviewed")
-    # The report may legitimately precede the commit that adds the report itself: accept HEAD or HEAD~1.
-    parents = {head}
-    try:
-        parents.add(K.git(["rev-parse", "HEAD~1"], root).strip())
-    except Exception:
-        pass
-    if not any(p.startswith(m.group(1)) for p in parents):
+    if not K.review_head_ok(root, m.group(1)):
         return C.fail(f"review-report: report reviewed {m.group(1)} but HEAD is {head[:12]}; code changed after review. Run /review again.")
     return C.ok(f"review-report: PASS for {m.group(1)}")
 

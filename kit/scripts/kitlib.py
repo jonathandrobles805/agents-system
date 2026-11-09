@@ -344,3 +344,23 @@ def changed_docs(root: Path) -> list[Path]:
         if (rel.startswith("docs/") and rel.endswith(".md")) or rel == "LESSONS.md":
             paths.append(root / rel)
     return paths
+
+
+REVIEW_ONLY_FILE = re.compile(r"^docs/specs/[^/]+\.(review\.md|progress\.md|log|events\.jsonl)$|(^|/)(tests?|__tests__|spec)/|\.(test|spec)\.[a-z]+$|(^|/)test_[^/]+\.py$|_test\.(go|py|rb|rs)$")
+
+
+def review_head_ok(root: Path, reviewed_sha: str) -> bool:
+    """A review names the commit it reviewed. It is current if that is HEAD, or HEAD's parent and the
+    commit at HEAD only touched the review report, lane-owned docs (progress, log, events written by hooks during review) and test files."""
+    try:
+        head = git(["rev-parse", "HEAD"], root).strip()
+    except Exception:
+        return False
+    if head.startswith(reviewed_sha):
+        return True
+    try:
+        parent = git(["rev-parse", "HEAD~1"], root).strip()
+        changed = git(["diff", "--name-only", "HEAD~1", "HEAD"], root).split()
+    except Exception:
+        return False
+    return parent.startswith(reviewed_sha) and all(REVIEW_ONLY_FILE.search(f) for f in changed)

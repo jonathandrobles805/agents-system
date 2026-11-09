@@ -27,4 +27,8 @@ python3 -m pytest -q kit/scripts/tests
 
 In the project, inside Claude Code: `/bootstrap`. It detects the stack, asks the questions it must not guess (roadmap, WIP limit, layers, high-risk paths, commands), and generates `CLAUDE.md`, `ROADMAP.md`, `ARCHITECTURE.md`, `DESIGN.md`, `LESSONS.md`, `docs/`, `.claude/settings.json` (hooks), `.claude/kit.json`, `scripts/sync.sh`, and the CI workflow. Without Claude: `python3 ~/.claude/kit/scripts/bootstrap.py --repo . --detect-only`.
 
-Status: Phase 2 (`/bootstrap`, CI scripts) complete. Phase 3 (pipeline commands) next.
+## The pipeline
+
+`/research <slug>` → `/plan <slug>` → you approve the spec → `/implement <slug>` (own worktree, hooks on) → `/review <slug>` → you merge → `/retro <slug>`. `/status` shows where everything is, derived from files and git, never from an agent's summary.
+
+Status: Phase 3 (pipeline commands) complete. Phase 4 (planted-fault suite) next.
