@@ -277,3 +277,51 @@ def test_lane_slug_prefers_repo_branch_over_ci_env(tmp_path, monkeypatch):
     F.git(["checkout", "-q", "--detach"], root)
     monkeypatch.setenv("GITHUB_HEAD_REF", "wt/other")
     assert C.lane_slug(root) == "other"
+
+
+ARCH_LAYERS = """# Architecture
+
+- Updated: 2026-11-08
+
+## Layers
+
+| Layer | Directories | May import from |
+|---|---|---|
+| api | `src/api` | domain |
+| domain | `src/domain` | nothing in the app |
+| tests | `tests` | api, domain |
+
+## Invariants
+
+- [ ] domain never imports api
+"""
+
+
+def test_boundaries_fallback(tmp_path):
+    root = F.node_api(tmp_path / "node-api")
+    (root / "ARCHITECTURE.md").write_text(ARCH_LAYERS)
+    F.commit_all(root, "arch")
+    assert run_script("ci_boundaries_simple.py", ["--repo", str(root)]).returncode == 0
+    p = root / "src" / "domain" / "payment.ts"
+    p.write_text("import { routes } from '../api/routes';\n" + p.read_text())
+    F.commit_all(root, "violation")
+    r = run_script("ci_boundaries_simple.py", ["--repo", str(root)])
+    assert r.returncode == 1 and "src/domain/payment.ts" in r.stderr and "(api)" in r.stderr
+
+
+def test_boundaries_fallback_python(tmp_path):
+    root = F.python_service(tmp_path / "py")
+    (root / "ARCHITECTURE.md").write_text(ARCH_LAYERS.replace("`src/api`", "`app/api`").replace("`src/domain`", "`app`"))
+    (root / "app" / "api").mkdir(); (root / "app" / "api" / "__init__.py").write_text(""); (root / "app" / "api" / "routes.py").write_text("from app.billing import total\n")
+    F.commit_all(root, "ok")
+    assert run_script("ci_boundaries_simple.py", ["--repo", str(root)]).returncode == 0
+    (root / "app" / "billing.py").write_text("from app.api.routes import total as t\n" + (root / "app" / "billing.py").read_text())
+    F.commit_all(root, "bad")
+    assert run_script("ci_boundaries_simple.py", ["--repo", str(root)]).returncode == 1
+
+
+def test_boundaries_fallback_without_layers_is_noop(tmp_path):
+    root = F.node_api(tmp_path / "node-api")
+    run_script("bootstrap.py", ["--repo", str(root)])
+    r = run_script("ci_boundaries_simple.py", ["--repo", str(root)])
+    assert r.returncode == 0 and "nothing to check" in r.stdout

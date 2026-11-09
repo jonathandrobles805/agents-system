@@ -31,4 +31,11 @@ In the project, inside Claude Code: `/bootstrap`. It detects the stack, asks the
 
 `/research <slug>` → `/plan <slug>` → you approve the spec → `/implement <slug>` (own worktree, hooks on) → `/review <slug>` → you merge → `/retro <slug>`. `/status` shows where everything is, derived from files and git, never from an agent's summary.
 
-Status: Phase 3 (pipeline commands) complete. Phase 4 (planted-fault suite) next.
+## Proof
+
+```
+python3 planted-faults/run.py
+```
+Plants the 19 faults from the spec (unread edit, out-of-spec edit, deleted assertion, boundary violation, missed caller, false citation, open question, undeclared dependency, committed secret, oversize CLAUDE.md, removed hook, premature done, overlapping specs, evidence-free review, secret read, budget, merge conflict, broken kit, vulnerable dependency) and shows each caught by the gate that owns it. Runs in kit CI.
+
+Status: Phases 1–4 complete. Next: first real project, then the dashboard.

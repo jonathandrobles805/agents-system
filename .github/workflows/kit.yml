@@ -16,6 +16,8 @@ jobs:
           python-version: "3.12"
       - run: python -m pip install pytest
       - run: python -m pytest -q kit/scripts/tests
+      - name: planted-fault suite (all 19 faults must be caught)
+        run: python planted-faults/run.py
       - name: settings fragment is valid JSON and references real scripts
         run: |
           python - <<'PY'
