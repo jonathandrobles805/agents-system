@@ -149,3 +149,91 @@ def test_incident_record(tmp_path):
     assert "refund charged twice on retry" in t and "- Feature: refund-route" in t and "- Status: open" in t and "{{" not in t.split("## Impact")[0]
     r2 = lane("incident", "--repo", str(root), "--what", "second")
     assert r2.stdout.strip() != r.stdout.strip()
+
+
+GOAL = """# Goal: Refund route
+
+- Slug: refund-route
+- Date: 2026-11-08
+- Agreed by: Jonathan Robles and Claude on 2026-11-08
+- Status: agreed
+
+## What we want
+
+Expose refunds over the routes module.
+
+## Who it is for
+
+- support staff
+
+## Done looks like
+
+- G1. POST refund returns the service result
+
+## Not in this goal
+
+- partial refunds
+
+## Constraints
+
+- no new dependencies
+
+## Open points settled during discussion
+
+- none
+"""
+
+
+def test_next_step_walks_the_pipeline_from_facts(tmp_path, monkeypatch):
+    monkeypatch.setenv("KIT_STATUS_NO_GH", "1")
+    root, commit = project(tmp_path, status="waiting-approval", approved=False)
+    # no goal -> start
+    sp = root / "docs" / "specs" / "refund-route.md"; spec_text = sp.read_text(); sp.unlink()
+    assert json.loads(lane("next-step", "refund-route", "--repo", str(root)).stdout)["stage"] == "start"
+    (root / "docs" / "goals").mkdir(); (root / "docs" / "goals" / "refund-route.md").write_text(GOAL)
+    # goal, no research -> research
+    assert json.loads(lane("next-step", "refund-route", "--repo", str(root)).stdout)["stage"] == "research"
+    lane("index", "add", "How does the refund route work?", "--repo", str(root), "--slug", "refund-route-shape", "--keywords", "refund route", "--files", "src/api/routes.ts", "--commit", commit[:7])
+    # research, no spec -> plan
+    assert json.loads(lane("next-step", "refund-route", "--repo", str(root)).stdout)["stage"] == "plan"
+    sp.write_text(spec_text)
+    # spec waiting -> approve (needs human)
+    ns = json.loads(lane("next-step", "refund-route", "--repo", str(root)).stdout)
+    assert ns["stage"] == "approve" and ns["needs_human"]
+    sp.write_text(spec_text.replace("- Status: waiting-approval", "- Status: approved").replace("Approved by: — on — at —", f"Approved by: Jonathan Robles on 2026-11-08 at {commit[:7]}"))
+    F.commit_all(root, "approve")
+    assert json.loads(lane("next-step", "refund-route", "--repo", str(root)).stdout)["stage"] == "lane"
+    out = json.loads(lane("start", "refund-route", "--repo", str(root)).stdout); wt = Path(out["worktree"])
+    # lane, no red runs -> test (tester first)
+    assert json.loads(lane("next-step", "refund-route", "--repo", str(root)).stdout)["stage"] == "test"
+    prog = wt / "docs/specs/refund-route.progress.md"
+    (wt / "docs/specs/refund-route.log").write_text("=== run\n1 failed\n\n=== run\n1 passed\n")
+    prog.write_text(prog.read_text().replace("| — | — |", "| refund-route.log#1 | — |"))
+    assert json.loads(lane("next-step", "refund-route", "--repo", str(root)).stdout)["stage"] == "build"
+    prog.write_text(prog.read_text().replace("| refund-route.log#1 | — |", "| refund-route.log#1 | refund-route.log#4 |"))
+    assert json.loads(lane("next-step", "refund-route", "--repo", str(root)).stdout)["stage"] == "review"
+    from test_ci_scripts import REVIEW
+    (wt / "src" / "api" / "routes.ts").write_text("// built\n"); F.commit_all(wt, "D1")
+    head = F.git(["rev-parse", "HEAD"], wt).strip()
+    (wt / "docs/specs/refund-route.review.md").write_text(REVIEW.format(head=head[:10], verdict="PASS"))
+    ns = json.loads(lane("next-step", "refund-route", "--repo", str(root)).stdout)
+    assert ns["stage"] == "wait-merge" and ns["needs_human"]
+    F.commit_all(wt, "review"); F.git(["merge", "-q", "--no-ff", "wt/refund-route", "-m", "merge"], root)
+    assert json.loads(lane("next-step", "refund-route", "--repo", str(root)).stdout)["stage"] == "retro"
+    lane("goal-set", "refund-route", "done", "--repo", str(root))
+    assert json.loads(lane("next-step", "refund-route", "--repo", str(root)).stdout)["stage"] == "done"
+
+
+def test_next_in_queue_respects_goal_and_wip(tmp_path):
+    root, _ = project(tmp_path, wip_limit=1)
+    rm = root / "ROADMAP.md"
+    rm.write_text(rm.read_text().replace("1. TODO(bootstrap: ROADMAP.md — slug)", "1. other\n2. refund-route"))
+    r = lane("next", "--repo", str(root))
+    assert r.returncode == 2 and "no item with an agreed goal" in json.loads(r.stdout)["reason"]
+    (root / "docs" / "goals").mkdir(); (root / "docs" / "goals" / "other.md").write_text(GOAL.replace("refund-route", "other"))
+    rm.write_text(rm.read_text().replace("| Other | other | M1 | queued |", "| Other | other | M1 | queued |"))
+    r = lane("next", "--repo", str(root))
+    assert r.returncode == 0 and json.loads(r.stdout)["slug"] == "other"
+    rm.write_text(rm.read_text().replace("| refund-route | M1 | queued |", "| refund-route | M1 | building |"))
+    r = lane("next", "--repo", str(root))
+    assert r.returncode == 2 and "WIP 1/1" in json.loads(r.stdout)["reason"]

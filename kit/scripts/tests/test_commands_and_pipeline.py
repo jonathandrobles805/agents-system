@@ -13,7 +13,7 @@ from test_ci_scripts import SPEC, REVIEW
 
 KIT = SCRIPTS.parent
 COMMANDS = sorted((KIT / "commands").glob("*.md"))
-EXPECTED = {"bootstrap", "research", "plan", "implement", "review", "sync", "retro", "status", "dashboard"}
+EXPECTED = {"bootstrap", "start", "run", "research", "plan", "implement", "review", "sync", "retro", "status", "dashboard"}
 
 
 def test_all_commands_exist_with_frontmatter():
@@ -27,7 +27,7 @@ def test_all_commands_exist_with_frontmatter():
 
 
 def test_commands_reference_real_scripts_and_subcommands():
-    lane_subs = {"precheck", "start", "stage", "wip", "unknowns", "merged", "incident", "roadmap-set", "index", "finish"}
+    lane_subs = {"precheck", "start", "stage", "wip", "unknowns", "merged", "incident", "next-step", "next", "goal-set", "roadmap-set", "index", "finish"}
     for p in COMMANDS:
         text = p.read_text()
         for m in re.finditer(r'kit/scripts/([a-z_]+\.py)', text):
