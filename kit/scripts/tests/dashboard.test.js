@@ -153,6 +153,12 @@ test('server endpoints and live updates', { timeout: 120000 }, async (t) => {
 
 test('index html is self contained', () => {
   const html = fs.readFileSync(path.resolve(HERE, '..', '..', 'dashboard', 'index.html'), 'utf8');
-  assert.ok((!html.includes('<script src=') && !html.split('<script>')[1].includes('https://')) || !html.includes('cdn'));
+  // No external loads of any kind: no script/link/img/iframe sources, no CDN, no web fonts.
+  assert.ok(!/<script[^>]*\ssrc=/i.test(html), 'no external <script src>');
+  assert.ok(!/<link\b/i.test(html), 'no <link> (stylesheets, fonts)');
+  assert.ok(!/@import|@font-face|url\(\s*['"]?https?:/i.test(html), 'no CSS imports or remote fonts');
+  assert.ok(!/<(img|iframe|embed|object)\b[^>]*\ssrc=['"]?https?:/i.test(html), 'no remote media');
+  assert.ok(!/cdn|unpkg|jsdelivr|googleapis/i.test(html), 'no CDN');
   assert.ok(html.includes('status.json') && html.includes('/api/stream') && html.includes('/api/open/'));
+  assert.ok(html.includes('/api/architecture') && html.includes("import('./model.js')"));
 });

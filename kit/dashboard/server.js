@@ -9,7 +9,9 @@
  *   GET  /                      the dashboard page
  *   GET  /api/status            status for all served projects (kit_status.projectStatus), recomputed on change
  *   GET  /api/events/<slug>?project=NAME   the lane's events.jsonl as JSON (last 500)
- *   GET  /api/stream            Server-Sent Events: {"type":"status"} on any change, {"type":"event","lane":slug} per new event line
+ *   GET  /api/architecture      the kit's component map (scripts/arch_manifest.js), git state, and one overlay per served project
+ *   GET  /api/history?id=ID     the last commits that touched a component of the map
+ *   GET  /api/stream            Server-Sent Events: {"type":"status"} on any change, {"type":"architecture"} when the kit's files change, {"type":"event","lane":slug} per new event line
  *   POST /api/open/<slug>?project=NAME     open a terminal running `claude` in the lane worktree (localhost only)
  *
  * Everything shown is read from files and git. The server never asks an agent anything.
@@ -23,9 +25,14 @@ import { fileURLToPath } from 'node:url';
 import { ArgumentParser } from '../scripts/args.js';
 import * as K from '../scripts/kitlib.js';
 import * as KS from '../scripts/kit_status.js';
+import * as L from '../scripts/lane.js';
+import { buildManifest } from '../scripts/arch_manifest.js';
+import { fileHistory, gitInfo, projectOverlay } from '../scripts/arch_live.js';
 
 const HERE = path.dirname(K.realResolve(fileURLToPath(import.meta.url)));
 export const INDEX = path.join(HERE, 'index.html');
+export const MODEL = path.join(HERE, 'model.js');
+export const KIT_DIR = path.dirname(HERE);
 const SERVER_VERSION = `agent-kit-dashboard/0.1 Node/${process.versions.node}`;
 
 export const DOC = [
@@ -38,7 +45,9 @@ export const DOC = [
   '  GET  /                      the dashboard page',
   '  GET  /api/status            status for all served projects (kit_status.project_status), recomputed on change',
   '  GET  /api/events/<slug>?project=NAME   the lane\'s events.jsonl as JSON (last 500)',
-  '  GET  /api/stream            Server-Sent Events: {"type":"status"} on any change, {"type":"event","lane":slug} per new event line',
+  '  GET  /api/architecture      the kit\'s component map (scripts/arch_manifest.js), git state, and one overlay per served project',
+  '  GET  /api/history?id=ID     the last commits that touched a component of the map',
+  '  GET  /api/stream            Server-Sent Events: {"type":"status"} on any change, {"type":"architecture"} when the kit\'s files change, {"type":"event","lane":slug} per new event line',
   '  POST /api/open/<slug>?project=NAME     open a terminal running `claude` in the lane worktree (localhost only)',
   '',
   'Everything shown is read from files and git. The server never asks an agent anything.',
@@ -57,6 +66,8 @@ export class State {
     this.listeners = []; // per-client queues: functions taking one serialized SSE message
     this.eventOffsets = new Map();
     this.fingerprint = '';
+    this.arch = null; // { fp, manifest }: rebuilt only when a file the manifest reads has changed
+    this.archFp = '';
   }
 
   recompute() {
@@ -66,7 +77,7 @@ export class State {
   project(name) {
     if (this.status.length === 0) return null;
     if (name === null || name === undefined) return this.status[0];
-    return this.status.find((s) => s.project === name) ?? null;
+    return this.status.find((s) => s.root === name) ?? this.status.find((s) => s.project === name) ?? null; // two projects can share a name; the root is unique
   }
 
   broadcast(msg) {
@@ -166,13 +177,18 @@ function watchTick(state) {
     state.recompute();
     state.broadcast({ type: 'status', data: state.status });
   }
+  const archFp = fingerprint(archWatchList(KIT_DIR, state.arch?.manifest));
+  if (archFp !== state.archFp) {
+    if (state.archFp !== '') state.broadcast({ type: 'architecture' });
+    state.archFp = archFp;
+  }
   for (const s of state.status) {
     for (const l of s.lanes) {
       if (!l.worktree) continue;
       const [fresh, off] = tailEvents(laneEventsPath(l), state.eventOffsets.get(l.slug) ?? 0);
       if (fresh.length) {
         state.eventOffsets.set(l.slug, off);
-        for (const e of fresh) state.broadcast({ type: 'event', lane: l.slug, project: s.project, data: e });
+        for (const e of fresh) state.broadcast({ type: 'event', lane: l.slug, project: s.project, root: s.root, data: e });
       }
     }
   }
@@ -208,6 +224,51 @@ export function startWatcher(state, interval) {
     stopped = true;
     clearTimeout(timer);
   };
+}
+
+// ---------------------------------------------------------------------------------------------- architecture
+
+/** Files and directories whose change can change the manifest. */
+export function archWatchList(kitDir, manifest) {
+  const base = path.dirname(kitDir);
+  const files = ['agents', 'commands', 'scripts', path.join('scripts', 'tests'), 'templates', 'ci', 'hooks', 'dashboard', 'manifest.json'].map((p) => path.join(kitDir, p));
+  files.push(path.join(base, 'package.json'), path.join(base, 'VERSION'), path.join(base, '.github', 'workflows', 'kit.yml'));
+  for (const n of manifest ? manifest.nodes : []) files.push(path.join(base, n.path));
+  return files;
+}
+
+/** The manifest of the kit this server belongs to, rebuilt when a file it reads changed. */
+export function currentManifest(state, kitDir = KIT_DIR) {
+  const fp = fingerprint(archWatchList(kitDir, state.arch?.manifest));
+  if (!state.arch || state.arch.fp !== fp) {
+    const manifest = buildManifest(kitDir);
+    state.arch = { fp: fingerprint(archWatchList(kitDir, manifest)), manifest };
+  }
+  return state.arch.manifest;
+}
+
+/** The lanes of one project with the stage `lane.js next-step` answers for each: derived from files and git. */
+async function laneStages(proj) {
+  const out = [];
+  for (const l of proj.lanes ?? []) {
+    let step = null;
+    try {
+      step = await L.nextStep(proj.root, l.slug);
+    } catch {
+      // a lane whose files are unreadable shows without a stage
+    }
+    out.push({ slug: l.slug, position: l.position, stage: step?.stage ?? null, needs_human: Boolean(step?.needs_human), last_check: l.last_check ?? null, blocked: l.events?.blocked ?? 0 });
+  }
+  return out;
+}
+
+/** The whole answer of GET /api/architecture. One overlay per project; projects are never merged. */
+export async function architecture(state, kitDir = KIT_DIR) {
+  const manifest = currentManifest(state, kitDir);
+  if (state.status.length === 0) state.recompute();
+  const projects = [];
+  for (const s of state.status) projects.push({ project: s.project, root: s.root, ...projectOverlay(manifest, kitDir, s.root), lanes: await laneStages(s) });
+  return { manifest, git: gitInfo(path.dirname(kitDir)), projects };
 }
 
 // ---------------------------------------------------------------------------------------------- open a terminal
@@ -377,7 +438,13 @@ function isLocal(req) {
   return ['127.0.0.1', '::1'].includes(req.socket.remoteAddress);
 }
 
-function doGet(state, req, res, u, q) {
+async function doGet(state, req, res, u, q) {
+  if (u.path === '/model.js') {
+    const body = fs.readFileSync(MODEL);
+    res.writeHead(200, { 'Content-Type': 'text/javascript; charset=utf-8', 'Content-Length': body.length });
+    res.end(body);
+    return;
+  }
   if (u.path === '/' || u.path === '/index.html') {
     const body = fs.readFileSync(INDEX);
     res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Content-Length': body.length });
@@ -397,6 +464,15 @@ function doGet(state, req, res, u, q) {
     const root = lane && lane.worktree ? lane.worktree : proj.root;
     const [events] = tailEvents(path.join(root, 'docs', 'specs', `${slug}.events.jsonl`), 0);
     return sendJson(res, 200, events.slice(-500));
+  }
+  if (u.path === '/api/architecture') {
+    return sendJson(res, 200, await architecture(state));
+  }
+  if (u.path === '/api/history') {
+    const id = firstParam(q, 'id');
+    const node = id ? currentManifest(state).nodes.find((n) => n.id === id) : null;
+    if (!node) return sendJson(res, 404, { error: 'unknown component' });
+    return sendJson(res, 200, { id: node.id, path: node.path, commits: fileHistory(path.dirname(KIT_DIR), node.path) });
   }
   if (u.path === '/api/stream') {
     res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-store', Connection: 'keep-alive' });
@@ -444,7 +520,7 @@ export function makeHandler(state) {
       if (target.startsWith('//')) target = `/${target.replace(/^\/+/, '')}`; // http.server reduces a leading '//' to '/'
       const u = splitTarget(target);
       const q = parseQs(u.query);
-      if (req.method === 'GET') doGet(state, req, res, u, q);
+      if (req.method === 'GET') await doGet(state, req, res, u, q);
       else if (req.method === 'POST') await doPost(state, req, res, u, q);
       else sendUnsupported(res, req.method);
     } catch (exc) {

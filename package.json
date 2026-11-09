@@ -7,6 +7,9 @@
   "scripts": {
     "test": "node --test kit/scripts/tests/*.test.js",
     "planted-faults": "node planted-faults/run.js",
-    "audit": "node audit/boards.js"
+    "audit": "node audit/boards.js",
+    "architecture": "node kit/scripts/arch_manifest.js",
+    "architecture:update": "node kit/scripts/arch_manifest.js --out kit/architecture.json",
+    "architecture:check": "node kit/scripts/arch_manifest.js --check kit/architecture.json"
   }
 }
