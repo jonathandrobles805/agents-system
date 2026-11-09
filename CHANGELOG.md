@@ -34,6 +34,11 @@ All notable changes to the kit. Each entry names the decision or lesson that cau
 - `tester` agent with `hook_guard_tests_only`; `/implement` runs it before the implementer; `done-check` has a `test` stage (red runs required).
 - Incident intake: `lane.py incident`, `kit/templates/incident.md`, `/retro --incident`.
 
+### Orchestration
+- `lane.py next-step <slug>`: the next stage (start, research, plan, approve, lane, test, build, review, wait-merge, retro, escalated, done) decided from files and git; `lane.py next`: next queued feature with an agreed goal under the WIP limit; `lane.py goal-set`.
+- `/start`: discussion until the goal is agreed, `docs/goals/<slug>.md`, roadmap row, hand-off. `/run <slug>` loops on `next-step` and stops only at the two human pauses (approve, merge), at an escalation, or at done. `/run --queue` drains the roadmap, lanes in parallel.
+- `kit/templates/goal.md`.
+
 ### Notes
 - Project CI checks out the kit at `ref: main` until the first tagged release; `/bootstrap --upgrade` will switch projects to tags from 1.0.
 

@@ -29,7 +29,7 @@ In the project, inside Claude Code: `/bootstrap`. It detects the stack, asks the
 
 ## The pipeline
 
-`/research <slug>` → `/plan <slug>` → you approve the spec → `/implement <slug>` (own worktree, hooks on) → `/review <slug>` → you merge → `/retro <slug>`. `/status` shows where everything is, derived from files and git, never from an agent's summary.
+`/start` (we agree the goal) → `/run <slug>`. From there the system researches, plans, asks you to approve, writes tests (tester), builds (implementer), reviews (reviewer), waits for your merge, runs the retro, and picks the next feature. The next stage is always decided by `lane.py next-step` from files and git. The stage commands (`/research`, `/plan`, `/implement`, `/review`, `/retro`) still exist for running one stage by hand. `/status` and `/dashboard` show where everything is.
 
 ## Proof
 

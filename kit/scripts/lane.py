@@ -9,6 +9,9 @@
   lane.py roadmap-set <slug> <status> --repo R
   lane.py index lookup "<question>" --repo R [--json]   reuse | stale | new, from docs/research/INDEX.md
   lane.py index add "<question>" --repo R --slug S --keywords K --files F --commit C
+  lane.py next-step <slug> --repo R         JSON: the next stage for this feature, derived from files and git
+  lane.py next --repo R                     JSON: next queued slug with an agreed goal (exit 2 if none / WIP full)
+  lane.py goal-set <slug> agreed|running|done --repo R
   lane.py incident --repo R --what "..." [--slug S] [--pr URL]   record a production incident for /retro --incident
   lane.py merged <slug> --repo R [--pr URL] at merge time: verify in git, mark ROADMAP merged (idempotent)
   lane.py finish <slug> --repo R            after retro: remove worktree and local branch, mark roadmap merged
@@ -258,6 +261,84 @@ def unknowns(root: Path, spec_or_draft: Path) -> dict:
                         "research": f"{count} unknowns > {MAX_UNKNOWNS}: research insufficient; stop planning and run /research"}[decision]}
 
 
+# ---------------------------------------------------------------- orchestration: what comes next, from facts
+
+STAGES = ["start", "research", "plan", "approve", "lane", "test", "build", "review", "wait-merge", "retro", "done"]
+
+
+def goal_status(root: Path, slug: str) -> str | None:
+    p = root / "docs" / "goals" / f"{slug}.md"
+    if not p.is_file():
+        return None
+    h = K.header_fields(K.strip_html_comments(K.read_lines(p)))
+    return h.get("status", (0, ""))[1].lower() or "agreed"
+
+
+def next_step(root: Path, slug: str) -> dict:
+    """Decide the next stage for a feature from files and git only. Used by /run; never from an agent's claim."""
+    import kit_status as KS
+    kit = K.load_kit_json(root)
+    rows = {r["slug"]: r for r in roadmap_rows(root)}
+    row = rows.get(slug)
+    g = goal_status(root, slug)
+    if g is None:
+        return {"slug": slug, "stage": "start", "reason": "no agreed goal file; run /start"}
+    if g == "done":
+        return {"slug": slug, "stage": "done", "reason": "goal file says done"}
+    if row is None:
+        return {"slug": slug, "stage": "start", "reason": "goal exists but no ROADMAP row; /start adds it"}
+    st = KS.lane_state(root, row, kit)
+    pos = st["position"]
+    sp = spec_path(root, slug)
+    research = [r for r in index_rows(root) if r["status"] == "current" and (slug in r["slug"] or slug.replace("-", " ") in r["question"].lower() or slug in r["keywords"])]
+    if pos == "merged":
+        return {"slug": slug, "stage": "retro" if g != "done" else "done", "reason": "merged in git; retro not yet run (goal not done)"}
+    if pos == "escalated":
+        return {"slug": slug, "stage": "escalated", "reason": st["progress"].get("failure") or "escalation written", "needs_human": True}
+    if pos == "ready-to-merge":
+        return {"slug": slug, "stage": "wait-merge", "reason": "review PASS for HEAD; human merges", "needs_human": True, "pr": st.get("pr")}
+    if pos == "in-review":
+        return {"slug": slug, "stage": "review", "reason": "lane built or review stale; run reviewer"}
+    if pos == "building":
+        prog = st["progress"]
+        if prog["criteria"] and prog["red"] < prog["criteria"]:
+            return {"slug": slug, "stage": "test", "reason": f"{prog['red']}/{prog['criteria']} criteria have a red run; tester first"}
+        if prog["criteria"] and prog["green"] == prog["criteria"]:
+            return {"slug": slug, "stage": "review", "reason": "all criteria green; review"}
+        return {"slug": slug, "stage": "build", "reason": f"{prog['green']}/{prog['criteria']} green"}
+    if pos == "approved":
+        return {"slug": slug, "stage": "lane", "reason": "approved spec, no worktree yet"}
+    if pos == "waiting-approval":
+        return {"slug": slug, "stage": "approve", "reason": "spec waits for the human", "needs_human": True}
+    if sp.is_file():
+        return {"slug": slug, "stage": "plan", "reason": "spec draft exists but is not waiting-approval; finish planning"}
+    if research:
+        return {"slug": slug, "stage": "plan", "reason": f"{len(research)} research file(s) indexed; no spec"}
+    return {"slug": slug, "stage": "research", "reason": "no research indexed for this feature"}
+
+
+def next_in_queue(root: Path) -> dict:
+    """The next queued feature with an agreed goal, if WIP allows."""
+    n, limit, lanes = wip(root)
+    if n >= limit:
+        return {"slug": None, "reason": f"WIP {n}/{limit} reached", "in_flight": lanes}
+    p = root / "ROADMAP.md"
+    queue: list[str] = []
+    if p.is_file():
+        sec = K.parse_sections(K.strip_html_comments(K.read_lines(p))).get("queue")
+        if sec:
+            for _, t in sec.lines:
+                m = re.match(r"^\s*\d+\.\s*([A-Za-z0-9._-]+)", t)
+                if m:
+                    queue.append(m.group(1))
+    rows = {r["slug"]: r for r in roadmap_rows(root)}
+    for slug in queue:
+        row = rows.get(slug)
+        if row and row["status"] in ("queued", "researching", "planning") and goal_status(root, slug) == "agreed":
+            return {"slug": slug, "reason": "next in queue with an agreed goal", "in_flight": lanes}
+    return {"slug": None, "reason": "queue has no item with an agreed goal (run /start)", "in_flight": lanes}
+
+
 # ---------------------------------------------------------------- incidents
 
 def record_incident(root: Path, what: str, slug: str | None, pr: str | None) -> Path:
@@ -347,6 +428,9 @@ def main(argv=None) -> int:
             s.add_argument("--base")
     s = sub.add_parser("stage"); s.add_argument("slug"); s.add_argument("stage", choices=["research", "plan", "test", "build", "review"]); s.add_argument("--repo", default=".")
     s = sub.add_parser("merged"); s.add_argument("slug"); s.add_argument("--repo", default="."); s.add_argument("--pr")
+    s = sub.add_parser("next-step"); s.add_argument("slug"); s.add_argument("--repo", default=".")
+    s = sub.add_parser("next"); s.add_argument("--repo", default=".")
+    s = sub.add_parser("goal-set"); s.add_argument("slug"); s.add_argument("status", choices=["agreed", "running", "done"]); s.add_argument("--repo", default=".")
     s = sub.add_parser("incident"); s.add_argument("--repo", default="."); s.add_argument("--what", required=True); s.add_argument("--slug"); s.add_argument("--pr")
     s = sub.add_parser("wip"); s.add_argument("--repo", default=".")
     s = sub.add_parser("unknowns"); s.add_argument("spec"); s.add_argument("--repo", default="."); s.add_argument("--json", action="store_true")
@@ -367,6 +451,21 @@ def main(argv=None) -> int:
         return set_stage(root, a.slug, a.stage)
     if a.cmd == "finish":
         return finish(root, a.slug)
+    if a.cmd == "next-step":
+        print(json.dumps(next_step(root, a.slug)))
+        return 0
+    if a.cmd == "next":
+        res = next_in_queue(root)
+        print(json.dumps(res))
+        return 0 if res["slug"] else 2
+    if a.cmd == "goal-set":
+        p = root / "docs" / "goals" / f"{a.slug}.md"
+        if not p.is_file():
+            return refuse([f"no goal file {p.relative_to(root)}"])
+        text = re.sub(r"^- Status:.*$", f"- Status: {a.status}", p.read_text(), count=1, flags=re.M)
+        p.write_text(text)
+        print(f"goal {a.slug}: {a.status}")
+        return 0
     if a.cmd == "incident":
         p = record_incident(root, a.what, a.slug, a.pr)
         print(str(p.relative_to(root)))

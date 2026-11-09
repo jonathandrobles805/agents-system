@@ -112,15 +112,13 @@ def board1() -> None:
     bp = grep(S / "bootstrap.py", r"def protect_branch")
     rec(b, "Hooks, CI, branch protection in repo", "PRESENT" if hooks_ok and ci_ok and bp else "PARTIAL", f"settings.json hooks={hooks_ok}; CI workflow={ci_ok}; {bp[0] if bp else 'no protect_branch'} (applied only with --protect)")
     # Arrows ROADMAP -> worktrees ('Next items'), automatic
-    auto = grep(C / "run.md", r"Queue") if (C / "run.md").is_file() else []
-    if auto:
-        rec(b, "Arrow 'Next items': ROADMAP → worktrees automatically", "INSTRUCTION", "; ".join(auto[:2]), "driven by /run command text; no scheduler")
-    else:
-        rec(b, "Arrow 'Next items': ROADMAP → worktrees automatically", "MISSING", "no command reads the ROADMAP queue and starts lanes", "needs /run (orchestrator)")
+    ok_q, last_q = pytest("test_lane.py::test_next_in_queue_respects_goal_and_wip", "test_lane.py::test_next_step_walks_the_pipeline_from_facts")
+    loop = grep(C / "run.md", r'lane.py" next-step') + grep(C / "run.md", r'lane.py" next --repo')
+    rec(b, "Arrow 'Next items': ROADMAP → worktrees automatically", "PRESENT" if ok_q and len(loop) >= 2 else "MISSING", f"lane.py next / next-step decide from files+git; /run loops on them {'; '.join(loop[:2])}; tests: {last_q}", "" if ok_q else "no orchestrator")
     present_if(b, "Parallel worktrees, one team per feature (Feature A/B/C)", grep(S / "lane.py", r'"worktree", "add"') + grep(S / "lane.py", r"file overlap with active spec") + grep(S / "lane.py", r"WIP limit reached"), "no worktree creation / overlap / WIP")
-    instruction(b, "Arrow: worktree → 'Small PR merged to main' (PR opened by the pipeline)", grep(C / "implement.md", r"gh pr create"), "PR creation is a command instruction; merge is the human's")
+    rec(b, "Arrow: worktree → 'Small PR merged to main' (PR opened by the pipeline, merged by the human)", "PRESENT" if grep(C / "run.md", r"gh pr create") and grep(S / "lane.py", r'"stage": "wait-merge"') else "INSTRUCTION", "; ".join(grep(C / "run.md", r"gh pr create") + grep(S / "lane.py", r'"stage": "wait-merge"')), "")
     rec(b, "Small PR merged to main (human merges; direct push blocked)", "PRESENT", "; ".join(grep(S / "hook_guard_bash.py", r"direct push to main")[:1] + grep(S / "bootstrap.py", r'"strict": True')[:1]))
-    instruction(b, "Arrow: merge → /retro (automatic)", grep(C / "run.md", r"When the PR is merged") if (C / "run.md").is_file() else [], "needs /run; today the human types /retro")
+    rec(b, "Arrow: merge → /retro (automatic)", "PRESENT" if grep(C / "run.md", r"\| `retro` \|") and grep(S / "lane.py", r'"stage": "retro"') else "MISSING", "; ".join(grep(S / "lane.py", r'"stage": "retro"') + grep(C / "run.md", r"\| `retro` \|")), "")
     present_if(b, "/retro turns mistake into rule or check (command + agent + lesson rules)", exists("kit/commands/retro.md", "kit/agents/retro.md") + grep(S / "validate_docs.py", r'"lesson-no-change"'), "no retro")
     instruction(b, "Arrow 'Project lesson' → LESSONS.md", grep(C / "retro.md", r"Append the entry to `LESSONS.md`"), "writing is a command instruction; format is script-validated")
     instruction(b, "Arrow 'Global lesson promoted' → kit repo", grep(C / "retro.md", r"gh issue create --repo"), "opening the kit issue is a command instruction")
@@ -136,7 +134,7 @@ def board1() -> None:
 
 def board2() -> None:
     b = 2
-    rec(b, "Next item in ROADMAP.md → research starts", "MISSING" if not (C / "run.md").is_file() else "INSTRUCTION", "/research is typed by the human" if not (C / "run.md").is_file() else "run.md", "needs /run")
+    rec(b, "Next item in ROADMAP.md → research starts", "PRESENT" if grep(S / "lane.py", r'"stage": "research"') and grep(C / "run.md", r"\| `research` \|") else "MISSING", "; ".join(grep(S / "lane.py", r'"stage": "research"') + grep(C / "run.md", r"\| `research` \|")), "")
     ok, last = pytest("test_lane.py::test_index_lookup_reuse_stale_new")
     rec(b, "Question in research INDEX? → reuse / re-verify (files changed) / new", "PRESENT" if ok else "MISSING", f"lane.py index lookup; test: {last}")
     instruction(b, "Spawn researchers, one question each", grep(C / "research.md", r"Spawn all researchers in parallel") + grep(A / "researcher.md", r"ONE question"), "spawning is command/agent text (Claude Code Agent tool)")
@@ -161,11 +159,11 @@ def board2() -> None:
     ok, last = pytest("test_validate_spec_review.py::test_risk_flag_required_when_touching_payments")
     summ = grep(S / "validate_docs.py", r'"summary", "goal", "non-goals"')
     rec(b, "docs/specs/f.md one-screen summary, risk flag", "PRESENT" if ok and summ else "PARTIAL", f"Summary required {summ[0] if summ else 'no'}; risk test: {last}")
-    notes = grep(C / "plan.md", r"notes") + (grep(C / "run.md", r"Changes: pass the human's text to the planner") if (C / "run.md").is_file() else [])
-    rec(b, "You approve? 'No, with notes' → back to planner", "INSTRUCTION" if notes else "MISSING", "; ".join(notes) or "no routing of notes to the planner", "needs /run pause 1")
+    notes = grep(C / "run.md", r"\*Changes\*: give the human's text to the planner")
+    rec(b, "You approve? 'No, with notes' → back to planner", "PRESENT" if notes else "MISSING", "; ".join(notes) or "no routing of notes to the planner", "" if notes else "needs /run pause 1")
     ok, last = pytest("test_validate_spec_review.py::test_approved_status_requires_approval_line", "test_lane.py::test_precheck_refuses_unapproved")
     rec(b, "Approval line: name, date, commit hash (required before build)", "PRESENT" if ok else "MISSING", f"validate_docs approval-line + lane precheck; tests: {last}")
-    rec(b, "Arrow → To build stage (automatic)", "INSTRUCTION" if (C / "run.md").is_file() else "MISSING", "run.md" if (C / "run.md").is_file() else "/implement is typed by the human", "needs /run")
+    rec(b, "Arrow → To build stage (automatic)", "PRESENT" if grep(S / "lane.py", r'"stage": "lane"') and grep(C / "run.md", r"\| `lane` \|") else "MISSING", "; ".join(grep(S / "lane.py", r'"stage": "lane"') + grep(C / "run.md", r"\| `lane` \|")), "")
 
 
 # ----------------------------------------------------------------------------------------------- board 3
