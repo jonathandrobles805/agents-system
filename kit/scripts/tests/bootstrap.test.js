@@ -10,6 +10,7 @@ import { toPythonEraKit } from './testdata.js';
 
 const KIT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 const FRAG = JSON.parse(fs.readFileSync(path.join(KIT, 'hooks', 'settings.project.json'), 'utf8'));
+const KIT_VERSION = fs.readFileSync(path.join(KIT, '..', 'VERSION'), 'utf8').trim();
 
 const read = (root, ...rel) => fs.readFileSync(path.join(root, ...rel), 'utf8');
 const isFile = (p) => fs.existsSync(p) && fs.statSync(p).isFile();
@@ -102,7 +103,7 @@ test('bootstrap is idempotent and keeps human files', (t) => {
 test('upgrade backs up kit files and touches only version stamp', (t) => {
   const root = nodeApi(path.join(tmpPath(t), 'node-api'));
   boot(root);
-  fs.writeFileSync(path.join(root, 'CLAUDE.md'), read(root, 'CLAUDE.md').replaceAll('agent-kit 0.1.0', 'agent-kit 0.0.9') + '\n## Team notes\n- keep\n');
+  fs.writeFileSync(path.join(root, 'CLAUDE.md'), read(root, 'CLAUDE.md').replaceAll(`agent-kit ${KIT_VERSION}`, 'agent-kit 0.0.9') + '\n## Team notes\n- keep\n');
   // simulate an older settings.json that needs refreshing
   const s = JSON.parse(read(root, '.claude', 'settings.json'));
   delete s.hooks.Stop;
@@ -112,7 +113,7 @@ test('upgrade backs up kit files and touches only version stamp', (t) => {
   assert.ok(fs.statSync(path.join(root, '.claude', 'backup')).isDirectory());
   assert.deepEqual(JSON.parse(read(root, '.claude', 'settings.json')).hooks, FRAG.hooks);
   const text = read(root, 'CLAUDE.md');
-  assert.ok(text.includes('- keep') && text.includes('agent-kit 0.1.0') && !text.includes('agent-kit 0.0.9'));
+  assert.ok(text.includes('- keep') && text.includes(`agent-kit ${KIT_VERSION}`) && !text.includes('agent-kit 0.0.9'));
 });
 
 test('dry run writes nothing', (t) => {

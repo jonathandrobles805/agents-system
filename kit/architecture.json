@@ -1999,7 +1999,7 @@
       "to": "script:validate_docs"
     }
   ],
-  "kit_version": "0.1.0",
+  "kit_version": "0.2.0",
   "nodes": [
     {
       "attrs": {
