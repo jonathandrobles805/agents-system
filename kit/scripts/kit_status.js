@@ -194,6 +194,7 @@ export function laneState(root, row, kit) {
     feature: row.feature, slug, milestone: row.milestone, roadmap_status: row.status, position: pos, needs_you: needsYou,
     risk: specHdr.get('risk') ?? null, spec: K.isFile(spec) ? relativeTo(root, spec) : null, approved,
     worktree: hasWt ? wt : null, branch: kget(laneJson, 'branch', null), stage: kget(laneJson, 'stage', null), started: kget(laneJson, 'started', null),
+    sandbox: hasWt ? L.asDict(kget(laneJson, 'sandbox', {})) : null, // runtime and state, derived at lane start (KIT-SPEC 10.9); never asserted by an agent
     behind_base: behind, ahead_base: ahead, head: head ? headCp(head, 10) : null,
     progress: prog, review: rev, events: ev,
     last_check: lastCheck ? { kind: kget(lastCheck, 'event', null), result: kget(lastCheck, 'result', null), summary: kget(lastCheck, 'summary', null), ts: kget(lastCheck, 'ts', null) } : null,

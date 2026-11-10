@@ -10,6 +10,9 @@ import { GIT_ENV, git, commitAll } from './fixtures.js';
 // $CLAUDE_HOME/kit-projects.json. Each test process gets its own throwaway home.
 const TEST_HOME = fs.mkdtempSync(path.join(os.tmpdir(), 'kit-test-home-'));
 process.env.CLAUDE_HOME = TEST_HOME;
+// Tests describe the kit's behaviour with a sandbox runtime present unless a test says otherwise (KIT-SPEC 10.9); the
+// fixture spec is high-risk, which needs the container runtime. Tests of the degraded path set KIT_SANDBOX_RUNTIME=none.
+process.env.KIT_SANDBOX_RUNTIME ??= 'container';
 process.on('exit', () => fs.rmSync(TEST_HOME, { recursive: true, force: true }));
 
 export const SCRIPTS = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
