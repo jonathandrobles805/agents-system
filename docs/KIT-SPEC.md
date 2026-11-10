@@ -11,7 +11,8 @@ This document is the contract for the kit. Nothing is built that is not describe
 Companion documents:
 - `docs/research/claude-code-features.md` — verified features this spec relies on, with citations
 - `docs/failure-modes-and-enforcement.md` — the control list each gate is checked against
-- `docs/implementation-plan.md` — phases, order, and the check that closes each phase
+- `docs/OPERATING-MODEL.md` — the operating model and current roadmap
+- `docs/implementation-plan.md` — the original phase plan (historical)
 
 ---
 
@@ -333,6 +334,14 @@ The kit is done when all of the following hold:
 | 17 | `/sync` hits a merge conflict twice | conflict rule (10.5) | escalation |
 | 18 | A kit script is broken (unit test fails) | script test suite | kit release blocked |
 | 19 | Dependency with a known vulnerability added | vulnerability scan in CI | CI fail |
+| 20 | Lane command reaches an undeclared network host | sandbox proxy (`srt` or container network) | connection refused, event `blocked` |
+| 21 | Agent reads a credential path while sandboxed | `guard-read` and sandbox `denyRead` | blocked by both; event records which layer |
+| 22 | Project settings loosen the floor's deny list | `ci_security_floor`; hooks still enforce the floor | CI fail; hook still blocks |
+| 23 | Lane started with no sandbox runtime available | `lane.js start` | lane state `degraded` recorded; `risk=high` refused; never silent |
+| 24 | Lane can read a value matching a floor credential pattern | `lane.js start` precheck | lane refused |
+| 25 | Agent process restarted mid-stage | `lane.js next-step` from files | resumes at the same stage with the same outputs; no transcript needed |
+| 26 | `/bootstrap` on a repo that already has a decisions folder | `bootstrap.js` | no second folder; new decisions written into the existing one |
+| 27 | Lane artifact written outside `docs/work/<lane>/` | artifact validator (hook and CI) | refused |
 
 ---
 
@@ -376,6 +385,45 @@ CI runs a vulnerability scan on the lockfile (`npm audit`, `pip-audit`, `cargo a
 
 ---
 
+## 10.9 Sandbox and security floor (step 2)
+
+Every lane runs inside an OS-enforced boundary with three properties: only the lane's worktree and a scratch directory are writable; credential locations are unreadable (`~/.ssh`, `~/.aws`, `~/.config/gh`, the project's `.env*`, the kit's key paths, and whatever `kit/security/floor.json` adds); the network is an allowlist (package registries plus the domains the spec declares) through a proxy the agent cannot bypass.
+
+Two runtimes are accepted, recorded per lane in `lane.json` and the events log:
+- **`srt`** (`@anthropic-ai/sandbox-runtime`: Seatbelt on macOS, bubblewrap + socat on Linux), the default. `lane.js start` launches the lane's Claude Code session through it with `failIfUnavailable: true`; the floor's deny list is applied as `denyRead`.
+- **`container`**, the stricter option: a per-lane container with the same three properties by mounts and the container network. Required when `risk=high` and on shared machines; `kit.json sandbox.runtime: container` makes it the default for a project.
+
+If neither runtime is present the lane starts in sandbox state **`degraded`**: hooks (§7.2) and the floor still enforce; the state is written to `lane.json`, shown by `/status` and the dashboard, and logged; `risk=high` is refused; no promotion to `contained` without restart. Degradation is never silent and never inferred by an agent.
+
+**Floor.** `kit/security/floor.json` holds the minimum deny list, credential patterns, per-agent network allowances, `second_family` (the model family for the second reviewer, §10.4) and `max_researchers`. A project may strengthen the floor, never weaken it: `ci_security_floor` compares effective permissions across all settings scopes against the floor and fails on any loosening; `guard-read` and `guard-bash` read the floor directly, so a loosened `settings.json` changes nothing at run time.
+
+**Controller topology.** `lane.js` has a host side and an in-lane side. The host side (run by your session or a schedule, outside any sandbox) creates the worktree, provisions the lane database (§10.10), starts the lane as a headless Claude Code session inside the sandbox, holds the only copies of host-level secrets (second-family key, database-branch API key, signing keys), spawns the second reviewer in its own sandbox, enforces `max_concurrent_lanes` from `kit.json`, and runs `stop` / `resume`. The in-lane side (the same script, called by hooks and `next-step`) derives state, validates transitions, enforces budgets and writes evidence; it cannot read host secrets. Your interactive session is where commands, the inbox, approvals and `/teach` happen; implementation never runs in it.
+
+**Provider outage.** Repeated provider errors, from the primary or the second-family provider, pause the lane with an escalation rather than retrying into its budget.
+
+## 10.10 Lane database (step 2)
+
+Each lane gets its own ports and a throwaway database of the project's own kind, by the adapter recorded in `kit.json db.lane_adapter`, set by `/bootstrap` (and by `/onboard` once it exists):
+
+| Adapter | When | Lane gets |
+|---|---|---|
+| `local` | Postgres, MySQL, Mongo, SQLite | local instance inside the sandbox, migrations applied, fixtures seeded, destroyed at close |
+| `emulator` | platforms with an official emulator (Supabase CLI, Firebase, DynamoDB Local, Azurite) | the emulator per lane, no cloud call |
+| `branch` | providers with branching (Neon, PlanetScale, Supabase) | a branch from staging; credential scoped to the branch and expiring with the lane; the provider API key stays on the host side |
+| `none` | nothing above applies | unit tests with the data layer mocked; integration tests only in CI against a staging copy; `lane.json` carries `db: shared-staging` |
+
+Production credentials never enter a lane: the sandbox makes their paths unreadable and `lane.js start` refuses a lane that can read any value matching a floor credential pattern.
+
+## 10.11 Lane artifacts, idempotent bootstrap, resumable stages (step 2)
+
+**Lane artifacts** live in one tree, created by `lane.js start`: `docs/work/<lane>/` with `goal.md`, `research/` (one file per researcher), `spec.md`, `progress.md`, `evidence/`, `review.md`, `escalations.md`; threat models in `docs/threat-models/<lane>.md`. Each file is written only by `lane.js` or by the agent whose stage owns it. A validator (hook and CI) refuses a lane artifact outside this tree and product code inside it. The root is configurable through `kit.json paths.work` so an existing convention can be adopted; there is exactly one root. On merge, `spec.md`, `review.md` and the evidence index are kept; research and progress move to `docs/work/_archive/<lane>/`.
+
+**Adopt, never duplicate.** `/bootstrap` is idempotent: an existing file or folder is adopted, never overwritten or recreated. If the project already has a convention the kit needs (ADRs in `docs/adr/`, an `ARCHITECTURE.md`, a design-tokens file), `kit.json paths.*` maps the kit's artifacts onto it and no second copy is created. `/bootstrap` writes a short `CLAUDE.md` pointing at the project's models, context, rules and deployed skills, regenerated on `--upgrade` with a marked block preserved for hand edits.
+
+**Resumable stages.** Every stage can be resumed from `docs/work/<lane>/` alone. On context pressure, provider failure or `lane.js resume`, the controller restarts the agent from files, never from a transcript; the restarted agent's first act is reading `progress.md`. A stage restarted from files produces the same outputs as one that never stopped (fault 25).
+
+---
+
 ## 11. Versioning and upgrades
 
 - `VERSION` follows semver. `CHANGELOG.md` records every change with the lesson or decision that caused it.
@@ -398,6 +446,11 @@ See `docs/decisions/`:
 - 0002 Rules live at the strongest level available: code over process over text
 - 0003 Agents communicate through files, never through shared conversation
 - 0004 PreToolUse for blocking, PostToolUse for feedback, Stop for completion checks
+- 0005 Hooks live in both the agent and the project
+- 0006 Lane position is derived; ROADMAP status is a record
+- 0007 Plain JavaScript with checked types; Node is the only runtime
+- 0008 The sandbox is the hard boundary; hooks are the fast layer; `srt` default, container at high risk
+- 0009 Lane database of the project's kind through a declared adapter; production credentials never in a lane
 
 ---
 
