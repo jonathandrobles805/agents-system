@@ -7,6 +7,7 @@ All notable changes to the kit. Each entry names the decision or lesson that cau
 ### Added
 - KIT-SPEC §10.9–10.11 and planted faults 20–27: the step 2 amendment (sandbox with `srt` default and container at high risk, `degraded` state, security floor, host-side/in-lane controller, lane database adapters, lane artifact tree, idempotent bootstrap, resumable stages). Spec only; the code lands in the step 2 PR after `v0.2.0`.
 - Decisions 0008 (sandbox is the hard boundary) and 0009 (lane database adapter).
+- Step 2a, the security floor: `kit/security/floor.json` (deny list, secret path patterns, credential content patterns, network allowances, `second_family`, `max_researchers`). `guard-read` and `guard-bash` read it directly, so a loosened `settings.json` removes nothing; projects add through `kit.json secret_patterns`. `bootstrap` writes the floor's deny list into every project. New `ci_security_floor.js` reads every settings scope (managed, user, project, project-local) and fails on a missing floor entry, an allow that grants a floor-denied rule, `disableAllHooks`, or a `floor` key in `kit.json`; wired into the project CI template after `guards-present`. Planted faults 21 and 22; 6 tests (189 total).
 
 ## [0.2.0] - 2026-11-10
 

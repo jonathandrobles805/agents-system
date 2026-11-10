@@ -300,6 +300,23 @@ export function main(argv) {
     const kitj = JSON.parse(read(path.join(root, '.claude', 'kit.json')));
     const wf = read(path.join(root, '.github', 'workflows', 'kit.yml'));
     record(19, 'dependency with a known vulnerability', 'audit job in project CI (npm audit / pip-audit / cargo audit / govulncheck)', Object.hasOwn(kitj.commands, 'audit') && wf.includes('audit:'), `audit command: ${kitj.commands.audit ?? 'None'}`, 'tool-level');
+
+    // 21 agent reads a credential path with the project settings loosened as far as they go -> guard-read reads the floor, not settings
+    //    (the sandbox half of this fault, denyRead, arrives with the launcher in step 2b)
+    const sj = path.join(root, '.claude', 'settings.json');
+    const settingsBefore = read(sj);
+    const loosened = JSON.parse(settingsBefore);
+    loosened.permissions = { allow: ['Read(**)'], deny: [] };
+    write(sj, K.jsonDumps(loosened));
+    r = hook('hook_guard_read.js', { ...base, hook_event_name: 'PreToolUse', tool_name: 'Read', tool_input: { file_path: path.join(root, '.kube', 'config') } });
+    record(21, 'agent reads a credential path while settings are loosened', 'guard-read reads kit/security/floor.json (hook layer; sandbox denyRead in 2b)', r.returncode === 2 && r.stderr.includes('secret/credential pattern'), r.stderr, 'mechanical (hook half)');
+
+    // 22 project settings loosen the floor's deny list -> ci_security_floor fails
+    c = run('ci_security_floor.js', ['--repo', root, '--home', path.join(tmp, 'empty-home'), '--managed', path.join(tmp, 'no-managed.json')]);
+    const caught22 = c.returncode === 1 && c.stderr.includes('missing floor entry') && c.stderr.includes('allows "Read(**)"');
+    write(sj, settingsBefore);
+    const c22ok = run('ci_security_floor.js', ['--repo', root, '--home', path.join(tmp, 'empty-home'), '--managed', path.join(tmp, 'no-managed.json')]);
+    record(22, "project settings loosen the floor's deny list", 'ci_security_floor (project CI)', caught22 && c22ok.returncode === 0, caught22 ? c.stderr : `${c.stderr}\nrestored: ${c22ok.stderr}`);
   } finally {
     if (a.keep) process.stderr.write(`fixtures kept at ${tmp}\n`);
     else fs.rmSync(tmp, { recursive: true, force: true });
