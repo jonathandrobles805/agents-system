@@ -4,6 +4,18 @@ All notable changes to the kit. Each entry names the decision or lesson that cau
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-11-10
+
+### Added
+- `docs/OPERATING-MODEL.md` (Version 4.1): the operating model the kit is built toward; roadmap in its §16, step 0 is this release. Supersedes the phase table in `docs/implementation-plan.md` as the current plan.
+- Decision 0007: the kit stays plain JavaScript with JSDoc types checked file by file; Node is the only runtime; the Python-emulation helpers remain until each has a tested native replacement.
+
+### Changed
+- `VERSION` 0.1.0 → 0.2.0, matching the approved KIT-SPEC version; `kit/architecture.json` regenerated for the new version (no other change).
+
+### Fixed
+- `bootstrap.test.js` pinned the literal `agent-kit 0.1.0`; it now reads `VERSION`, so a version bump cannot fail the suite by itself.
+
 ### Added
 - Architecture Canvas on the dashboard: five views (System, Agents, Pipeline, Dependencies, Activity) over a map derived from the kit's files, with per-project overlays (hooks installed vs kit, lane stages, running agents) and a blast-radius view. Backend: `kit/scripts/arch_manifest.js`, `kit/scripts/arch_live.js`, `GET /api/architecture`, `GET /api/history`; frontend model `kit/dashboard/model.js`. The page has no external loads.
 - `kit/manifest.json` (declared purpose of every command, agent, hook, check, script and CI job) and `kit/architecture.json` (committed snapshot of the derived map). Kit CI runs `npm run architecture:check`; `undeclared`, `declared-missing`, `dangling-reference`, `dangling-import`, `agent-name-mismatch`, `stage-mismatch`, `invalid-settings`, `invalid-declaration` and `unguarded-tool` fail the build.

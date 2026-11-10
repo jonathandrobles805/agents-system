@@ -1,5 +1,7 @@
 # Agent kit: implementation plan
 
+> Historical. The phases below were built and are recorded in CHANGELOG.md. The current roadmap is `docs/OPERATING-MODEL.md` §16.
+
 What will be built, in what order, how each piece is verified, and how it lands in your projects. This is the plan the kit spec will be written from. Nothing below starts until you approve the kit spec (Phase 0).
 
 ---

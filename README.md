@@ -4,8 +4,9 @@ A versioned kit for running Claude Code agents through a fixed, enforced pipelin
 research → plan → approve → build → review → merge → retro.
 
 Start here:
-- `docs/KIT-SPEC.md` — the contract for what gets built (awaiting approval)
-- `docs/implementation-plan.md` — phases and the check that closes each
+- `docs/OPERATING-MODEL.md` — the operating model and roadmap (current)
+- `docs/KIT-SPEC.md` — the contract for what gets built
+- `docs/implementation-plan.md` — the original phase plan (historical; the roadmap now lives in OPERATING-MODEL §16)
 - `docs/failure-modes-and-enforcement.md` — what each gate stops and how
 - `docs/research/claude-code-features.md` — verified Claude Code features with citations
 - `docs/decisions/` — why things are the way they are
