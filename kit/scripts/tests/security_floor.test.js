@@ -36,7 +36,7 @@ test('floor file: well-formed, and a superset of what the kit already enforced',
   assert.ok(f.credential_patterns.length >= 7);
   for (const p of f.credential_patterns) assert.doesNotThrow(() => new RegExp(p), `credential pattern compiles: ${p}`);
   assert.ok(f.max_researchers <= 8);
-  assert.ok(K.credentialRegex().test('postgres://app:hunter2@db.internal:5432/prod'));
+  assert.ok(K.credentialRegex().test('postgres://app:hunter2@db.internal:5432/prod')); // kit:allow-secret
   assert.ok(!K.credentialRegex().test('postgres://db.internal:5432/prod'));
 });
 

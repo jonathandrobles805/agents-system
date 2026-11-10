@@ -450,6 +450,19 @@
       "file": ".github/workflows/kit.yml",
       "from": "ci-job:kit/scripts",
       "kind": "runs",
+      "to": "test:sandbox"
+    },
+    {
+      "file": ".github/workflows/kit.yml",
+      "from": "ci-job:kit/scripts",
+      "kind": "runs",
+      "step": "architecture map matches the code (kit/manifest.json declares every component; kit/architecture.json is current)",
+      "to": "test:sandbox"
+    },
+    {
+      "file": ".github/workflows/kit.yml",
+      "from": "ci-job:kit/scripts",
+      "kind": "runs",
       "to": "test:security_floor"
     },
     {
@@ -1160,7 +1173,25 @@
       "file": "kit/scripts/lane.js",
       "from": "script:lane",
       "kind": "imports",
+      "to": "script:sandbox"
+    },
+    {
+      "file": "kit/scripts/lane.js",
+      "from": "script:lane",
+      "kind": "imports",
       "to": "script:validate_docs"
+    },
+    {
+      "file": "kit/scripts/sandbox.js",
+      "from": "script:sandbox",
+      "kind": "imports",
+      "to": "script:args"
+    },
+    {
+      "file": "kit/scripts/sandbox.js",
+      "from": "script:sandbox",
+      "kind": "imports",
+      "to": "script:kitlib"
     },
     {
       "file": "kit/scripts/validate_docs.js",
@@ -1387,6 +1418,12 @@
       "from": "shell:release.sh",
       "kind": "runs",
       "to": "test:lane"
+    },
+    {
+      "file": "release.sh",
+      "from": "shell:release.sh",
+      "kind": "runs",
+      "to": "test:sandbox"
     },
     {
       "file": "release.sh",
@@ -1851,6 +1888,24 @@
       "to": "script:lane"
     },
     {
+      "file": "kit/scripts/tests/sandbox.test.js",
+      "from": "test:sandbox",
+      "kind": "tests",
+      "to": "script:kitlib"
+    },
+    {
+      "file": "kit/scripts/tests/sandbox.test.js",
+      "from": "test:sandbox",
+      "kind": "tests",
+      "to": "script:lane"
+    },
+    {
+      "file": "kit/scripts/tests/sandbox.test.js",
+      "from": "test:sandbox",
+      "kind": "tests",
+      "to": "script:sandbox"
+    },
+    {
       "file": "kit/scripts/tests/security_floor.test.js",
       "from": "test:security_floor",
       "kind": "tests",
@@ -2059,6 +2114,12 @@
       "from": "tool:planted-faults",
       "kind": "runs",
       "to": "script:lane"
+    },
+    {
+      "file": "planted-faults/run.js",
+      "from": "tool:planted-faults",
+      "kind": "runs",
+      "to": "script:sandbox"
     },
     {
       "file": "planted-faults/run.js",
@@ -2908,6 +2969,15 @@
       "purpose": "Mechanical half of the pipeline: worktrees, preconditions, roadmap status, and the next-step state machine."
     },
     {
+      "attrs": {},
+      "declared": true,
+      "id": "script:sandbox",
+      "kind": "script",
+      "label": "sandbox.js",
+      "path": "kit/scripts/sandbox.js",
+      "purpose": "Detects the lane sandbox runtime (srt, container, or none), builds a lane's sandbox configuration from the floor and its spec, scans the worktree for credential-looking content, and forms the host-side launch command."
+    },
+    {
       "attrs": {
         "events": [
           "PostToolUse",
@@ -3118,6 +3188,13 @@
       "kind": "test",
       "label": "lane.test.js",
       "path": "kit/scripts/tests/lane.test.js"
+    },
+    {
+      "attrs": {},
+      "id": "test:sandbox",
+      "kind": "test",
+      "label": "sandbox.test.js",
+      "path": "kit/scripts/tests/sandbox.test.js"
     },
     {
       "attrs": {},

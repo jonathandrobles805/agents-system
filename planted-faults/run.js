@@ -59,8 +59,10 @@ function sh(cmd, args, { cwd, input, env } = {}) {
   return completed(spawnSync(cmd, args, { cwd, input, encoding: 'utf8', env, maxBuffer: 256 * 1024 * 1024 }));
 }
 
-function run(script, args = [], { stdin, cwd } = {}) {
-  return sh(process.execPath, [path.join(SCRIPTS, script), ...args], { input: stdin, cwd, env: childEnv({ KIT_STATUS_NO_GH: '1' }) });
+function run(script, args = [], { stdin, cwd, env = {} } = {}) {
+  // the fixture spec is high-risk, so the suite runs lanes as if the container runtime were present; faults about the
+  // degraded path pass KIT_SANDBOX_RUNTIME=none explicitly
+  return sh(process.execPath, [path.join(SCRIPTS, script), ...args], { input: stdin, cwd, env: childEnv({ KIT_STATUS_NO_GH: '1', KIT_SANDBOX_RUNTIME: process.env.KIT_SANDBOX_RUNTIME ?? 'container', ...env }) });
 }
 
 function hook(script, payload) {
@@ -209,7 +211,7 @@ export function main(argv) {
     F.git(['reset', '-q', '--hard', 'HEAD~1'], wt);
 
     // 9 secret committed
-    write(path.join(wt, 'config.ts'), "export const k = 'sk_live_abcdefghijklmnopqrstuv';\n");
+    write(path.join(wt, 'config.ts'), "export const k = 'sk_live_abcdefghijklmnopqrstuv';\n"); // kit:allow-secret
     gitCheck(['add', 'config.ts'], wt);
     r = hook('hook_guard_bash.js', { ...base, hook_event_name: 'PreToolUse', tool_name: 'Bash', tool_input: { command: "git commit -m 'cfg'" } });
     record(9, 'secret committed', 'guard-bash on git commit (+ gitleaks in CI)', r.returncode === 2 && r.stderr.includes('secret'), r.stderr);
@@ -309,7 +311,7 @@ export function main(argv) {
     loosened.permissions = { allow: ['Read(**)'], deny: [] };
     write(sj, K.jsonDumps(loosened));
     r = hook('hook_guard_read.js', { ...base, hook_event_name: 'PreToolUse', tool_name: 'Read', tool_input: { file_path: path.join(root, '.kube', 'config') } });
-    record(21, 'agent reads a credential path while settings are loosened', 'guard-read reads kit/security/floor.json (hook layer; sandbox denyRead in 2b)', r.returncode === 2 && r.stderr.includes('secret/credential pattern'), r.stderr, 'mechanical (hook half)');
+    record(21, 'agent reads a credential path while settings are loosened', 'guard-read reads kit/security/floor.json; sandbox denyRead carries the same paths (sandbox.js)', r.returncode === 2 && r.stderr.includes('secret/credential pattern'), r.stderr, 'mechanical');
 
     // 22 project settings loosen the floor's deny list -> ci_security_floor fails
     c = run('ci_security_floor.js', ['--repo', root, '--home', path.join(tmp, 'empty-home'), '--managed', path.join(tmp, 'no-managed.json')]);
@@ -317,6 +319,38 @@ export function main(argv) {
     write(sj, settingsBefore);
     const c22ok = run('ci_security_floor.js', ['--repo', root, '--home', path.join(tmp, 'empty-home'), '--managed', path.join(tmp, 'no-managed.json')]);
     record(22, "project settings loosen the floor's deny list", 'ci_security_floor (project CI)', caught22 && c22ok.returncode === 0, caught22 ? c.stderr : `${c.stderr}\nrestored: ${c22ok.stderr}`);
+
+    // 20 lane command reaches an undeclared host -> the sandbox's allowlist is exactly floor + spec; nothing else is reachable.
+    //    Proven mechanically on the configuration (the runtime enforcement needs srt or a container on the machine: tool-level).
+    const cfg = JSON.parse(run('sandbox.js', ['config', 'refund-route', '--repo', wt], { env: { KIT_SANDBOX_RUNTIME: 'srt' } }).stdout);
+    const floorDomains = K.loadFloor().network.default_allow;
+    const onlyDeclared = cfg.allowedDomains.every((d) => floorDomains.includes(d)) && !cfg.allowedDomains.includes('evil.example') && cfg.failIfUnavailable === true;
+    record(20, 'lane command reaches an undeclared network host', 'sandbox allowlist = floor + spec Network section; failIfUnavailable (runtime enforcement by srt/container)', onlyDeclared, `allowedDomains: ${cfg.allowedDomains.join(', ')}`, 'tool-level');
+
+    // 23 no sandbox runtime available -> a normal lane is recorded `degraded`, a high-risk lane is refused
+    const root23 = path.join(tmp, 'node-api-23');
+    F.nodeApi(root23);
+    run('bootstrap.js', ['--repo', root23]);
+    const kj23 = path.join(root23, '.claude', 'kit.json');
+    write(kj23, K.jsonDumps({ ...JSON.parse(read(kj23)), wip_limit: 2 }));
+    write(path.join(root23, 'ROADMAP.md'), read(path.join(root23, 'ROADMAP.md')).replaceAll('| TODO(bootstrap: ROADMAP.md — feature) | TODO(bootstrap: ROADMAP.md — slug) | M1 | queued | — | — | — |', '| Refund route | refund-route | M1 | queued | — | — | — |'));
+    const c23 = F.commitAll(root23, 'bootstrap');
+    write(path.join(root23, 'docs', 'specs', 'refund-route.md'), SPEC({ commit: c23.slice(0, 7) }));
+    F.commitAll(root23, 'spec');
+    r = run('lane.js', ['start', 'refund-route', '--repo', root23], { env: { KIT_SANDBOX_RUNTIME: 'none' } });
+    const refusedHigh = r.returncode === 2 && r.stderr.includes('requires the container sandbox runtime') && !fs.existsSync(path.join(tmp, 'node-api-23-lanes', 'refund-route'));
+    write(kj23, K.jsonDumps({ ...JSON.parse(read(kj23)), sandbox: { high_risk_waiver: { by: 'planted-fault', reason: 'prove the degraded state is recorded' } } }));
+    r = run('lane.js', ['start', 'refund-route', '--repo', root23], { env: { KIT_SANDBOX_RUNTIME: 'none' } });
+    const lj23 = path.join(tmp, 'node-api-23-lanes', 'refund-route', '.claude', 'lane.json');
+    const degradedRecorded = r.returncode === 0 && fs.existsSync(lj23) && JSON.parse(read(lj23)).sandbox.state === 'degraded' && read(path.join(path.dirname(lj23), 'session', 'events.jsonl')).includes('DEGRADED') && r.stderr.includes('DEGRADED');
+    record(23, 'lane started with no sandbox runtime available', 'lane.js start: high-risk refused; otherwise state `degraded` in lane.json, events and stderr', refusedHigh && degradedRecorded, `${r.stderr.trim().split('\n')[0]}`);
+
+    // 24 the lane could read a value matching a floor credential pattern -> start refused, worktree removed
+    run('lane.js', ['finish', 'refund-route', '--repo', root23]);
+    write(path.join(root23, 'src', 'db.ts'), 'export const url = "postgres://app:S3cret@db.internal:5432/prod";\n');
+    F.commitAll(root23, 'leak');
+    r = run('lane.js', ['start', 'refund-route', '--repo', root23]);
+    record(24, 'lane can read a value matching a floor credential pattern', 'lane.js start credential scan', r.returncode === 2 && r.stderr.includes('credential-looking content') && r.stderr.includes('src/db.ts:1') && !fs.existsSync(path.join(tmp, 'node-api-23-lanes', 'refund-route')), r.stderr);
   } finally {
     if (a.keep) process.stderr.write(`fixtures kept at ${tmp}\n`);
     else fs.rmSync(tmp, { recursive: true, force: true });

@@ -4,6 +4,7 @@
 //   lane.js precheck <slug> --repo R          may /implement start? (spec valid + approved, no open questions, WIP, no file overlap)
 //   lane.js start <slug> --repo R [--base B]  precheck, then worktree ../<repo>-lanes/<slug> on branch wt/<slug> from fresh base; lane.json; progress skeleton
 //   lane.js stage <slug> <stage> --repo R     set lane.json stage (research|plan|build|review) and reset its clock
+//   lane.js launch <slug> --repo R [--exec]   host side: the command that starts the lane's headless session inside its sandbox (KIT-SPEC 10.9)
 //   lane.js wip --repo R                      active lanes vs WIP limit
 //   lane.js unknowns <draft spec> --repo R    exit 0 none / 3 resolve (1..3, one researcher each) / 2 research insufficient (>3)
 //   lane.js roadmap-set <slug> <status> --repo R
@@ -24,6 +25,7 @@ import { fileURLToPath } from 'node:url';
 import { ArgumentParser } from './args.js';
 import * as K from './kitlib.js';
 import * as V from './validate_docs.js';
+import * as SB from './sandbox.js';
 
 const DOC = `lane: the mechanical half of the pipeline commands. Agents do the thinking; this does the git and file bookkeeping.
 
@@ -300,7 +302,7 @@ export function activeSpecs(root, exclude = null) {
 /** [in flight, limit, slugs]. */
 export function wip(root) {
   const kit = asDict(K.loadKitJson(root));
-  const limit = pyInt(kget(kit, 'wip_limit', 2));
+  const limit = pyInt(kget(kit, 'max_concurrent_lanes', kget(kit, 'wip_limit', 2))); // KIT-SPEC 10.9; wip_limit is the older name
   const lanes = roadmapRows(root).filter((r) => IN_FLIGHT.has(r.status)).map((r) => r.slug);
   return [lanes.length, limit, lanes];
 }
@@ -366,13 +368,55 @@ export function start(root, slug, base) {
     return refuse([`git worktree add failed: ${e.stderr ? pyStrip(e.stderr) : calledProcessErrorStr(e, wtArgs)}`]);
   }
   fs.mkdirSync(pjoin(wt, '.claude'), { recursive: true });
+  // Sandbox (KIT-SPEC 10.9): decide the runtime, refuse what the runtime cannot hold, scan for credentials the lane could read.
+  const sandbox = SB.sandboxConfig({ root, wt, slug });
+  const highRisk = (specHeader(specPath(wt, slug)).get('risk') ?? '').toLowerCase().includes('high');
+  const undo = () => {
+    try {
+      K.git(['worktree', 'remove', '--force', wt], root);
+      K.git(['branch', '-D', branch], root);
+    } catch (e) {
+      if (!isCalledProcessError(e)) throw e;
+    }
+  };
+  // A high-risk lane needs the container runtime. A human may waive that in kit.json with a reason; the waiver is recorded
+  // on the lane and in the events log, never applied silently (the same pattern as the second-reviewer waiver, KIT-SPEC 10.4).
+  const waiver = asDict(kget(asDict(kget(kit, 'sandbox', {})), 'high_risk_waiver', {}));
+  const waived = pyTruthy(kget(waiver, 'reason', '')) && pyTruthy(kget(waiver, 'by', ''));
+  if (highRisk && sandbox.runtime !== 'container' && !waived) {
+    undo();
+    const why = sandbox.runtime ? `detected '${sandbox.runtime}' (${sandbox.how})` : `no sandbox runtime is available (${sandbox.how})`;
+    return refuse([
+      `spec is high-risk: a high-risk lane requires the container sandbox runtime; ${why}.`,
+      'Install docker (or podman), or record a waiver in .claude/kit.json: "sandbox": { "high_risk_waiver": { "by": "<name>", "reason": "<why this is acceptable>" } }.',
+      'The waiver is written to the lane and the events log and shown by /status.',
+    ]);
+  }
+  const creds = SB.credentialScan(wt);
+  if (creds.length) {
+    undo();
+    return refuse([`the lane could read credential-looking content; remove it or mark reviewed fixtures with '${SB.ALLOW_MARKER}':`, ...creds.map((h) => `  ${h.path}:${h.line} (${h.kind})`)]);
+  }
+  const sessionDir = pjoin(wt, '.claude', 'session');
+  fs.mkdirSync(sessionDir, { recursive: true });
+  const sandboxSettings = pjoin(sessionDir, 'sandbox.json');
+  writeText(sandboxSettings, K.jsonDumps(SB.srtSettings(sandbox), { indent: 2 }) + '\n');
   const now = K.isoSeconds();
   const startCommit = pyStrip(K.git(['rev-parse', 'HEAD'], wt));
   const lane = {
     feature: slug, spec: `docs/specs/${slug}.md`, stage: 'build', started: now, created: now,
     base, branch, start_commit: startCommit, budget: kget(kget(kit, 'budgets', {}), 'build', {}),
+    risk: highRisk ? 'high' : 'normal',
+    sandbox: { runtime: sandbox.runtime, state: sandbox.state, how: sandbox.how, settings: relativeTo(wt, sandboxSettings), allowed_domains: sandbox.allowedDomains.length,
+      ...(highRisk && sandbox.runtime !== 'container' ? { high_risk_waiver: { by: kget(waiver, 'by', ''), reason: kget(waiver, 'reason', '') } } : {}) },
   };
   writeText(pjoin(wt, '.claude', 'lane.json'), K.jsonDumps(lane, { indent: 2 }) + '\n');
+  K.appendEvent(pjoin(sessionDir, 'events.jsonl'), { event: 'sandbox', runtime: sandbox.runtime, state: sandbox.state, summary: sandbox.state === 'degraded' ? `DEGRADED: ${sandbox.how}` : `${sandbox.runtime}: ${sandbox.how}` });
+  if (highRisk && sandbox.runtime !== 'container') {
+    K.appendEvent(pjoin(sessionDir, 'events.jsonl'), { event: 'waiver', what: 'high-risk without container', by: kget(waiver, 'by', ''), reason: kget(waiver, 'reason', ''), summary: `high-risk lane without container, waived by ${kget(waiver, 'by', '')}` });
+    process.stderr.write(`lane ${slug}: high-risk without the container runtime, WAIVED by ${kget(waiver, 'by', '')}: ${kget(waiver, 'reason', '')}\n`);
+  }
+  if (sandbox.state === 'degraded') process.stderr.write(`lane ${slug}: sandbox DEGRADED (${sandbox.how}); hooks and the floor still enforce; high-risk work is refused in this state\n`);
   // progress skeleton from the spec's done-criteria
   const sp = specPath(wt, slug);
   const rows = [];
@@ -398,8 +442,33 @@ export function start(root, slug, base) {
     data.lanes[slug] = { worktree: wt, branch, started: now, start_commit: startCommit };
     writeText(kj, K.jsonDumps(data, { indent: 2 }) + '\n');
   }
-  process.stdout.write(K.jsonDumps({ worktree: wt, branch, spec: lane.spec, progress: relativeTo(wt, prog) }) + '\n');
+  process.stdout.write(K.jsonDumps({ worktree: wt, branch, spec: lane.spec, progress: relativeTo(wt, prog), sandbox: lane.sandbox.state, runtime: lane.sandbox.runtime }) + '\n');
   return 0;
+}
+
+/** Host side: the command that starts the lane's headless session inside its sandbox. Prints it; runs it with --exec. */
+export function launch(root, slug, { exec = false, prompt = null } = {}) {
+  const wt = pjoin(lanesDir(root), slug);
+  const lj = pjoin(wt, '.claude', 'lane.json');
+  if (!K.isFile(lj)) return refuse([`no lane for ${slug}; run lane.js start ${slug} first`]);
+  const data = asDict(JSON.parse(readText(lj)));
+  const cfg = SB.sandboxConfig({ root, wt, slug });
+  const recorded = asDict(kget(data, 'sandbox', {}));
+  if (kget(recorded, 'runtime', null) !== cfg.runtime) {
+    return refuse([`sandbox runtime changed since start (recorded '${kget(recorded, 'runtime', null)}', now '${cfg.runtime}'); a lane keeps one runtime: finish it and start again`]);
+  }
+  if (kget(data, 'risk', 'normal') === 'high' && cfg.runtime !== 'container' && !pyTruthy(kget(asDict(kget(recorded, 'high_risk_waiver', {})), 'by', ''))) return refuse(['high-risk lane without the container runtime and no recorded waiver']);
+  const settingsPath = pjoin(wt, '.claude', 'session', 'sandbox.json');
+  writeText(settingsPath, K.jsonDumps(SB.srtSettings(cfg), { indent: 2 }) + '\n');
+  const text = prompt ?? `/run ${slug}`;
+  const cmd = SB.launchCommand(cfg, { wt, settingsPath, prompt: text });
+  K.appendEvent(pjoin(wt, '.claude', 'session', 'events.jsonl'), { event: 'launch', runtime: cfg.runtime, state: cfg.state, exec, summary: cmd.slice(0, 3).join(' ') });
+  if (!exec) {
+    process.stdout.write(K.jsonDumps({ runtime: cfg.runtime, state: cfg.state, cwd: wt, command: cmd, settings: relativeTo(wt, settingsPath) }, { indent: 2 }) + '\n');
+    return 0;
+  }
+  const r = spawnSync(cmd[0], cmd.slice(1), { cwd: wt, stdio: 'inherit', env: { ...process.env, KIT_LANE: slug } });
+  return r.status ?? 1;
 }
 
 export function setStage(root, slug, stage) {
@@ -659,6 +728,8 @@ export async function main(argv = process.argv.slice(2)) {
   s.addArgument('slug'); s.addArgument('stage', { choices: ['research', 'plan', 'test', 'build', 'review'] }); s.addArgument('--repo', { default: '.' });
   s = sub.addParser('merged');
   s.addArgument('slug'); s.addArgument('--repo', { default: '.' }); s.addArgument('--pr');
+  s = sub.addParser('launch');
+  s.addArgument('slug'); s.addArgument('--repo', { default: '.' }); s.addArgument('--exec', { action: 'store_true' }); s.addArgument('--prompt');
   s = sub.addParser('next-step');
   s.addArgument('slug'); s.addArgument('--repo', { default: '.' });
   s = sub.addParser('next');
@@ -685,6 +756,7 @@ export async function main(argv = process.argv.slice(2)) {
     return 0;
   }
   if (a.cmd === 'start') return start(root, a.slug, a.base);
+  if (a.cmd === 'launch') return launch(root, a.slug, { exec: !!a.exec, prompt: a.prompt ?? null });
   if (a.cmd === 'stage') return setStage(root, a.slug, a.stage);
   if (a.cmd === 'finish') return finish(root, a.slug);
   if (a.cmd === 'next-step') {

@@ -174,7 +174,7 @@ test('guard bash lane rules', (t) => {
 
 test('guard bash blocks commit with staged secret', (t) => {
   const repo = makeRepo(t);
-  write(repo, 'config.ts', "export const key = 'sk_live_abcdefghijklmnop1234';\n");
+  write(repo, 'config.ts', "export const key = 'sk_live_abcdefghijklmnop1234';\n"); // kit:allow-secret
   git(['add', 'config.ts'], repo);
   const r = run('hook_guard_bash.js', pre(repo, 'Bash', { command: "git commit -m 'add config'" }));
   assert.ok(r.returncode === 2 && r.stderr.includes('secret'));
