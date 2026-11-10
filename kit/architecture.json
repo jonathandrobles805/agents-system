@@ -450,6 +450,19 @@
       "file": ".github/workflows/kit.yml",
       "from": "ci-job:kit/scripts",
       "kind": "runs",
+      "to": "test:security_floor"
+    },
+    {
+      "file": ".github/workflows/kit.yml",
+      "from": "ci-job:kit/scripts",
+      "kind": "runs",
+      "step": "architecture map matches the code (kit/manifest.json declares every component; kit/architecture.json is current)",
+      "to": "test:security_floor"
+    },
+    {
+      "file": ".github/workflows/kit.yml",
+      "from": "ci-job:kit/scripts",
+      "kind": "runs",
       "to": "test:validate_docs"
     },
     {
@@ -476,7 +489,7 @@
       "file": ".github/workflows/kit.yml",
       "from": "ci-job:kit/scripts",
       "kind": "runs",
-      "step": "planted-fault suite (all 19 faults must be caught)",
+      "step": "planted-fault suite (every planted fault must be caught)",
       "to": "tool:planted-faults"
     },
     {
@@ -533,6 +546,13 @@
       "kind": "runs",
       "step": "scope-diff",
       "to": "ci:scope_diff"
+    },
+    {
+      "file": "kit/ci/github.yml",
+      "from": "ci-job:template/kit-checks",
+      "kind": "runs",
+      "step": "security-floor",
+      "to": "ci:security_floor"
     },
     {
       "file": "kit/ci/github.yml",
@@ -677,6 +697,18 @@
     {
       "file": "kit/scripts/ci_scope_diff.js",
       "from": "ci:scope_diff",
+      "kind": "imports",
+      "to": "script:kitlib"
+    },
+    {
+      "file": "kit/scripts/ci_security_floor.js",
+      "from": "ci:security_floor",
+      "kind": "imports",
+      "to": "script:ci_common"
+    },
+    {
+      "file": "kit/scripts/ci_security_floor.js",
+      "from": "ci:security_floor",
       "kind": "imports",
       "to": "script:kitlib"
     },
@@ -1360,6 +1392,12 @@
       "file": "release.sh",
       "from": "shell:release.sh",
       "kind": "runs",
+      "to": "test:security_floor"
+    },
+    {
+      "file": "release.sh",
+      "from": "shell:release.sh",
+      "kind": "runs",
       "to": "test:validate_docs"
     },
     {
@@ -1813,6 +1851,30 @@
       "to": "script:lane"
     },
     {
+      "file": "kit/scripts/tests/security_floor.test.js",
+      "from": "test:security_floor",
+      "kind": "tests",
+      "to": "ci:security_floor"
+    },
+    {
+      "file": "kit/scripts/tests/security_floor.test.js",
+      "from": "test:security_floor",
+      "kind": "tests",
+      "to": "hook:guard_read"
+    },
+    {
+      "file": "kit/scripts/tests/security_floor.test.js",
+      "from": "test:security_floor",
+      "kind": "tests",
+      "to": "script:bootstrap"
+    },
+    {
+      "file": "kit/scripts/tests/security_floor.test.js",
+      "from": "test:security_floor",
+      "kind": "tests",
+      "to": "script:kitlib"
+    },
+    {
       "file": "kit/scripts/tests/validate_docs.test.js",
       "from": "test:validate_docs",
       "kind": "tests",
@@ -1913,6 +1975,12 @@
       "from": "tool:planted-faults",
       "kind": "runs",
       "to": "ci:scope_diff"
+    },
+    {
+      "file": "planted-faults/run.js",
+      "from": "tool:planted-faults",
+      "kind": "runs",
+      "to": "ci:security_floor"
     },
     {
       "file": "planted-faults/run.js",
@@ -2214,7 +2282,7 @@
       "attrs": {
         "display_name": "kit-checks",
         "pipeline": "the project CI that /bootstrap installs (kit/ci/github.yml)",
-        "steps": 8
+        "steps": 9
       },
       "declared": true,
       "id": "ci-job:template/kit-checks",
@@ -2381,6 +2449,15 @@
       "label": "scope-diff",
       "path": "kit/scripts/ci_scope_diff.js",
       "purpose": "Fails a lane branch that changes files outside its spec."
+    },
+    {
+      "attrs": {},
+      "declared": true,
+      "id": "ci:security_floor",
+      "kind": "ci",
+      "label": "security-floor",
+      "path": "kit/scripts/ci_security_floor.js",
+      "purpose": "Fails when any settings scope loosens the kit's security floor: a floor deny entry missing, an allow that grants what the floor denies, or hooks disabled."
     },
     {
       "attrs": {},
@@ -3041,6 +3118,13 @@
       "kind": "test",
       "label": "lane.test.js",
       "path": "kit/scripts/tests/lane.test.js"
+    },
+    {
+      "attrs": {},
+      "id": "test:security_floor",
+      "kind": "test",
+      "label": "security_floor.test.js",
+      "path": "kit/scripts/tests/security_floor.test.js"
     },
     {
       "attrs": {},

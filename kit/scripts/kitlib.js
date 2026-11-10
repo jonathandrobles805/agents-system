@@ -356,6 +356,43 @@ export function loadKitJson(root) {
   return {};
 }
 
+// ---------------------------------------------------------------------------
+// Security floor (kit/security/floor.json). Kit-owned minimum; projects add, never remove. KIT-SPEC 10.9.
+// ---------------------------------------------------------------------------
+
+export const KIT_DIR = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
+export const FLOOR_PATH = path.join(KIT_DIR, 'security', 'floor.json');
+
+let floorCache = null;
+/** The floor as shipped with this kit. Throws when the file is missing or invalid: a kit without a floor must not run. */
+export function loadFloor() {
+  if (floorCache) return floorCache;
+  const f = plainObject(JSON.parse(fs.readFileSync(FLOOR_PATH, 'utf8')));
+  const list = (k) => (Array.isArray(f[k]) ? f[k].filter((x) => typeof x === 'string' && x) : []);
+  floorCache = {
+    version: Number.isInteger(f.version) ? f.version : 0,
+    deny: list('deny'),
+    secret_read_patterns: list('secret_read_patterns'),
+    credential_patterns: list('credential_patterns'),
+    network: plainObject(f.network),
+    second_family: typeof f.second_family === 'string' && f.second_family ? f.second_family : null,
+    max_researchers: Number.isInteger(f.max_researchers) ? f.max_researchers : 8,
+  };
+  return floorCache;
+}
+
+/** Secret-path patterns in force: the kit's built-ins, the floor's, and the project's additions from kit.json. Never fewer than the floor. */
+export function effectiveSecretPatterns(root) {
+  const extra = loadKitJson(root)?.secret_patterns;
+  const own = Array.isArray(extra) ? extra.filter((x) => typeof x === 'string' && x) : [];
+  return [...new Set([...SECRET_READ_PATTERNS, ...loadFloor().secret_read_patterns, ...own])];
+}
+
+/** One regex matching any credential-looking content the floor names. */
+export function credentialRegex() {
+  return new RegExp(loadFloor().credential_patterns.map((p) => `(?:${p})`).join('|'));
+}
+
 export function readHookInput() {
   let data = '';
   try {

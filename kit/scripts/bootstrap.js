@@ -652,7 +652,8 @@ export class Bootstrap {
     merged.hooks = req(frag, 'hooks');
     const perms = get(existing, 'permissions', null);
     const permsObj = truthy(perms) ? perms : {};
-    const deny = new Set([...get(permsObj, 'deny', []), ...req(req(frag, 'permissions'), 'deny')]);
+    // the floor's deny list is the minimum (KIT-SPEC 10.9); the fragment and the project's own entries add to it
+    const deny = new Set([...get(permsObj, 'deny', []), ...req(req(frag, 'permissions'), 'deny'), ...K.loadFloor().deny]);
     for (const cf of this.det.credential_files) deny.add(`Read(${cf})`);
     merged.permissions = { ...permsObj, deny: [...deny].sort(cpCompare) };
     return K.jsonDumps(merged, { indent: 2 }) + '\n';

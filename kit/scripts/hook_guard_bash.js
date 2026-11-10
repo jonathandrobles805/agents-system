@@ -78,15 +78,18 @@ export function stagedSecrets(cwd) {
   } catch {
     return [];
   }
-  const nameOnly = K.SECRET_READ_PATTERNS.filter((p) => !p.includes('/'));
+  // Path and content patterns: the kit's built-ins plus the floor's (KIT-SPEC 10.9); the project may add in kit.json, never remove.
+  const pathPats = K.effectiveSecretPatterns(K.projectRoot(cwd));
+  const nameOnly = pathPats.filter((p) => !p.includes('/'));
+  const content = new RegExp(`${SECRET_CONTENT.source}|${K.credentialRegex().source}`);
   const hits = [];
   for (const n of names) {
-    if (K.globMatch(n, K.SECRET_READ_PATTERNS) || K.globMatch(path.basename(n), nameOnly)) {
+    if (K.globMatch(n, pathPats) || K.globMatch(path.basename(n), nameOnly)) {
       hits.push(`${n} (secret-looking filename)`);
       continue;
     }
     try {
-      if (SECRET_CONTENT.test(gitText(['show', `:${n}`], cwd))) hits.push(`${n} (secret-looking content)`);
+      if (content.test(gitText(['show', `:${n}`], cwd))) hits.push(`${n} (secret-looking content)`);
     } catch {
       // unreadable or binary: skipped
     }

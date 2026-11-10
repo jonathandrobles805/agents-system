@@ -23,8 +23,9 @@ export function main() {
   const fp = text(ti.file_path) || text(ti.notebook_path);
   if (!fp) return 0;
   const rel = K.relTo(root, path.isAbsolute(fp) ? fp : path.join(cwd, fp));
-  const extra = (K.loadKitJson(root)?.secret_patterns ?? []);
-  if (isSecret(rel, Array.isArray(extra) ? extra.filter((p) => typeof p === 'string') : [])) {
+  // Patterns come from the kit, the floor and the project's additions; a loosened settings.json cannot remove any (KIT-SPEC 10.9).
+  const extra = K.effectiveSecretPatterns(root).filter((p) => !K.SECRET_READ_PATTERNS.includes(p));
+  if (isSecret(rel, extra)) {
     K.appendEvent(path.join(root, '.claude', 'session', 'events.jsonl'), { event: 'blocked', tool: 'Read', path: rel, result: 'blocked', summary: 'secret/credential file' });
     return K.block(`guard-read: '${rel}' matches a secret/credential pattern. Lanes never read secrets. ` +
       'If this file is required, the spec must declare it and a human must provide a redacted copy.');
