@@ -4,6 +4,10 @@ All notable changes to the kit. Each entry names the decision or lesson that cau
 
 ## [Unreleased]
 
+### Added
+- KIT-SPEC §10.9–10.11 and planted faults 20–27: the step 2 amendment (sandbox with `srt` default and container at high risk, `degraded` state, security floor, host-side/in-lane controller, lane database adapters, lane artifact tree, idempotent bootstrap, resumable stages). Spec only; the code lands in the step 2 PR after `v0.2.0`.
+- Decisions 0008 (sandbox is the hard boundary) and 0009 (lane database adapter).
+
 ## [0.2.0] - 2026-11-10
 
 ### Added
