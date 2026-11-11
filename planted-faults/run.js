@@ -324,7 +324,8 @@ export function main(argv) {
     //    Proven mechanically on the configuration (the runtime enforcement needs srt or a container on the machine: tool-level).
     const cfg = JSON.parse(run('sandbox.js', ['config', 'refund-route', '--repo', wt], { env: { KIT_SANDBOX_RUNTIME: 'srt' } }).stdout);
     const floorDomains = K.loadFloor().network.default_allow;
-    const onlyDeclared = cfg.allowedDomains.every((d) => floorDomains.includes(d)) && !cfg.allowedDomains.includes('evil.example') && cfg.failIfUnavailable === true;
+    const collectorHost = /^127\.0\.0\.1:\d+$/; // the kit's own telemetry collector (KIT-SPEC 9.4) is the one localhost entry
+    const onlyDeclared = cfg.allowedDomains.every((d) => floorDomains.includes(d) || collectorHost.test(d)) && cfg.allowedDomains.filter((d) => collectorHost.test(d)).length === 1 && !cfg.allowedDomains.includes('evil.example') && cfg.failIfUnavailable === true;
     record(20, 'lane command reaches an undeclared network host', 'sandbox allowlist = floor + spec Network section (verified on macOS: undeclared host → 403 host is not on the allow list)', onlyDeclared, `allowedDomains: ${cfg.allowedDomains.join(', ')}`, 'tool-level');
 
     // 23 no sandbox runtime available -> a normal lane is recorded `degraded`, a high-risk lane is refused
@@ -364,6 +365,25 @@ export function main(argv) {
     run('bootstrap.js', ['--repo', root26]);
     const c26b = JSON.stringify(adrFiles()) === JSON.stringify(first) && !fs.existsSync(path.join(root26, 'docs', 'decisions'));
     record(26, 'bootstrap on a repo that already has a decisions folder', 'bootstrap adopts the folder and its numbering; re-run is a no-op', c26a && c26b, `docs/adr: ${adrFiles().join(', ')}; docs/decisions exists: ${fs.existsSync(path.join(root26, 'docs', 'decisions'))}`);
+
+    // 28 lane session ran with the exporter off -> cost is null and flagged, never estimated from the events log
+    //    (the lane above has a full events log; the telemetry store under this run's CLAUDE_HOME is empty)
+    const home28 = path.join(tmp, 'home28');
+    fs.mkdirSync(home28, { recursive: true });
+    let st = JSON.parse(run('kit_status.js', ['--repo', root, '--json'], { env: { CLAUDE_HOME: home28 } }).stdout);
+    const l28 = st.lanes.find((l) => l.slug === 'refund-route');
+    const eventsLines = read(path.join(wt, '.claude', 'session', 'events.jsonl')).trim().split('\n').length;
+    record(28, 'lane session ran with the exporter off', 'metrics.js / kit-status: null + telemetry-missing, nothing estimated', l28 && l28.cost && l28.cost.usd === null && l28.cost.source === 'telemetry-missing' && eventsLines > 3, `events.jsonl has ${eventsLines} lines; cost=${l28?.cost?.usd} source=${l28?.cost?.source}`);
+
+    // 29 the shown cost equals the exporter's figure, to the cent -> feed the store two api_request records, read status
+    const storeDir = path.join(home28, 'kit-telemetry');
+    fs.mkdirSync(storeDir, { recursive: true });
+    const projectName = JSON.parse(read(path.join(root, '.claude', 'kit.json'))).project;
+    const rec = (cost) => JSON.stringify({ received: '2026-11-10T12:00:00Z', signal: 'log', ts: '2026-11-10T12:00:00Z', event: 'claude_code.api_request', resource: { 'kit.project': projectName, 'kit.lane': 'refund-route' }, attributes: { cost_usd: cost, model: 'm' } });
+    write(path.join(storeDir, '2026-11.jsonl'), rec(0.333) + '\n' + rec(0.1) + '\n');
+    st = JSON.parse(run('kit_status.js', ['--repo', root, '--json'], { env: { CLAUDE_HOME: home28 } }).stdout);
+    const l29 = st.lanes.find((l) => l.slug === 'refund-route');
+    record(29, "a cost figure shown differs from the exporter's", 'metrics.js against the collector store', l29 && l29.cost && l29.cost.usd === 0.43 && l29.cost.source === 'telemetry', `shown ${l29?.cost?.usd} from 0.333 + 0.1`);
 
     // 25 agent process restarted mid-stage -> next-step derived from files is identical across cold processes; resume logs it
     const s25a = run('lane.js', ['next-step', 'refund-route', '--repo', root]).stdout;

@@ -300,6 +300,16 @@ Produces `status.json` from `ROADMAP.md`, specs, progress, review reports, logs,
 
 ---
 
+### 9.4 Telemetry (step 3)
+
+Token and cost figures come from Claude Code's own OpenTelemetry export and from nowhere else (OPERATING-MODEL §14, constraint 14). The kit never computes a cost from tool calls, durations or the events log.
+
+- **Exporter.** The lane launcher (§10.9) starts every lane session with `CLAUDE_CODE_ENABLE_TELEMETRY=1`, `OTEL_LOGS_EXPORTER=otlp`, `OTEL_METRICS_EXPORTER=otlp`, `OTEL_EXPORTER_OTLP_PROTOCOL=http/json`, `OTEL_EXPORTER_OTLP_ENDPOINT` pointing at the kit collector on localhost, and `OTEL_RESOURCE_ATTRIBUTES=kit.project=<name>,kit.lane=<slug>,kit.stage=<stage>` so every record names its lane. The sandbox allowlist includes the collector's localhost endpoint.
+- **Collector.** `kit/telemetry/collector.js` (Node, no dependencies) accepts OTLP/HTTP JSON on `/v1/logs`, `/v1/metrics` and `/v1/traces`, and appends each record, flattened with its resource attributes, to `$CLAUDE_HOME/kit-telemetry/<YYYY-MM>.jsonl`. It is started by the host side of `lane.js` when a lane launches and may run standalone. It stores; it never interprets.
+- **Metrics.** `kit/scripts/metrics.js` reads the collector's store only. Per lane and per project it reports: cost (sum of `cost_usd` on `claude_code.api_request` events), input/output/cache tokens, API requests, API errors, tool calls by tool and outcome, duration, and the models used. Every figure carries `source: telemetry` and the time range it covers. When the store has no records for a lane, the figure is `null` with `source: telemetry-missing`; it is never estimated from `.events.jsonl`, which remains the hook-level log (§9.1).
+- **Where it shows.** `kit-status` and the dashboard take `cost` and `tokens` per lane from `metrics.js`, with the source beside the number; a lane whose session ran with the exporter off is flagged, not filled in. Budgets (§10.2) stay in hours and tool calls, which hooks can count; a cost cap (OPERATING-MODEL §12) reads the telemetry figure.
+- **Honesty of the figure.** Claude Code documents `cost_usd` as approximate and for trend analysis, not billing. The kit shows it as Claude Code's figure, never as an invoice, and never adjusts it.
+
 ## 10. Acceptance criteria
 
 The kit is done when all of the following hold:
@@ -342,6 +352,8 @@ The kit is done when all of the following hold:
 | 25 | Agent process restarted mid-stage | `lane.js next-step` from files | resumes at the same stage with the same outputs; no transcript needed |
 | 26 | `/bootstrap` on a repo that already has a decisions folder | `bootstrap.js` | no second folder; new decisions written into the existing one |
 | 27 | Lane artifact written outside `docs/work/<lane>/` | artifact validator (hook and CI) | refused |
+| 28 | Lane session ran with the exporter off | `metrics.js`, `kit-status` | cost `null`, `source: telemetry-missing`; nothing estimated from the events log |
+| 29 | A cost figure shown anywhere differs from the exporter's | `metrics.js` against the collector store | figure equals the sum of `cost_usd` records for the lane, to the cent |
 
 ---
 
@@ -451,6 +463,7 @@ See `docs/decisions/`:
 - 0007 Plain JavaScript with checked types; Node is the only runtime
 - 0008 The sandbox is the hard boundary; hooks are the fast layer; `srt` default, container at high risk
 - 0009 Lane database of the project's kind through a declared adapter; production credentials never in a lane
+- 0010 Cost and tokens come from Claude Code's OpenTelemetry export only; the kit never estimates
 
 ---
 

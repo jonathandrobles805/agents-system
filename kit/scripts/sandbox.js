@@ -93,7 +93,9 @@ export function sandboxConfig({ root, wt, slug, agent = 'implementer', env = pro
   const runtime = preferred === 'container' && det.runtime ? 'container' : det.runtime;
   const net = floor.network ?? {};
   const perAgent = Array.isArray(net.per_agent?.[agent]) ? net.per_agent[agent] : [];
-  const domains = [...new Set([...(Array.isArray(net.default_allow) ? net.default_allow : []), ...specNetwork(path.join(wt, 'docs', 'specs', `${slug}.md`)), ...perAgent])].sort();
+  // the kit's telemetry collector on localhost is always reachable (KIT-SPEC 9.4); nothing else on localhost is implied
+  const collector = `127.0.0.1:${Number(env.KIT_TELEMETRY_PORT || 4318)}`;
+  const domains = [...new Set([...(Array.isArray(net.default_allow) ? net.default_allow : []), ...specNetwork(path.join(wt, 'docs', 'specs', `${slug}.md`)), ...perAgent, collector])].sort();
   const scratch = path.join(os.tmpdir(), `kit-lane-${slug}`);
   return {
     runtime,
@@ -119,6 +121,20 @@ export function srtSettings(cfg) {
   return {
     network: { allowedDomains: cfg.allowedDomains, deniedDomains: [] },
     filesystem: { denyRead: cfg.denyRead, allowRead: [], allowWrite: cfg.allowWrite, denyWrite: [] },
+  };
+}
+
+/** Environment that turns on Claude Code's OpenTelemetry export for a lane and tags every record with the lane (KIT-SPEC 9.4). */
+export function telemetryEnv({ project, slug, stage = 'build', port = Number(process.env.KIT_TELEMETRY_PORT || 4318) }) {
+  return {
+    CLAUDE_CODE_ENABLE_TELEMETRY: '1',
+    OTEL_LOGS_EXPORTER: 'otlp',
+    OTEL_METRICS_EXPORTER: 'otlp',
+    OTEL_EXPORTER_OTLP_PROTOCOL: 'http/json',
+    OTEL_EXPORTER_OTLP_ENDPOINT: `http://127.0.0.1:${port}`,
+    OTEL_METRIC_EXPORT_INTERVAL: '10000',
+    OTEL_LOGS_EXPORT_INTERVAL: '2000',
+    OTEL_RESOURCE_ATTRIBUTES: `kit.project=${project},kit.lane=${slug},kit.stage=${stage}`,
   };
 }
 
