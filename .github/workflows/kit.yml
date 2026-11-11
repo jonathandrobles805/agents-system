@@ -54,6 +54,39 @@ jobs:
           test -L "$CLAUDE_HOME/kit"
           test -f "$CLAUDE_HOME/kit/dashboard/index.html"
           ls "$CLAUDE_HOME/agents" | wc -l | grep -q 7
+  eval-smoke:
+    name: eval smoke set (agents, skills, templates, workflows, eval)
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: harness self-check with recorded fixtures (always; proves the gate, not the agents)
+        run: node kit/eval/harness.js run --set smoke --runner fixture
+      - name: which gated paths this PR touches
+        id: touched
+        run: |
+          FILES=$(git diff --name-only origin/${{ github.base_ref }}...HEAD | grep -E '^kit/(agents|skills|templates|workflows|eval)/' | grep -v '^kit/eval/(results|fixtures)/' | tr '\n' ',' || true)
+          echo "files=$FILES" >> "$GITHUB_OUTPUT"
+          echo "touched: ${FILES:-none}"
+      - name: eval smoke set against the real agents (required when gated paths changed; needs ANTHROPIC_API_KEY)
+        if: steps.touched.outputs.files != ''
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          KIT_SANDBOX_RUNTIME: none
+        run: |
+          if [ -z "$ANTHROPIC_API_KEY" ]; then
+            echo "::error::this PR changes agents, skills, templates, the workflow table or the eval; the smoke set must run against the real agents, and the repository has no ANTHROPIC_API_KEY secret. Add it under Settings → Secrets → Actions. The gate never passes by skipping (KIT-SPEC 11A)."
+            exit 1
+          fi
+          npm install -g @anthropic-ai/claude-code @anthropic-ai/sandbox-runtime
+          sudo apt-get install -y bubblewrap socat
+          unset KIT_SANDBOX_RUNTIME
+          node kit/eval/harness.js run --set smoke --runner claude --touched "${{ steps.touched.outputs.files }}"
+
   docs:
     name: kit docs validate themselves
     runs-on: ubuntu-latest

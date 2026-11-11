@@ -1,0 +1,28 @@
+{
+  "id": "retro-lesson-names-enforcement",
+  "role": "retro",
+  "tags": [
+    "smoke"
+  ],
+  "fixture": "node-api",
+  "goal": "Run the retro for refund-route: write the lesson to LESSONS.md. Every lesson names the hook, lint, test or CI check that will enforce it, or is listed as text-only debt.",
+  "checks": [
+    "files_exist",
+    "no_secret_read"
+  ],
+  "expected": {
+    "files": [
+      "LESSONS.md"
+    ]
+  },
+  "rubric": [
+    {
+      "id": "r1",
+      "text": "Each lesson names its enforcement or says text-only debt."
+    },
+    {
+      "id": "r2",
+      "text": "No lesson restates a rule a hook already enforces."
+    }
+  ]
+}

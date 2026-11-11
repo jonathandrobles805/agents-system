@@ -52,6 +52,10 @@
     "script:kitlib": { "purpose": "Shared foundation: git, JSON, paths, lane files and the block/feedback conventions every hook and script uses." },
     "script:args": { "purpose": "Command-line argument parser shared by the scripts." },
     "script:metrics": { "purpose": "Reports cost, tokens, API and tool activity per lane and project from the telemetry store alone; null and flagged when the store has nothing, never estimated." },
+    "script:eval/harness": { "purpose": "Runs the benchmark tasks through a runner, scores them, compares with the committed baseline, and fails on a hard-metric violation or a regression." },
+    "script:eval/score": { "purpose": "Scores one task outcome: mechanical hard checks first, then the rubric share; a hard violation zeroes the score." },
+    "script:eval/runners/fixture": { "purpose": "Replays recorded outcomes for the kit's own tests and keyless machines; never a baseline source." },
+    "script:eval/runners/claude": { "purpose": "Runs a task as a sandboxed headless Claude Code session on a fixture repo and grades the end state with a separate judge session." },
     "script:telemetry/collector": { "purpose": "Receives Claude Code's OpenTelemetry export (OTLP/HTTP JSON) and appends every record, tagged with its lane, to the kit telemetry store; stores, never interprets." },
     "script:sandbox": { "purpose": "Detects the lane sandbox runtime (srt, container, or none), builds a lane's sandbox configuration from the floor and its spec, scans the worktree for credential-looking content, and forms the host-side launch command." },
     "script:lane": { "purpose": "Mechanical half of the pipeline: worktrees, preconditions, roadmap status, and the next-step state machine." },
@@ -77,6 +81,7 @@
     "ci-job:template/mutation-gate": { "purpose": "Decides whether the mutation job is allowed to block." },
     "ci-job:template/dashboard": { "purpose": "Publishes a static dashboard to GitHub Pages when the project opts in." },
     "ci-job:kit/scripts": { "purpose": "Runs the kit's own unit tests on Node 20 and 22, the planted-fault suite, the hook settings check and the install check." },
-    "ci-job:kit/docs": { "purpose": "Checks that the kit's own research document passes its own validator." }
+    "ci-job:kit/docs": { "purpose": "Checks that the kit's own research document passes its own validator." },
+    "ci-job:kit/eval-smoke": { "purpose": "On kit PRs: proves the eval gate with recorded fixtures, then runs the smoke set against the real agents when agents, skills, templates, workflows or the eval changed; fails loudly without ANTHROPIC_API_KEY." }
   }
 }

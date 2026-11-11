@@ -1,0 +1,29 @@
+{
+  "files": {
+    "docs/research/routes-shape.md": "# Research: routes-shape\n\n- Slug: routes-shape\n\n## Findings\n\n- routes() returns a plain object keyed by operation [verified: src/api/routes.ts:2-4]\n- the service is injected, not imported [verified: src/api/routes.ts:2-2]\n- whether partial refunds are supported [unknown] resolve by: ask human\n"
+  },
+  "events": [
+    {
+      "event": "read",
+      "tool": "Read",
+      "path": "src/api/routes.ts",
+      "result": "ok"
+    },
+    {
+      "event": "read",
+      "tool": "Read",
+      "path": "src/domain/payment.ts",
+      "result": "ok"
+    }
+  ],
+  "git": {
+    "log": [
+      "abc1234 eval"
+    ]
+  },
+  "judge": {
+    "r1": 1,
+    "r2": 1
+  },
+  "ms": 1200
+}

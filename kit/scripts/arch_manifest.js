@@ -192,6 +192,7 @@ export function workflowJobs(lines) {
 
 const SCRIPT_REF = /scripts\/([A-Za-z0-9_]+\.js)/g;
 const DASHBOARD_REF = /dashboard\/server\.js/g;
+const OUTSIDE_REFS = [['script:telemetry/collector', /telemetry\/collector\.js/g], ['script:eval/harness', /eval\/harness\.js/g]]; // scripts outside kit/scripts that CI, package.json or other scripts run
 const TOOL_REFS = [
   ['tool:planted-faults', /planted-faults\/run\.js/g, 'planted-faults/run.js'],
   ['tool:audit', /audit\/boards\.js/g, 'audit/boards.js'],
@@ -226,6 +227,12 @@ function scanLines(g, ctx, id, filePath, lines, first, last, opts = {}) {
     for (const m of matches(DASHBOARD_REF, line)) {
       if (g.nodes.has('script:dashboard/server')) g.edge(id, 'script:dashboard/server', 'runs', at(i), extra);
       else g.problem('dangling-reference', 'error', id, `${filePath}:${i + 1} runs dashboard/server.js, which does not exist`, at(i));
+    }
+    for (const [target, re] of OUTSIDE_REFS) {
+      for (const m of matches(re, line)) {
+        void m;
+        if (g.nodes.has(target)) g.edge(id, target, 'runs', at(i), extra);
+      }
     }
     for (const [toolId, re, name] of TOOL_REFS) {
       for (const m of matches(re, line)) {
@@ -300,7 +307,7 @@ function addScripts(g, base, kitDir) {
     g.scriptByFile.set(file, id);
   }
   // scripts that live outside kit/scripts: the dashboard server and the telemetry collector
-  for (const [sub, file] of [['dashboard', 'server.js'], ['telemetry', 'collector.js']]) {
+  for (const [sub, file] of [['dashboard', 'server.js'], ['telemetry', 'collector.js'], ['eval', 'harness.js'], ['eval', 'score.js'], ['eval/runners', 'fixture.js'], ['eval/runners', 'claude.js']]) {
     const abs = path.join(kitDir, sub, file);
     if (!K.isFile(abs)) continue;
     const id = g.node({ id: `script:${sub}/${file.replace(/\.js$/, '')}`, kind: 'script', label: `${sub}/${file}`, path: rel(base, abs), abs, stats: { lines: splitLines(read(abs)).length } });

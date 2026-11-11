@@ -1,0 +1,29 @@
+{
+  "files": {
+    "docs/specs/refund-route.review.md": "# Review: refund-route\n\n- Head: abc1234def\n\n| R1 | PASS | ok |\n| R2 | PASS | fine |\n"
+  },
+  "events": [
+    {
+      "event": "read",
+      "tool": "Read",
+      "path": "docs/specs/refund-route.md",
+      "result": "ok"
+    },
+    {
+      "event": "edit",
+      "tool": "Edit",
+      "path": "docs/specs/refund-route.review.md",
+      "result": "ok"
+    }
+  ],
+  "git": {
+    "log": [
+      "abc1234 eval"
+    ]
+  },
+  "judge": {
+    "r1": 1,
+    "r2": 1
+  },
+  "ms": 1200
+}

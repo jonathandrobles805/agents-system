@@ -1,0 +1,36 @@
+name: kit eval nightly
+
+on:
+  schedule:
+    - cron: '17 6 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  full:
+    name: eval full set (n=3) against the committed baseline
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: requires ANTHROPIC_API_KEY
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: |
+          if [ -z "$ANTHROPIC_API_KEY" ]; then echo "::error::no ANTHROPIC_API_KEY secret; the nightly eval cannot run"; exit 1; fi
+      - run: npm install -g @anthropic-ai/claude-code @anthropic-ai/sandbox-runtime && sudo apt-get install -y bubblewrap socat
+      - name: full set
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: |
+          BASE=kit/eval/baselines/$(cat VERSION).json
+          if [ -f "$BASE" ]; then node kit/eval/harness.js run --set full --runner claude --n 3 --baseline "$BASE" --out eval-out; else node kit/eval/harness.js run --set full --runner claude --n 3 --out eval-out; echo "no baseline for $(cat VERSION) yet; this run's report can become it: harness.js baseline --from eval-out/report.json --out $BASE"; fi
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: eval-report
+          path: eval-out/report.json

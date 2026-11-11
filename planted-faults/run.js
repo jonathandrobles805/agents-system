@@ -366,6 +366,23 @@ export function main(argv) {
     const c26b = JSON.stringify(adrFiles()) === JSON.stringify(first) && !fs.existsSync(path.join(root26, 'docs', 'decisions'));
     record(26, 'bootstrap on a repo that already has a decisions folder', 'bootstrap adopts the folder and its numbering; re-run is a no-op', c26a && c26b, `docs/adr: ${adrFiles().join(', ')}; docs/decisions exists: ${fs.existsSync(path.join(root26, 'docs', 'decisions'))}`);
 
+    // 32 an agent prompt edited to skip the red run -> the eval smoke set's hard metric red_before_green fails the kit PR
+    //    (proven with the recorded 'skips-red-run' outcome; the claude runner would produce the same events from a real session)
+    const harness = path.join(ROOT, 'kit', 'eval', 'harness.js');
+    const ev32 = sh(process.execPath, [harness, 'run', '--set', 'smoke', '--runner', 'fixture', '--variant', 'skips-red-run', '--out', path.join(tmp, 'eval-32'), '--json'], { env: childEnv() });
+    const rep32 = ev32.stdout ? JSON.parse(ev32.stdout) : {};
+    const okGood = sh(process.execPath, [harness, 'run', '--set', 'smoke', '--runner', 'fixture', '--out', path.join(tmp, 'eval-32-good')], { env: childEnv() });
+    record(32, 'agent prompt edited to skip the red run', 'eval smoke set: hard metric red_before_green (kit CI)', ev32.returncode === 1 && (rep32.violations ?? []).some((v) => v.checks.includes('red_before_green')) && okGood.returncode === 0, `violations: ${(rep32.violations ?? []).map((v) => v.task + ':' + v.checks.join('+')).join(', ')}; good run exit ${okGood.returncode}`, 'kit CI');
+
+    // 33 a kit change that lowers a quality metric -> full set regresses against the baseline; tag blocked
+    const goodFull = sh(process.execPath, [harness, 'run', '--set', 'full', '--runner', 'fixture', '--n', '3', '--out', path.join(tmp, 'eval-33-good'), '--json'], { env: childEnv() });
+    const goodRep = JSON.parse(goodFull.stdout);
+    const base33 = path.join(tmp, 'baseline-33.json');
+    write(base33, K.jsonDumps({ kit_version: 'planted', tasks: Object.fromEntries(Object.entries(goodRep.results).map(([id, r]) => [id, r.summary])) }));
+    const drop = sh(process.execPath, [harness, 'run', '--set', 'full', '--runner', 'fixture', '--n', '3', '--baseline', base33, '--variant', 'quality-drop', '--out', path.join(tmp, 'eval-33-drop'), '--json'], { env: childEnv() });
+    const dropRep = drop.stdout ? JSON.parse(drop.stdout) : {};
+    record(33, 'a kit change that lowers a quality metric', 'eval full set vs committed baseline (nightly; tag blocked)', drop.returncode === 1 && (dropRep.regressions ?? []).some((r) => r.task === 'implementer-red-then-green') && (dropRep.violations ?? []).length === 0, `regressions: ${(dropRep.regressions ?? []).map((r) => `${r.task}.${r.metric} ${r.run.toFixed(2)}<${r.baseline.toFixed(2)}`).join(', ')}`, 'kit CI');
+
     // 30 PR changes CI or kit configuration without the owner's review -> CODEOWNERS covers the paths; protection requires a code owner (GitHub enforces)
     const co = read(path.join(root, '.github', 'CODEOWNERS'));
     const wf30 = read(path.join(root, '.github', 'workflows', 'kit.yml'));
