@@ -264,6 +264,14 @@ Jobs on every PR: tests; typecheck; lint; import boundaries; `scope-diff` agains
 
 Branch protection via `gh api`: required checks = all of the above; strict up-to-date; no force push; no direct pushes to `main`.
 
+**Stages 1–3 (step 4).** The jobs above are grouped as: stage 1 static (`format`, `lint`, `typecheck`, secret scan, `boundaries`), stage 2 unit (`tests` with a **coverage floor that only rises**), stage 3 integration (`integration`, the project's integration command against the lane database adapter, §10.10). Additions in step 4:
+- `format` job from the detected formatter (prettier, black, ruff format); `echo` when none is configured, so the job exists from day one.
+- Coverage: the `tests` job runs the detected coverage command and `ci_coverage_floor.js`, which fails when line coverage is below `kit.json coverage_floor` or when the floor was lowered relative to the base branch, and with `--ratchet` (run on the default branch) raises the floor to the measured value. The floor never goes down.
+- `integration` job running `kit.json commands.integration`; `echo` naming the lane adapter when none is set.
+- `on: merge_group` so the checks run inside the merge queue.
+- **Owner approval on CI and kit configuration.** `/bootstrap` writes `.github/CODEOWNERS` naming the repository owner for `.github/workflows/`, `.github/CODEOWNERS`, `.claude/`, `CLAUDE.md` and `ARCHITECTURE.md` (human-owned; written once). `--protect` sets `require_code_owner_reviews` with `required_approving_review_count: 0`, so ordinary PRs stay review-free and a PR touching those paths needs the owner.
+- **Merge queue.** `--protect` also creates a repository ruleset with a `merge_queue` rule (squash, all-green). Best effort: it needs a GitHub plan that supports rulesets on the repository; the result says whether it was enabled.
+
 ---
 
 ## 8. Templates (required sections)
@@ -354,6 +362,8 @@ The kit is done when all of the following hold:
 | 27 | Lane artifact written outside `docs/work/<lane>/` | artifact validator (hook and CI) | refused |
 | 28 | Lane session ran with the exporter off | `metrics.js`, `kit-status` | cost `null`, `source: telemetry-missing`; nothing estimated from the events log |
 | 29 | A cost figure shown anywhere differs from the exporter's | `metrics.js` against the collector store | figure equals the sum of `cost_usd` records for the lane, to the cent |
+| 30 | PR changes `kit.yml` or `.claude/` without the owner's review | CODEOWNERS + `require_code_owner_reviews` (GitHub) | merge blocked until the owner reviews |
+| 31 | Coverage below the floor, or the floor lowered in `kit.json` | `ci_coverage_floor` | CI fail; the floor only rises |
 
 ---
 
@@ -464,6 +474,7 @@ See `docs/decisions/`:
 - 0008 The sandbox is the hard boundary; hooks are the fast layer; `srt` default, container at high risk
 - 0009 Lane database of the project's kind through a declared adapter; production credentials never in a lane
 - 0010 Cost and tokens come from Claude Code's OpenTelemetry export only; the kit never estimates
+- 0011 Quality gates are ratchets, CI configuration needs the owner, merges go through a queue
 
 ---
 

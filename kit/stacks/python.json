@@ -5,9 +5,11 @@
   "frameworks": {"django": "Django", "fastapi": "FastAPI", "flask": "Flask", "starlette": "Starlette", "sqlalchemy": "SQLAlchemy", "celery": "Celery", "pydantic": "Pydantic"},
   "tools": {
     "pytest":  {"test": "python -m pytest -q", "test_affected": "python -m pytest -q {file}"},
+    "pytest-cov": {"coverage": "python -m pytest -q --cov --cov-report=json:coverage/coverage.json"},
+    "black":   {"format": "black --check ."},
     "mypy":    {"typecheck": "python -m mypy ."},
     "pyright": {"typecheck": "pyright"},
-    "ruff":    {"lint": "ruff check {file}", "lint_all": "ruff check ."},
+    "ruff":    {"lint": "ruff check {file}", "lint_all": "ruff check .", "format": "ruff format --check ."},
     "flake8":  {"lint": "flake8 {file}", "lint_all": "flake8"},
     "import-linter": {"boundaries": "lint-imports"},
     "mutmut":  {"mutation": "mutmut run"}

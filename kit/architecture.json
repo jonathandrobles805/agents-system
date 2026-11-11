@@ -372,6 +372,19 @@
       "file": ".github/workflows/kit.yml",
       "from": "ci-job:kit/scripts",
       "kind": "runs",
+      "to": "test:ci_stage1_3"
+    },
+    {
+      "file": ".github/workflows/kit.yml",
+      "from": "ci-job:kit/scripts",
+      "kind": "runs",
+      "step": "architecture map matches the code (kit/manifest.json declares every component; kit/architecture.json is current)",
+      "to": "test:ci_stage1_3"
+    },
+    {
+      "file": ".github/workflows/kit.yml",
+      "from": "ci-job:kit/scripts",
+      "kind": "runs",
       "to": "test:commands_and_pipeline"
     },
     {
@@ -634,6 +647,13 @@
       "to": "ci:mutation_gate"
     },
     {
+      "file": "kit/ci/github.yml",
+      "from": "ci-job:template/tests",
+      "kind": "runs",
+      "step": "coverage (floor only rises; KIT-SPEC 7.4)",
+      "to": "ci:coverage_floor"
+    },
+    {
       "file": "kit/scripts/ci_boundaries_simple.js",
       "from": "ci:boundaries_simple",
       "kind": "imports",
@@ -672,6 +692,18 @@
     {
       "file": "kit/scripts/ci_claude_md_cap.js",
       "from": "ci:claude_md_cap",
+      "kind": "imports",
+      "to": "script:kitlib"
+    },
+    {
+      "file": "kit/scripts/ci_coverage_floor.js",
+      "from": "ci:coverage_floor",
+      "kind": "imports",
+      "to": "script:ci_common"
+    },
+    {
+      "file": "kit/scripts/ci_coverage_floor.js",
+      "from": "ci:coverage_floor",
       "kind": "imports",
       "to": "script:kitlib"
     },
@@ -1469,6 +1501,12 @@
       "file": "release.sh",
       "from": "shell:release.sh",
       "kind": "runs",
+      "to": "test:ci_stage1_3"
+    },
+    {
+      "file": "release.sh",
+      "from": "shell:release.sh",
+      "kind": "runs",
       "to": "test:commands_and_pipeline"
     },
     {
@@ -1788,6 +1826,18 @@
       "from": "test:ci_scripts",
       "kind": "tests",
       "to": "script:validate_docs"
+    },
+    {
+      "file": "kit/scripts/tests/ci_stage1_3.test.js",
+      "from": "test:ci_stage1_3",
+      "kind": "tests",
+      "to": "ci:coverage_floor"
+    },
+    {
+      "file": "kit/scripts/tests/ci_stage1_3.test.js",
+      "from": "test:ci_stage1_3",
+      "kind": "tests",
+      "to": "script:bootstrap"
     },
     {
       "file": "kit/scripts/tests/commands_and_pipeline.test.js",
@@ -2189,6 +2239,12 @@
       "file": "planted-faults/run.js",
       "from": "tool:planted-faults",
       "kind": "runs",
+      "to": "ci:coverage_floor"
+    },
+    {
+      "file": "planted-faults/run.js",
+      "from": "tool:planted-faults",
+      "kind": "runs",
       "to": "ci:dep_diff"
     },
     {
@@ -2525,6 +2581,32 @@
     },
     {
       "attrs": {
+        "display_name": "format",
+        "pipeline": "the project CI that /bootstrap installs (kit/ci/github.yml)",
+        "steps": 0
+      },
+      "declared": true,
+      "id": "ci-job:template/format",
+      "kind": "ci-job",
+      "label": "format",
+      "path": "kit/ci/github.yml",
+      "purpose": "Runs the project's formatter in check mode."
+    },
+    {
+      "attrs": {
+        "display_name": "integration",
+        "pipeline": "the project CI that /bootstrap installs (kit/ci/github.yml)",
+        "steps": 0
+      },
+      "declared": true,
+      "id": "ci-job:template/integration",
+      "kind": "ci-job",
+      "label": "integration",
+      "path": "kit/ci/github.yml",
+      "purpose": "Runs the project's integration command against the lane database adapter."
+    },
+    {
+      "attrs": {
         "display_name": "kit-checks",
         "pipeline": "the project CI that /bootstrap installs (kit/ci/github.yml)",
         "steps": 10
@@ -2592,14 +2674,14 @@
       "attrs": {
         "display_name": "tests",
         "pipeline": "the project CI that /bootstrap installs (kit/ci/github.yml)",
-        "steps": 0
+        "steps": 1
       },
       "declared": true,
       "id": "ci-job:template/tests",
       "kind": "ci-job",
       "label": "tests",
       "path": "kit/ci/github.yml",
-      "purpose": "Runs the project's test command."
+      "purpose": "Runs the project's test command, then the coverage command and the coverage floor check (the floor only rises)."
     },
     {
       "attrs": {
@@ -2640,6 +2722,15 @@
       "label": "claude-md-cap",
       "path": "kit/scripts/ci_claude_md_cap.js",
       "purpose": "Fails when CLAUDE.md grows past its size cap."
+    },
+    {
+      "attrs": {},
+      "declared": true,
+      "id": "ci:coverage_floor",
+      "kind": "ci",
+      "label": "coverage-floor",
+      "path": "kit/scripts/ci_coverage_floor.js",
+      "purpose": "Fails when line coverage drops below kit.json coverage_floor or the floor itself was lowered; with --ratchet raises the floor to the measured value."
     },
     {
       "attrs": {},
@@ -3357,6 +3448,13 @@
       "kind": "test",
       "label": "ci_scripts.test.js",
       "path": "kit/scripts/tests/ci_scripts.test.js"
+    },
+    {
+      "attrs": {},
+      "id": "test:ci_stage1_3",
+      "kind": "test",
+      "label": "ci_stage1_3.test.js",
+      "path": "kit/scripts/tests/ci_stage1_3.test.js"
     },
     {
       "attrs": {},
