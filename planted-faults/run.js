@@ -325,7 +325,7 @@ export function main(argv) {
     const cfg = JSON.parse(run('sandbox.js', ['config', 'refund-route', '--repo', wt], { env: { KIT_SANDBOX_RUNTIME: 'srt' } }).stdout);
     const floorDomains = K.loadFloor().network.default_allow;
     const onlyDeclared = cfg.allowedDomains.every((d) => floorDomains.includes(d)) && !cfg.allowedDomains.includes('evil.example') && cfg.failIfUnavailable === true;
-    record(20, 'lane command reaches an undeclared network host', 'sandbox allowlist = floor + spec Network section; failIfUnavailable (runtime enforcement by srt/container)', onlyDeclared, `allowedDomains: ${cfg.allowedDomains.join(', ')}`, 'tool-level');
+    record(20, 'lane command reaches an undeclared network host', 'sandbox allowlist = floor + spec Network section (verified on macOS: undeclared host → 403 host is not on the allow list)', onlyDeclared, `allowedDomains: ${cfg.allowedDomains.join(', ')}`, 'tool-level');
 
     // 23 no sandbox runtime available -> a normal lane is recorded `degraded`, a high-risk lane is refused
     const root23 = path.join(tmp, 'node-api-23');
