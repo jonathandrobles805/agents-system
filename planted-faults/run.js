@@ -366,6 +366,27 @@ export function main(argv) {
     const c26b = JSON.stringify(adrFiles()) === JSON.stringify(first) && !fs.existsSync(path.join(root26, 'docs', 'decisions'));
     record(26, 'bootstrap on a repo that already has a decisions folder', 'bootstrap adopts the folder and its numbering; re-run is a no-op', c26a && c26b, `docs/adr: ${adrFiles().join(', ')}; docs/decisions exists: ${fs.existsSync(path.join(root26, 'docs', 'decisions'))}`);
 
+    // 30 PR changes CI or kit configuration without the owner's review -> CODEOWNERS covers the paths; protection requires a code owner (GitHub enforces)
+    const co = read(path.join(root, '.github', 'CODEOWNERS'));
+    const wf30 = read(path.join(root, '.github', 'workflows', 'kit.yml'));
+    const bootstrapSrc = read(path.join(SCRIPTS, 'bootstrap.js'));
+    record(30, 'PR changes kit.yml or .claude/ without owner review', 'CODEOWNERS + require_code_owner_reviews in --protect (GitHub enforces)', co.includes('/.github/workflows/') && co.includes('/.claude/') && bootstrapSrc.includes('require_code_owner_reviews: true') && wf30.includes('merge_group:'), `CODEOWNERS covers workflows and .claude; protection body requires code-owner reviews; workflow runs on merge_group`, 'tool-level');
+
+    // 31 coverage below the floor, or the floor lowered -> ci_coverage_floor fails
+    const kj31 = path.join(root, '.claude', 'kit.json');
+    const kit31 = JSON.parse(read(kj31));
+    write(kj31, K.jsonDumps({ ...kit31, coverage_floor: 80, commands: { ...kit31.commands, coverage: 'echo' } }));
+    fs.mkdirSync(path.join(root, 'coverage'), { recursive: true });
+    write(path.join(root, 'coverage', 'coverage-summary.json'), JSON.stringify({ total: { lines: { pct: 72 } } }));
+    const below = run('ci_coverage_floor.js', ['--repo', root]);
+    write(path.join(root, 'coverage', 'coverage-summary.json'), JSON.stringify({ total: { lines: { pct: 90 } } }));
+    F.commitAll(root, 'floor 80');
+    write(kj31, K.jsonDumps({ ...kit31, coverage_floor: 50, commands: { ...kit31.commands, coverage: 'echo' } }));
+    const lowered = run('ci_coverage_floor.js', ['--repo', root, '--base', 'HEAD']);
+    write(kj31, K.jsonDumps(kit31));
+    fs.rmSync(path.join(root, 'coverage'), { recursive: true, force: true });
+    record(31, 'coverage below the floor, or the floor lowered', 'ci_coverage_floor (project CI)', below.returncode === 1 && below.stderr.includes('below the floor') && lowered.returncode === 1 && lowered.stderr.includes('lowered from 80'), `${below.stderr.trim().split('\n').pop()} | ${lowered.stderr.trim().split('\n').pop()}`);
+
     // 28 lane session ran with the exporter off -> cost is null and flagged, never estimated from the events log
     //    (the lane above has a full events log; the telemetry store under this run's CLAUDE_HOME is empty)
     const home28 = path.join(tmp, 'home28');

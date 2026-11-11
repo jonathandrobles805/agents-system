@@ -4,15 +4,16 @@
   "lockfiles": ["package-lock.json", "pnpm-lock.yaml", "yarn.lock", "bun.lockb"],
   "frameworks": {"next": "Next.js", "react": "React", "vue": "Vue", "express": "Express", "fastify": "Fastify", "nestjs": "NestJS", "@nestjs/core": "NestJS", "svelte": "Svelte", "remix": "Remix", "@remix-run/node": "Remix", "astro": "Astro", "hono": "Hono"},
   "tools": {
-    "vitest":  {"test": "npx vitest run", "test_affected": "npx vitest run --changed HEAD", "test_file": "npx vitest run {file}"},
-    "jest":    {"test": "npx jest --ci", "test_affected": "npx jest --ci --findRelatedTests {file}"},
+    "vitest":  {"test": "npx vitest run", "test_affected": "npx vitest run --changed HEAD", "test_file": "npx vitest run {file}", "coverage": "npx vitest run --coverage.enabled --coverage.reporter=json-summary --coverage.reportsDirectory=coverage"},
+    "jest":    {"test": "npx jest --ci", "test_affected": "npx jest --ci --findRelatedTests {file}", "coverage": "npx jest --ci --coverage --coverageReporters=json-summary --coverageDirectory=coverage"},
     "mocha":   {"test": "npx mocha"},
     "typescript": {"typecheck": "npx tsc --noEmit -p ."},
     "eslint":  {"lint": "npx eslint {file}", "lint_all": "npx eslint ."},
     "biome":   {"lint": "npx biome check {file}", "lint_all": "npx biome check ."},
     "dependency-cruiser": {"boundaries": "npx depcruise --config .dependency-cruiser.cjs src"},
     "@stryker-mutator/core": {"mutation": "npx stryker run"},
-    "stylelint": {"tokens_lint": "npx stylelint \"**/*.{css,scss}\""}
+    "stylelint": {"tokens_lint": "npx stylelint \"**/*.{css,scss}\""},
+    "prettier": {"format": "npx prettier --check ."}
   },
   "audit": "npm audit --audit-level=high",
   "test_dirs": ["test", "tests", "__tests__", "spec"],
