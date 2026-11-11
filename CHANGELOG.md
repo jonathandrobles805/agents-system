@@ -12,6 +12,7 @@ All notable changes to the kit. Each entry names the decision or lesson that cau
 - `bootstrap --upgrade` without `--answers` keeps the commands in `kit.json` (precedence detected < kit.json < answers); commands that name a kit script this kit no longer has are dropped.
 - Detected commands carry their evidence; a dependency-cruiser command without a config is not proposed, and one aimed at a missing `src` scans the workspace folders that exist; a `tsc -p .` without a root `tsconfig.json` is not proposed. The `commands` question lists CI checks that are `not_configured`.
 - Planted faults 39–44 (44/44); 9 tests.
+- `ci_dep_diff.js`: outside a lane, a decision record changed by the branch declares new dependencies (the bootstrap PR could not pass its own check); the lane spec is read from `kit.json paths.work`, not a hard-coded `docs/specs`. Kit CI install check counts the agents instead of expecting 7.
 
 ### Added
 - KIT-SPEC §10.9–10.11 and planted faults 20–27: the step 2 amendment (sandbox with `srt` default and container at high risk, `degraded` state, security floor, host-side/in-lane controller, lane database adapters, lane artifact tree, idempotent bootstrap, resumable stages). Spec only; the code lands in the step 2 PR after `v0.2.0`.

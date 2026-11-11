@@ -80,6 +80,22 @@ test('dep diff undeclared fails declared passes', (t) => {
   assert.equal(r.returncode, 0, r.stderr);
 });
 
+test('dep diff outside a lane: a decision record changed by the branch declares the dependency (field test #26)', (t) => {
+  const root = F.nodeApi(path.join(tmpPath(t), 'node-api'));
+  F.git(['checkout', '-q', '-b', 'kit/bootstrap'], root);
+  const pj = JSON.parse(read(root, 'package.json'));
+  pj.devDependencies = { ...(pj.devDependencies ?? {}), 'dependency-cruiser': '^16.0.0' };
+  fs.writeFileSync(path.join(root, 'package.json'), JSON.stringify(pj, null, 2));
+  F.commitAll(root, 'add depcruise');
+  let r = ci('ci_dep_diff.js', root);
+  assert.ok(r.returncode === 1 && r.stderr.includes('dependency-cruiser') && r.stderr.includes('decision record'), r.stderr);
+  fs.mkdirSync(path.join(root, 'docs', 'decisions'), { recursive: true });
+  fs.writeFileSync(path.join(root, 'docs', 'decisions', '0002-adopt-dev-tools.md'), '# 0002 Adopt dev tools\n\n## New dependencies\n\n- `dependency-cruiser` — import boundaries gate\n');
+  F.commitAll(root, 'declare in a decision');
+  r = ci('ci_dep_diff.js', root);
+  assert.equal(r.returncode, 0, r.stderr);
+});
+
 test('dep diff python', (t) => {
   const root = F.pythonService(path.join(tmpPath(t), 'py'));
   F.git(['checkout', '-q', '-b', 'wt/x'], root);
