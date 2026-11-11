@@ -351,6 +351,19 @@ export function main(argv) {
     F.commitAll(root23, 'leak');
     r = run('lane.js', ['start', 'refund-route', '--repo', root23]);
     record(24, 'lane can read a value matching a floor credential pattern', 'lane.js start credential scan', r.returncode === 2 && r.stderr.includes('credential-looking content') && r.stderr.includes('src/db.ts:1') && !fs.existsSync(path.join(tmp, 'node-api-23-lanes', 'refund-route')), r.stderr);
+
+    // 26 /bootstrap on a repo that already has a decisions folder -> adopted, never duplicated; a re-run writes nothing new
+    const root26 = path.join(tmp, 'node-api-26');
+    F.nodeApi(root26);
+    fs.mkdirSync(path.join(root26, 'docs', 'adr'), { recursive: true });
+    write(path.join(root26, 'docs', 'adr', '007-keep-monolith.md'), '# 007 Keep the monolith\n');
+    run('bootstrap.js', ['--repo', root26]);
+    const adrFiles = () => fs.readdirSync(path.join(root26, 'docs', 'adr')).sort();
+    const first = adrFiles();
+    const c26a = !fs.existsSync(path.join(root26, 'docs', 'decisions')) && first.includes('008-adopt-agent-kit.md') && JSON.parse(read(path.join(root26, '.claude', 'kit.json'))).paths.decisions === 'docs/adr';
+    run('bootstrap.js', ['--repo', root26]);
+    const c26b = JSON.stringify(adrFiles()) === JSON.stringify(first) && !fs.existsSync(path.join(root26, 'docs', 'decisions'));
+    record(26, 'bootstrap on a repo that already has a decisions folder', 'bootstrap adopts the folder and its numbering; re-run is a no-op', c26a && c26b, `docs/adr: ${adrFiles().join(', ')}; docs/decisions exists: ${fs.existsSync(path.join(root26, 'docs', 'decisions'))}`);
   } finally {
     if (a.keep) process.stderr.write(`fixtures kept at ${tmp}\n`);
     else fs.rmSync(tmp, { recursive: true, force: true });
