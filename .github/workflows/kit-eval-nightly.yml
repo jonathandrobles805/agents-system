@@ -1,8 +1,10 @@
-name: kit eval nightly
+name: kit eval weekly
 
 on:
   schedule:
-    - cron: '17 6 * * *'
+    # weekly, not nightly: on a subscription the full set (all tasks, n=3) draws on the same usage limits as your own
+    # work; run it by hand (workflow_dispatch) before tagging a release. KIT-SPEC 11A.
+    - cron: '17 6 * * 0'
   workflow_dispatch:
 
 permissions:
@@ -17,16 +19,19 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-      - name: requires ANTHROPIC_API_KEY
+      - name: requires a credential (subscription token preferred)
         env:
+          CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
         run: |
-          if [ -z "$ANTHROPIC_API_KEY" ]; then echo "::error::no ANTHROPIC_API_KEY secret; the nightly eval cannot run"; exit 1; fi
+          if [ -z "$CLAUDE_CODE_OAUTH_TOKEN" ] && [ -z "$ANTHROPIC_API_KEY" ]; then echo "::error::no CLAUDE_CODE_OAUTH_TOKEN (claude setup-token) or ANTHROPIC_API_KEY secret; the eval cannot run"; exit 1; fi
       - run: npm install -g @anthropic-ai/claude-code @anthropic-ai/sandbox-runtime && sudo apt-get install -y bubblewrap socat
       - name: full set
         env:
+          CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
         run: |
+          if [ -n "$CLAUDE_CODE_OAUTH_TOKEN" ]; then unset ANTHROPIC_API_KEY; fi
           BASE=kit/eval/baselines/$(cat VERSION).json
           if [ -f "$BASE" ]; then node kit/eval/harness.js run --set full --runner claude --n 3 --baseline "$BASE" --out eval-out; else node kit/eval/harness.js run --set full --runner claude --n 3 --out eval-out; echo "no baseline for $(cat VERSION) yet; this run's report can become it: harness.js baseline --from eval-out/report.json --out $BASE"; fi
       - uses: actions/upload-artifact@v4

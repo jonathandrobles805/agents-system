@@ -127,7 +127,7 @@ export function projectMetrics(project, { dir = storeDir() } = {}) {
 function fmt(m, label) {
   if (m.source === MISSING) return `${label}: cost n/a (${m.source}: ${m.why})\n`;
   const tools = Object.entries(m.tool_calls).map(([t, c]) => `${t} ${c.ok}${c.failed ? `/${c.failed} failed` : ''}`).join(', ') || 'none';
-  return `${label}: $${m.cost_usd.toFixed(2)} (${m.source}; Claude Code's figure, approximate) · ${m.api_requests} API requests, ${m.api_errors} errors · tokens in ${m.tokens.input} out ${m.tokens.output} cache ${m.tokens.cache_read}/${m.tokens.cache_creation} · tools: ${tools} · models: ${Object.keys(m.models).join(', ') || 'none'} · ${m.first ?? '?'} → ${m.last ?? '?'}\n`;
+  return `${label}: $${m.cost_usd.toFixed(2)} (${m.source}; API-equivalent, Claude Code's approximate figure; on a subscription this is not what you pay) · ${m.api_requests} API requests, ${m.api_errors} errors · tokens in ${m.tokens.input} out ${m.tokens.output} cache ${m.tokens.cache_read}/${m.tokens.cache_creation} · tools: ${tools} · models: ${Object.keys(m.models).join(', ') || 'none'} · ${m.first ?? '?'} → ${m.last ?? '?'}\n`;
 }
 
 export function main(argv = process.argv.slice(2)) {

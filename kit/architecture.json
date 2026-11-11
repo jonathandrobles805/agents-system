@@ -287,7 +287,7 @@
       "file": ".github/workflows/kit.yml",
       "from": "ci-job:kit/eval-smoke",
       "kind": "runs",
-      "step": "eval smoke set against the real agents (required when gated paths changed; needs ANTHROPIC_API_KEY)",
+      "step": "eval smoke set against the real agents (required when gated paths changed; subscription token or API key)",
       "to": "script:eval/harness"
     },
     {

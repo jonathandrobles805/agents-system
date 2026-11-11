@@ -72,16 +72,19 @@ jobs:
           FILES=$(git diff --name-only origin/${{ github.base_ref }}...HEAD | grep -E '^kit/(agents|skills|templates|workflows|eval)/' | grep -v '^kit/eval/(results|fixtures)/' | tr '\n' ',' || true)
           echo "files=$FILES" >> "$GITHUB_OUTPUT"
           echo "touched: ${FILES:-none}"
-      - name: eval smoke set against the real agents (required when gated paths changed; needs ANTHROPIC_API_KEY)
+      - name: eval smoke set against the real agents (required when gated paths changed; subscription token or API key)
         if: steps.touched.outputs.files != ''
         env:
+          CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           KIT_SANDBOX_RUNTIME: none
         run: |
-          if [ -z "$ANTHROPIC_API_KEY" ]; then
-            echo "::error::this PR changes agents, skills, templates, the workflow table or the eval; the smoke set must run against the real agents, and the repository has no ANTHROPIC_API_KEY secret. Add it under Settings → Secrets → Actions. The gate never passes by skipping (KIT-SPEC 11A)."
+          if [ -z "$CLAUDE_CODE_OAUTH_TOKEN" ] && [ -z "$ANTHROPIC_API_KEY" ]; then
+            echo "::error::this PR changes agents, skills, templates, the workflow table or the eval; the smoke set must run against the real agents and the repository has no credential. Preferred: run 'claude setup-token' on your machine and add the output as the secret CLAUDE_CODE_OAUTH_TOKEN (uses your subscription). Alternative: ANTHROPIC_API_KEY (pay per token). The gate never passes by skipping (KIT-SPEC 11A)."
             exit 1
           fi
+          # the subscription token wins when both are set, so a stray API key never turns a subscription run into a billed one
+          if [ -n "$CLAUDE_CODE_OAUTH_TOKEN" ]; then unset ANTHROPIC_API_KEY; echo "auth: subscription token"; else echo "auth: API key"; fi
           npm install -g @anthropic-ai/claude-code @anthropic-ai/sandbox-runtime
           sudo apt-get install -y bubblewrap socat
           unset KIT_SANDBOX_RUNTIME

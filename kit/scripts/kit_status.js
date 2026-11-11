@@ -50,7 +50,7 @@ function laneCost(root, slug) {
   const m = M.laneMetrics(slug, { project });
   return m.source === M.MISSING
     ? { usd: null, source: m.source, why: m.why }
-    : { usd: m.cost_usd, source: m.source, tokens: m.tokens, api_requests: m.api_requests, api_errors: m.api_errors, sessions: m.sessions, last: m.last };
+    : { usd: m.cost_usd, basis: 'api-equivalent', source: m.source, tokens: m.tokens, api_requests: m.api_requests, api_errors: m.api_errors, sessions: m.sessions, last: m.last };
 }
 
 export function gitOr(args, cwd, def = '') {
