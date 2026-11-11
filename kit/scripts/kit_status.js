@@ -21,6 +21,7 @@ import { spawnSync } from 'node:child_process';
 import { ArgumentParser } from './args.js';
 import * as K from './kitlib.js';
 import * as L from './lane.js';
+import * as M from './metrics.js';
 import * as V from './validate_docs.js';
 
 const DOC = `kit-status: derive the state of a project from files and git. Nothing here comes from an agent's summary.
@@ -42,6 +43,15 @@ Lane position rules (first match wins):
 const { pjoin, pyStrip, headCp, kget, pyStr, pyTruthy, relativeTo, readText, PYS_IN, APPROVAL_RE } = L;
 const S = `[${PYS_IN}]`; // Python \s
 const NS = `[^${PYS_IN}]`; // Python \S
+
+/** Cost and tokens for a lane from the telemetry store; never estimated (decision 0010). */
+function laneCost(root, slug) {
+  const project = kget(L.asDict(K.loadKitJson(root)), 'project', path.basename(root));
+  const m = M.laneMetrics(slug, { project });
+  return m.source === M.MISSING
+    ? { usd: null, source: m.source, why: m.why }
+    : { usd: m.cost_usd, source: m.source, tokens: m.tokens, api_requests: m.api_requests, api_errors: m.api_errors, sessions: m.sessions, last: m.last };
+}
 
 export function gitOr(args, cwd, def = '') {
   try {
@@ -195,6 +205,7 @@ export function laneState(root, row, kit) {
     risk: specHdr.get('risk') ?? null, spec: K.isFile(spec) ? relativeTo(root, spec) : null, approved,
     worktree: hasWt ? wt : null, branch: kget(laneJson, 'branch', null), stage: kget(laneJson, 'stage', null), started: kget(laneJson, 'started', null),
     sandbox: hasWt ? L.asDict(kget(laneJson, 'sandbox', {})) : null, // runtime and state, derived at lane start (KIT-SPEC 10.9); never asserted by an agent
+    cost: hasWt ? laneCost(root, slug) : null, // from telemetry only (KIT-SPEC 9.4); null with source telemetry-missing when the exporter was off
     behind_base: behind, ahead_base: ahead, head: head ? headCp(head, 10) : null,
     progress: prog, review: rev, events: ev,
     last_check: lastCheck ? { kind: kget(lastCheck, 'event', null), result: kget(lastCheck, 'result', null), summary: kget(lastCheck, 'summary', null), ts: kget(lastCheck, 'ts', null) } : null,

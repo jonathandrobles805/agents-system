@@ -50,7 +50,7 @@ class Graph {
     this.edges = new Map();
     this.problems = [];
     this.fileToId = new Map(); // absolute path -> node id
-    this.scriptByFile = new Map(); // "lane.js" -> node id (everything under kit/scripts, plus the dashboard server)
+    this.scriptByFile = new Map(); // "lane.js" -> node id (everything under kit/scripts, plus the dashboard server and telemetry collector)
   }
 
   node(n) {
@@ -299,10 +299,12 @@ function addScripts(g, base, kitDir) {
     });
     g.scriptByFile.set(file, id);
   }
-  const server = path.join(kitDir, 'dashboard', 'server.js');
-  if (K.isFile(server)) {
-    const id = g.node({ id: 'script:dashboard/server', kind: 'script', label: 'dashboard/server.js', path: rel(base, server), abs: server, stats: { lines: splitLines(read(server)).length } });
-    g.scriptByFile.set('server.js', id);
+  // scripts that live outside kit/scripts: the dashboard server and the telemetry collector
+  for (const [sub, file] of [['dashboard', 'server.js'], ['telemetry', 'collector.js']]) {
+    const abs = path.join(kitDir, sub, file);
+    if (!K.isFile(abs)) continue;
+    const id = g.node({ id: `script:${sub}/${file.replace(/\.js$/, '')}`, kind: 'script', label: `${sub}/${file}`, path: rel(base, abs), abs, stats: { lines: splitLines(read(abs)).length } });
+    g.scriptByFile.set(file, id);
   }
 }
 

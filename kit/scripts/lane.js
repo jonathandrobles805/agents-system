@@ -21,7 +21,7 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { spawnSync } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { ArgumentParser } from './args.js';
 import * as K from './kitlib.js';
@@ -447,6 +447,14 @@ export function start(root, slug, base) {
   return 0;
 }
 
+/** Start the kit telemetry collector on the host side if nothing answers on its port; returns the child or null when one already runs. */
+export function ensureCollector(port = Number(process.env.KIT_TELEMETRY_PORT || 4318)) {
+  const probe = spawnSync(process.execPath, ['-e', `fetch('http://127.0.0.1:${port}/healthz').then(r=>process.exit(r.ok?0:1),()=>process.exit(1))`], { timeout: 3000 });
+  if (probe.status === 0) return null;
+  const child = spawn(process.execPath, [pjoin(K.KIT_DIR, 'telemetry', 'collector.js'), '--port', String(port)], { detached: true, stdio: 'ignore' });
+  return child;
+}
+
 /** Host side: the command that starts the lane's headless session inside its sandbox. Prints it; runs it with --exec. */
 export function launch(root, slug, { exec = false, prompt = null } = {}) {
   const wt = pjoin(lanesDir(root), slug);
@@ -463,12 +471,17 @@ export function launch(root, slug, { exec = false, prompt = null } = {}) {
   writeText(settingsPath, K.jsonDumps(SB.srtSettings(cfg), { indent: 2 }) + '\n');
   const text = prompt ?? `/run ${slug}`;
   const cmd = SB.launchCommand(cfg, { wt, settingsPath, prompt: text });
-  K.appendEvent(pjoin(wt, '.claude', 'session', 'events.jsonl'), { event: 'launch', runtime: cfg.runtime, state: cfg.state, exec, summary: cmd.slice(0, 3).join(' ') });
+  // telemetry (KIT-SPEC 9.4): exporter on, records tagged with project, lane and stage; the collector runs on the host side
+  const project = kget(asDict(K.loadKitJson(root)), 'project', path.basename(root));
+  const telemetry = SB.telemetryEnv({ project, slug, stage: kget(data, 'stage', 'build') });
+  K.appendEvent(pjoin(wt, '.claude', 'session', 'events.jsonl'), { event: 'launch', runtime: cfg.runtime, state: cfg.state, exec, telemetry: telemetry.OTEL_EXPORTER_OTLP_ENDPOINT, summary: cmd.slice(0, 3).join(' ') });
   if (!exec) {
-    process.stdout.write(K.jsonDumps({ runtime: cfg.runtime, state: cfg.state, cwd: wt, command: cmd, settings: relativeTo(wt, settingsPath) }, { indent: 2 }) + '\n');
+    process.stdout.write(K.jsonDumps({ runtime: cfg.runtime, state: cfg.state, cwd: wt, command: cmd, settings: relativeTo(wt, settingsPath), env: telemetry }, { indent: 2 }) + '\n');
     return 0;
   }
-  const r = spawnSync(cmd[0], cmd.slice(1), { cwd: wt, stdio: 'inherit', env: { ...process.env, KIT_LANE: slug } });
+  const collector = ensureCollector();
+  const r = spawnSync(cmd[0], cmd.slice(1), { cwd: wt, stdio: 'inherit', env: { ...process.env, ...telemetry, KIT_LANE: slug } });
+  if (collector) collector.unref();
   return r.status ?? 1;
 }
 

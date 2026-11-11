@@ -50,6 +50,8 @@
 
     "script:kitlib": { "purpose": "Shared foundation: git, JSON, paths, lane files and the block/feedback conventions every hook and script uses." },
     "script:args": { "purpose": "Command-line argument parser shared by the scripts." },
+    "script:metrics": { "purpose": "Reports cost, tokens, API and tool activity per lane and project from the telemetry store alone; null and flagged when the store has nothing, never estimated." },
+    "script:telemetry/collector": { "purpose": "Receives Claude Code's OpenTelemetry export (OTLP/HTTP JSON) and appends every record, tagged with its lane, to the kit telemetry store; stores, never interprets." },
     "script:sandbox": { "purpose": "Detects the lane sandbox runtime (srt, container, or none), builds a lane's sandbox configuration from the floor and its spec, scans the worktree for credential-looking content, and forms the host-side launch command." },
     "script:lane": { "purpose": "Mechanical half of the pipeline: worktrees, preconditions, roadmap status, and the next-step state machine." },
     "script:validate_docs": { "purpose": "Rejects research, specs, reviews and lessons that make untagged or unresolvable claims." },
