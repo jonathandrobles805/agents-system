@@ -21,7 +21,7 @@ For every item in `questions`, ask the human (use AskUserQuestion when available
 - `wip_limit`: default 2.
 - `layers`: name each layer, its directories (use the detected `dirs` as the draft), and what it may import from. Also ask for 2–5 invariants stated so a check could test them.
 - `high_risk_paths`: default list shown; confirm or edit.
-- `commands`: show the detected commands; confirm or correct each. Offer to install missing tools; install only on an explicit yes.
+- `commands`: show each detected command with its `evidence` (where it was found); confirm or correct each. For every CI check under `not_configured`, ask for a command or `none: <reason>`: a check with neither fails CI, a `none` check passes with a visible warning. Never fill one in yourself. Offer to install missing tools; install only on an explicit yes.
 - `credentials`: list the credential files found; confirm they stay denied to lanes, or that the human will move them.
 - `drift`: if stale branches are listed, tell the human bootstrap can continue but lanes should not start until those branches are merged, synced, or deleted.
 
@@ -36,6 +36,8 @@ Then:
 2. `grep -rn "TODO(bootstrap" CLAUDE.md ROADMAP.md ARCHITECTURE.md DESIGN.md` and list what remains for them to fill.
 3. Run the project's test command from `.claude/kit.json` once and report the result. Red here is the current state of the code being made visible; it is not caused by bootstrap.
 4. Run `node "$HOME/.claude/kit/scripts/ci_guards_present.js" --repo "$PWD" --kit "$HOME/.claude/kit"` and confirm it passes.
+5. Show every line of `warnings` from the result (for example: the installed kit has uncommitted changes, or its commit is not pushed, so CI pins a tag). The project's own hooks in `.claude/settings.json` and its own `CLAUDE.md` text are kept; the kit adds its hooks next to them and appends one marked block to `CLAUDE.md`.
+6. If the kit repository is private, tell the human once: in the kit repository, Settings → Actions → General → Access → "Accessible from repositories owned by the user", or the kit's CI jobs cannot load the kit.
 
 ## Step 4: upgrade (only with --upgrade)
 ```

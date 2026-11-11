@@ -1,0 +1,12 @@
+name: agent-kit
+description: Puts this kit version on the runner and exports KIT_DIR (the kit/ directory) for the kit's CI checks in a project.
+# Used by the project CI that /bootstrap generates (kit/ci/github.yml) as `uses: <owner>/agents-system@<pinned ref>`.
+# The runner downloads the whole repository at that ref for the action, so kit/ is next to this file.
+# A private kit repository must allow access: Settings → Actions → General → Access → "Accessible from repositories owned by the user".
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      run: |
+        test -f "$GITHUB_ACTION_PATH/kit/scripts/kitlib.js" || { echo "::error::agent-kit: kit/ not found next to action.yml at $GITHUB_ACTION_PATH"; exit 1; }
+        echo "KIT_DIR=$GITHUB_ACTION_PATH/kit" >> "$GITHUB_ENV"

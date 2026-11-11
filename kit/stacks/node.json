@@ -15,7 +15,7 @@
     "stylelint": {"tokens_lint": "npx stylelint \"**/*.{css,scss}\""},
     "prettier": {"format": "npx prettier --check ."}
   },
-  "audit": "npm audit --audit-level=high",
+  "audit": "node \"$HOME/.claude/kit/scripts/ci_audit.js\" --repo .",
   "test_dirs": ["test", "tests", "__tests__", "spec"],
   "source_dirs": ["src", "app", "lib", "packages"],
   "install_hint": {"boundaries": "npm i -D dependency-cruiser", "mutation": "npm i -D @stryker-mutator/core", "typecheck": "npm i -D typescript"}

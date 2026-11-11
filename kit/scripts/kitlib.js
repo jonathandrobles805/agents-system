@@ -655,3 +655,7 @@ export function reviewHeadOk(root, reviewedSha) {
   }
   return parent.startsWith(reviewedSha) && changed.every((f) => REVIEW_ONLY_FILE.test(f));
 }
+
+/** A settings.json hook entry belongs to the kit when one of its commands runs a script from the installed kit (any version). */
+export const isKitHookEntry = (entry) =>
+  Array.isArray(entry?.hooks) && entry.hooks.some((h) => typeof h?.command === 'string' && /\.claude\/kit\/scripts\//.test(h.command));

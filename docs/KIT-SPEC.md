@@ -265,12 +265,19 @@ Jobs on every PR: tests; typecheck; lint; import boundaries; `scope-diff` agains
 Branch protection via `gh api`: required checks = all of the above; strict up-to-date; no force push; no direct pushes to `main`.
 
 **Stages 1–3 (step 4).** The jobs above are grouped as: stage 1 static (`format`, `lint`, `typecheck`, secret scan, `boundaries`), stage 2 unit (`tests` with a **coverage floor that only rises**), stage 3 integration (`integration`, the project's integration command against the lane database adapter, §10.10). Additions in step 4:
-- `format` job from the detected formatter (prettier, black, ruff format); `echo` when none is configured, so the job exists from day one.
+- `format` job from the detected formatter (prettier, black, ruff format).
 - Coverage: the `tests` job runs the detected coverage command and `ci_coverage_floor.js`, which fails when line coverage is below `kit.json coverage_floor` or when the floor was lowered relative to the base branch, and with `--ratchet` (run on the default branch) raises the floor to the measured value. The floor never goes down.
-- `integration` job running `kit.json commands.integration`; `echo` naming the lane adapter when none is set.
+- `integration` job running `kit.json commands.integration`.
 - `on: merge_group` so the checks run inside the merge queue.
 - **Owner approval on CI and kit configuration.** `/bootstrap` writes `.github/CODEOWNERS` naming the repository owner for `.github/workflows/`, `.github/CODEOWNERS`, `.claude/`, `CLAUDE.md` and `ARCHITECTURE.md` (human-owned; written once). `--protect` sets `require_code_owner_reviews` with `required_approving_review_count: 0`, so ordinary PRs stay review-free and a PR touching those paths needs the owner.
 - **Merge queue.** `--protect` also creates a repository ruleset with a `merge_queue` rule (squash, all-green). Best effort: it needs a GitHub plan that supports rulesets on the repository; the result says whether it was enabled.
+
+**Field-test corrections (decision 0014).** The first real run (hya-sandbox) showed the template red for reasons outside the project's code. The rules now:
+- **No check is green while checking nothing.** Every project command the CI runs (`test`, `coverage`, `format`, `integration`, `typecheck`, `lint`, `boundaries`, `audit`, `mutation`) is either a command, or `"none: <reason>"` (the job passes with a visible `::warning::` naming the reason), or missing (the job prints `::error::… is not configured` and exits 1). `/bootstrap` lists the missing ones under `not_configured` in its `commands` question. Planted fault 40.
+- **Each job that runs a project command sets up its runtime and installs dependencies first** (`actions/setup-node`/`setup-python`/`setup-go` from the detected stacks, then `kit.json commands.install`, detected from the lockfile: `npm ci`, `pnpm install --frozen-lockfile`, `uv sync --frozen`, …). Commands are written as `run: |` block scalars, so `:`, `(` or quotes in a command never break YAML or the shell.
+- **The kit reaches CI through its own action, pinned.** The kit repository has a root `action.yml` (composite) that exports `KIT_DIR`; jobs that need kit scripts use `<kit_repo>@<ref>`, where `ref` is the installed kit's commit when that commit is on its remote, else `v<VERSION>` (with a warning). No cross-repository checkout and no token. A private kit repository must allow access once: Settings → Actions → General → Access → "Accessible from repositories owned by the user". `kit.json kit_repo` overrides the repository.
+- **Workflow permissions are `contents: read`.** The secret scan runs the gitleaks binary pinned by version and the sha256 of its release asset, over the commits of the change (PR base..head, merge-group base..head, push before..after), with no write scope.
+- **Audit is a ratchet** for npm (`ci_audit.js`): an advisory at or above `high` fails unless a named human accepted it in `.claude/audit-baseline.json` with a reason and an expiry at most 90 days out (`ci_audit.js --accept GHSA-… --reason … --by … --expires YYYY-MM-DD`); an expired acceptance fails; a fixed one is reported for removal. Other package managers keep their own audit command. Planted fault 43.
 
 ---
 

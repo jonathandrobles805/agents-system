@@ -122,8 +122,14 @@ test('CLAUDE.md: the kit block is regenerated on upgrade and the human text outs
   assert.ok(!after.includes('STALE'));
   const outside = (s) => s.slice(0, s.indexOf(KIT_BLOCK_BEGIN)) + s.slice(s.indexOf(KIT_BLOCK_END) + KIT_BLOCK_END.length);
   assert.equal(outside(after), outside(human).replace(/agent-kit \d+\.\d+\.\d+/g, (m) => m));
-  // a CLAUDE.md without markers (pre-2c project) is left as it was, version stamp aside
+  // a CLAUDE.md without markers (a project's own, or pre-2c): its text is kept byte for byte and the kit block is
+  // appended once (field test #13); a second upgrade does not add a second block
+  const ver = read(path.join(path.dirname(path.dirname(path.dirname(new URL(import.meta.url).pathname))), '..', 'VERSION')).trim();
   fs.writeFileSync(cm, '# Mine\n\nKit: agent-kit 0.1.0\n\nhand-written only\n');
   boot(root, '--upgrade');
-  assert.equal(read(cm), `# Mine\n\nKit: agent-kit ${read(path.join(path.dirname(path.dirname(path.dirname(new URL(import.meta.url).pathname))), '..', 'VERSION')).trim()}\n\nhand-written only\n`);
+  const once = read(cm);
+  assert.ok(once.startsWith(`# Mine\n\nKit: agent-kit ${ver}\n\nhand-written only\n\n${KIT_BLOCK_BEGIN}\n`), once);
+  assert.equal(once.split(KIT_BLOCK_BEGIN).length, 2);
+  boot(root, '--upgrade');
+  assert.equal(read(cm), once);
 });
