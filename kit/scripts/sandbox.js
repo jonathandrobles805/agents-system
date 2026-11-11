@@ -108,15 +108,17 @@ export function sandboxConfig({ root, wt, slug, agent = 'implementer', env = pro
   };
 }
 
-/** srt settings file content for a configuration (format follows the sandbox-runtime README; marked provisional there). */
+/**
+ * srt settings file content for a configuration. The shape is what `srt --settings` accepts as of sandbox-runtime
+ * installed 2026-11-10 on macOS: `network` and `filesystem` at the top level, every key present (srt refuses a file
+ * with a missing key rather than filling defaults, so that a typo cannot silently drop a rule). Verified end to end:
+ * an allowed host connected, an undeclared host got "403 host is not on the allow list".
+ */
+export const SRT_REQUIRED_KEYS = { network: ['allowedDomains', 'deniedDomains'], filesystem: ['denyRead', 'allowRead', 'allowWrite', 'denyWrite'] };
 export function srtSettings(cfg) {
   return {
-    sandbox: {
-      enabled: true,
-      failIfUnavailable: cfg.failIfUnavailable,
-      filesystem: { allowWrite: cfg.allowWrite, denyRead: cfg.denyRead },
-      network: { allowedDomains: cfg.allowedDomains, deniedDomains: [] },
-    },
+    network: { allowedDomains: cfg.allowedDomains, deniedDomains: [] },
+    filesystem: { denyRead: cfg.denyRead, allowRead: [], allowWrite: cfg.allowWrite, denyWrite: [] },
   };
 }
 

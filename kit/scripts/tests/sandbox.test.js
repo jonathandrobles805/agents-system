@@ -6,7 +6,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import * as K from '../kitlib.js';
-import { ALLOW_MARKER, credentialScan, detectRuntime, launchCommand, sandboxConfig, specNetwork, srtSettings } from '../sandbox.js';
+import { ALLOW_MARKER, SRT_REQUIRED_KEYS, credentialScan, detectRuntime, launchCommand, sandboxConfig, specNetwork, srtSettings } from '../sandbox.js';
 import * as F from './fixtures.js';
 import { runScript, tmpPath } from './helpers.js';
 import { project } from './testdata.js';
@@ -59,9 +59,16 @@ test('sandboxConfig: floor domains plus the spec Network section, deny paths fro
   assert.ok(cfg.denyRead.some((p) => p.endsWith(path.join('.ssh'))));
   assert.ok(cfg.denyRead.some((p) => p === path.join(root, '.env') || p.endsWith(path.join(root, '**', '.env'))));
   assert.equal(cfg.failIfUnavailable, true);
+  // the exact shape srt accepts (verified on macOS 2026-11-10; a missing key makes srt refuse the file)
   const s = srtSettings(cfg);
-  assert.equal(s.sandbox.enabled, true);
-  assert.deepEqual(s.sandbox.network.allowedDomains, cfg.allowedDomains);
+  assert.deepEqual(Object.keys(s).sort(), ['filesystem', 'network']);
+  for (const [section, keys] of Object.entries(SRT_REQUIRED_KEYS)) {
+    for (const k of keys) assert.ok(Array.isArray(s[section][k]), `${section}.${k} present and a list`);
+  }
+  assert.deepEqual(s.network.allowedDomains, cfg.allowedDomains);
+  assert.deepEqual(s.filesystem.allowWrite, cfg.allowWrite);
+  assert.deepEqual(s.filesystem.denyRead, cfg.denyRead);
+  assert.ok(!('sandbox' in s), 'no nested sandbox key: srt would refuse it');
   // the researcher's wider allowance comes from the floor's per-agent list
   const r = sandboxConfig({ root, wt: root, slug: 'refund-route', agent: 'researcher', env: envWith('srt') });
   assert.ok(r.allowedDomains.includes('*'));
