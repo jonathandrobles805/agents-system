@@ -104,6 +104,11 @@ export function main() {
   if (typeof cmd !== 'string' || !cmd) return 0;
   const cwd = (typeof d.cwd === 'string' && d.cwd) || '.';
   const root = K.projectRoot(cwd);
+  // kill switch (KIT-SPEC 10.13): a STOP flag in the lane's session or the project refuses every mutation
+  if (K.isFile(path.join(cwd, '.claude', 'session', 'STOP')) || K.isFile(path.join(root, '.claude', 'STOP'))) {
+    process.stderr.write(`guard-bash: the kill switch is set; no mutations until lane.js resume-all --by <name>\n`);
+    return 2;
+  }
   const lane = K.findLane(cwd);
   const events = lane ? lane.eventsPath : path.join(root, '.claude', 'session', 'events.jsonl');
 

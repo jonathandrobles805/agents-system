@@ -1,0 +1,36 @@
+{
+  "command": "/security",
+  "description": "A security finding or review. Assess, contain, investigate, remediate, verify; human security sign-off before merge. Always high risk.",
+  "stages": [
+    "start",
+    "research",
+    "plan",
+    "approve",
+    "lane",
+    "test",
+    "build",
+    "review",
+    "security-signoff",
+    "wait-merge",
+    "retro",
+    "done"
+  ],
+  "agents": {
+    "research": "researcher",
+    "plan": "planner",
+    "test": "tester",
+    "build": "implementer",
+    "review": "reviewer",
+    "retro": "retro"
+  },
+  "human": [
+    "approve",
+    "security-signoff",
+    "wait-merge",
+    "retro"
+  ],
+  "size_gated": {},
+  "risk_adds": [],
+  "force_risk": "high",
+  "work_type": "security"
+}

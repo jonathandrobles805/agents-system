@@ -366,6 +366,11 @@ The kit is done when all of the following hold:
 | 31 | Coverage below the floor, or the floor lowered in `kit.json` | `ci_coverage_floor` | CI fail; the floor only rises |
 | 32 | An agent prompt edited to skip the red run | eval smoke set (hard metric `red_before_green`) | kit PR blocked |
 | 33 | A kit change that lowers a quality metric | eval full set against the committed baseline | regression beyond the baseline's variance; tag blocked |
+| 34 | Goal with an unknown `Work type` | `validate_docs`, `lane.js next-step`, `lane.js start` | violation; `refused`; start refused |
+| 35 | Agent requested for a stage its profile does not list | `lane.js agent-for` | refused with the profile's stages |
+| 36 | Kill switch set while a lane is live | `guard-edit`, `guard-bash`, `next-step`, `start` | every mutation and transition refused until `resume-all --by` |
+| 37 | `/work` given a symptom with no type | provisional `fix`; debugger `cause:` line | boot failure → `incident`; design fault → `refactor`; single defect → `fix`, provisional dropped |
+| 38 | `security` or `migration` goal without high risk | profile `force_risk` | risk is high regardless of the header; container sandbox required |
 
 ---
 
@@ -448,6 +453,36 @@ Production credentials never enter a lane: the sandbox makes their paths unreada
 
 ---
 
+## 10.12 Workflow table, work types, size (step 7)
+
+Routing is a version-controlled table: one profile per kind of work in `kit/workflows/<work_type>.json`, listing its stages in order, the one agent allowed per stage, the stages where a human must act, what size gates, what high risk adds, and (for `fix`) how the debugger's evidence re-routes. `lane.js next-step` derives the lane's position from files and git as before, then maps it onto the goal's profile; a position the profile lacks is skipped forward (a `fix` has no research or plan: it begins with the debugger). The controller refuses a goal whose `Work type` has no profile and refuses to name an agent for a stage the profile does not list (`lane.js agent-for`). No agent redefines the lifecycle.
+
+| Work type | Command | Stages |
+|---|---|---|
+| feature | `/new-feature` | start → research → plan → **approve** → lane → test → build → review → **wait-merge** → retro → done |
+| fix | `/fix` | start → reproduce (debugger) → lane → test → build → review → **wait-merge** → retro → done |
+| ui | `/ui` | start → inspect → lane → build → verify-ui → review → **wait-merge** → done; at size L, the feature shape |
+| refactor | `/refactor` | start → research → plan → **approve** → lane → test → build → review → **wait-merge** → done |
+| docs | `/docs` | start → inspect → lane → build → review → **wait-merge** → done |
+| investigation | `/investigate` | start → research → report → done |
+| security | `/security` | feature stages plus **security-signoff** before wait-merge; risk forced high |
+| architecture | `/architecture` | start → research → plan → **approve** → lane → build → review → **wait-merge** → done |
+| migration | `/migrate` | feature stages without retro; risk forced high; requires backup and restore validation |
+| incident | `/incident` | the fix stages, with retro |
+| skill-development | `/new-skill` | start → research → plan (skill-smith) → **approve** → lane → build (skill-smith) → review → **wait-merge** → done; kit-level |
+
+**Goal fields.** `docs/goals/<slug>.md` carries `Work type`, `Risk`, `Size` and `Domain`. Absent fields mean `feature`, `normal`, `M`, none, so every existing goal keeps today's route. `validate_docs` rejects an unknown work type, risk or size. `security` and `migration` force `Risk: high`.
+
+**Size.** `S`: one domain, no interface/schema/data change, no new dependency. `M`: two domains or one such change. `L`: more, or unknowns left after research. Size sets research width (§3.2 of the operating model) and whether the critic runs; it never removes a stage risk adds, and a human may raise it, never lower it below the derived value. `/work` writes `Size: M` when the scope is unknown, never `S`.
+
+**`/work`.** When the user does not know the kind, `/work` asks at most one question, writes `Work type: fix (provisional)`, and starts. The debugger's report ends with one `cause:` line; `next-step` reads it: a single defect confirms `fix` and drops `(provisional)`; `boot failure` or `suite cannot run` rewrites the goal to `incident`; `design fault` rewrites it to `refactor`. The rewrite is the controller's, logged as a `reroute` event; the command never classifies on its own.
+
+## 10.13 Kill switch (step 7)
+
+`lane.js stop --by <name> --reason <text>` writes `.claude/STOP` in the project and `STOP` into every lane's session directory, and logs a `stop` event per lane. While set: `next-step` returns `stopped`; `lane.js start` refuses; `guard-edit` and `guard-bash` refuse every mutation in every lane; the host-side launcher refuses to start a session. `lane.js resume-all --by <name>` lifts it and logs who did. The flag alone is not the mechanism: each entry point checks it.
+
+---
+
 ## 11. Versioning and upgrades
 
 - `VERSION` follows semver. `CHANGELOG.md` records every change with the lesson or decision that caused it.
@@ -490,6 +525,7 @@ See `docs/decisions/`:
 - 0010 Cost and tokens come from Claude Code's OpenTelemetry export only; the kit never estimates
 - 0011 Quality gates are ratchets, CI configuration needs the owner, merges go through a queue
 - 0012 Agent, skill, template and workflow changes are measured by the eval harness before release
+- 0013 One workflow table routes every kind of work; the goal carries work type, risk and size; the kill switch is checked at every entry point
 
 ---
 

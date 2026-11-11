@@ -414,12 +414,17 @@ export function runStages(lines, agentNames, commandNames, spawnsOf = () => []) 
 
 /** Stage names `lane.js next-step` can answer, read from the source of nextStep(). */
 export function laneStages(laneText) {
-  const at = laneText.indexOf('export async function nextStep');
-  if (at < 0) return null;
-  const end = laneText.indexOf('\n}\n', at);
-  const body = laneText.slice(at, end < 0 ? undefined : end);
+  // next-step is the entry point; since step 7 it delegates the position derivation to nextStepFeature and maps the
+  // result onto the goal's profile, so both bodies carry stages the /run table must document
   const stages = new Set();
-  for (const m of matches(/stage:\s*([^,}]+)/g, body)) for (const q of matches(/'([a-z-]+)'/g, m[1])) stages.add(q[1]);
+  for (const fn of ['export async function nextStep', 'async function nextStepFeature']) {
+    const at = laneText.indexOf(fn);
+    if (at < 0) continue;
+    const end = laneText.indexOf('\n}\n', at);
+    const body = laneText.slice(at, end < 0 ? undefined : end);
+    for (const m of matches(/stage:\s*([^,}]+)/g, body)) for (const q of matches(/'([a-z-]+)'/g, m[1])) stages.add(q[1]);
+  }
+  if (!stages.size) return null;
   return [...stages].sort(byText);
 }
 

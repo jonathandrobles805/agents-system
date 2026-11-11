@@ -1,0 +1,40 @@
+{
+  "command": "/new-feature",
+  "description": "A new capability. The full route: research, plan, critique, human approval, tests first, build, independent review, human merge, retro.",
+  "stages": [
+    "start",
+    "research",
+    "plan",
+    "approve",
+    "lane",
+    "test",
+    "build",
+    "review",
+    "wait-merge",
+    "retro",
+    "done"
+  ],
+  "agents": {
+    "research": "researcher",
+    "plan": "planner",
+    "test": "tester",
+    "build": "implementer",
+    "review": "reviewer",
+    "retro": "retro"
+  },
+  "human": [
+    "approve",
+    "wait-merge",
+    "retro"
+  ],
+  "size_gated": {
+    "research_width": true,
+    "critic": true
+  },
+  "risk_adds": [
+    "threat-model",
+    "second-reviewer",
+    "security-signoff"
+  ],
+  "work_type": "feature"
+}

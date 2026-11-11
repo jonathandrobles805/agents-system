@@ -1,0 +1,36 @@
+{
+  "command": "/fix",
+  "description": "A defect with a reproducible symptom. The debugger reproduces and localizes (read-only) and writes the failing test; the implementer fixes; review; human merge.",
+  "stages": [
+    "start",
+    "reproduce",
+    "lane",
+    "test",
+    "build",
+    "review",
+    "wait-merge",
+    "retro",
+    "done"
+  ],
+  "agents": {
+    "reproduce": "debugger",
+    "test": "tester",
+    "build": "implementer",
+    "review": "reviewer",
+    "retro": "retro"
+  },
+  "human": [
+    "wait-merge"
+  ],
+  "size_gated": {},
+  "risk_adds": [
+    "threat-model",
+    "second-reviewer",
+    "security-signoff"
+  ],
+  "reroute": {
+    "boot-failure": "incident",
+    "design-fault": "refactor"
+  },
+  "work_type": "fix"
+}
