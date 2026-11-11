@@ -287,7 +287,7 @@
       "file": ".github/workflows/kit.yml",
       "from": "ci-job:kit/eval-smoke",
       "kind": "runs",
-      "step": "eval smoke set against the real agents (optional: runs when a credential secret exists)",
+      "step": "eval smoke set against the real agents (optional; runs when a credential secret exists)",
       "to": "script:eval/harness"
     },
     {
@@ -301,147 +301,147 @@
       "file": ".github/workflows/kit.yml",
       "from": "ci-job:kit/eval-smoke",
       "kind": "runs",
-      "step": "eval smoke set against the real agents (optional: runs when a credential secret exists)",
+      "step": "eval smoke set against the real agents (optional; runs when a credential secret exists)",
       "to": "test:agents"
     },
     {
       "file": ".github/workflows/kit.yml",
       "from": "ci-job:kit/eval-smoke",
       "kind": "runs",
-      "step": "eval smoke set against the real agents (optional: runs when a credential secret exists)",
+      "step": "eval smoke set against the real agents (optional; runs when a credential secret exists)",
       "to": "test:arch_manifest"
     },
     {
       "file": ".github/workflows/kit.yml",
       "from": "ci-job:kit/eval-smoke",
       "kind": "runs",
-      "step": "eval smoke set against the real agents (optional: runs when a credential secret exists)",
+      "step": "eval smoke set against the real agents (optional; runs when a credential secret exists)",
       "to": "test:args_and_hooks"
     },
     {
       "file": ".github/workflows/kit.yml",
       "from": "ci-job:kit/eval-smoke",
       "kind": "runs",
-      "step": "eval smoke set against the real agents (optional: runs when a credential secret exists)",
+      "step": "eval smoke set against the real agents (optional; runs when a credential secret exists)",
       "to": "test:bootstrap_adopt"
     },
     {
       "file": ".github/workflows/kit.yml",
       "from": "ci-job:kit/eval-smoke",
       "kind": "runs",
-      "step": "eval smoke set against the real agents (optional: runs when a credential secret exists)",
+      "step": "eval smoke set against the real agents (optional; runs when a credential secret exists)",
       "to": "test:bootstrap"
     },
     {
       "file": ".github/workflows/kit.yml",
       "from": "ci-job:kit/eval-smoke",
       "kind": "runs",
-      "step": "eval smoke set against the real agents (optional: runs when a credential secret exists)",
+      "step": "eval smoke set against the real agents (optional; runs when a credential secret exists)",
       "to": "test:ci_scripts"
     },
     {
       "file": ".github/workflows/kit.yml",
       "from": "ci-job:kit/eval-smoke",
       "kind": "runs",
-      "step": "eval smoke set against the real agents (optional: runs when a credential secret exists)",
+      "step": "eval smoke set against the real agents (optional; runs when a credential secret exists)",
       "to": "test:ci_stage1_3"
     },
     {
       "file": ".github/workflows/kit.yml",
       "from": "ci-job:kit/eval-smoke",
       "kind": "runs",
-      "step": "eval smoke set against the real agents (optional: runs when a credential secret exists)",
+      "step": "eval smoke set against the real agents (optional; runs when a credential secret exists)",
       "to": "test:commands_and_pipeline"
     },
     {
       "file": ".github/workflows/kit.yml",
       "from": "ci-job:kit/eval-smoke",
       "kind": "runs",
-      "step": "eval smoke set against the real agents (optional: runs when a credential secret exists)",
+      "step": "eval smoke set against the real agents (optional; runs when a credential secret exists)",
       "to": "test:dashboard_model"
     },
     {
       "file": ".github/workflows/kit.yml",
       "from": "ci-job:kit/eval-smoke",
       "kind": "runs",
-      "step": "eval smoke set against the real agents (optional: runs when a credential secret exists)",
+      "step": "eval smoke set against the real agents (optional; runs when a credential secret exists)",
       "to": "test:dashboard"
     },
     {
       "file": ".github/workflows/kit.yml",
       "from": "ci-job:kit/eval-smoke",
       "kind": "runs",
-      "step": "eval smoke set against the real agents (optional: runs when a credential secret exists)",
+      "step": "eval smoke set against the real agents (optional; runs when a credential secret exists)",
       "to": "test:eval_harness"
     },
     {
       "file": ".github/workflows/kit.yml",
       "from": "ci-job:kit/eval-smoke",
       "kind": "runs",
-      "step": "eval smoke set against the real agents (optional: runs when a credential secret exists)",
+      "step": "eval smoke set against the real agents (optional; runs when a credential secret exists)",
       "to": "test:hooks"
     },
     {
       "file": ".github/workflows/kit.yml",
       "from": "ci-job:kit/eval-smoke",
       "kind": "runs",
-      "step": "eval smoke set against the real agents (optional: runs when a credential secret exists)",
+      "step": "eval smoke set against the real agents (optional; runs when a credential secret exists)",
       "to": "test:kit_status"
     },
     {
       "file": ".github/workflows/kit.yml",
       "from": "ci-job:kit/eval-smoke",
       "kind": "runs",
-      "step": "eval smoke set against the real agents (optional: runs when a credential secret exists)",
+      "step": "eval smoke set against the real agents (optional; runs when a credential secret exists)",
       "to": "test:kitlib"
     },
     {
       "file": ".github/workflows/kit.yml",
       "from": "ci-job:kit/eval-smoke",
       "kind": "runs",
-      "step": "eval smoke set against the real agents (optional: runs when a credential secret exists)",
+      "step": "eval smoke set against the real agents (optional; runs when a credential secret exists)",
       "to": "test:lane_artifacts"
     },
     {
       "file": ".github/workflows/kit.yml",
       "from": "ci-job:kit/eval-smoke",
       "kind": "runs",
-      "step": "eval smoke set against the real agents (optional: runs when a credential secret exists)",
+      "step": "eval smoke set against the real agents (optional; runs when a credential secret exists)",
       "to": "test:lane"
     },
     {
       "file": ".github/workflows/kit.yml",
       "from": "ci-job:kit/eval-smoke",
       "kind": "runs",
-      "step": "eval smoke set against the real agents (optional: runs when a credential secret exists)",
+      "step": "eval smoke set against the real agents (optional; runs when a credential secret exists)",
       "to": "test:sandbox"
     },
     {
       "file": ".github/workflows/kit.yml",
       "from": "ci-job:kit/eval-smoke",
       "kind": "runs",
-      "step": "eval smoke set against the real agents (optional: runs when a credential secret exists)",
+      "step": "eval smoke set against the real agents (optional; runs when a credential secret exists)",
       "to": "test:security_floor"
     },
     {
       "file": ".github/workflows/kit.yml",
       "from": "ci-job:kit/eval-smoke",
       "kind": "runs",
-      "step": "eval smoke set against the real agents (optional: runs when a credential secret exists)",
+      "step": "eval smoke set against the real agents (optional; runs when a credential secret exists)",
       "to": "test:telemetry"
     },
     {
       "file": ".github/workflows/kit.yml",
       "from": "ci-job:kit/eval-smoke",
       "kind": "runs",
-      "step": "eval smoke set against the real agents (optional: runs when a credential secret exists)",
+      "step": "eval smoke set against the real agents (optional; runs when a credential secret exists)",
       "to": "test:validate_docs"
     },
     {
       "file": ".github/workflows/kit.yml",
       "from": "ci-job:kit/eval-smoke",
       "kind": "runs",
-      "step": "eval smoke set against the real agents (optional: runs when a credential secret exists)",
+      "step": "eval smoke set against the real agents (optional; runs when a credential secret exists)",
       "to": "test:validate_spec_review"
     },
     {
