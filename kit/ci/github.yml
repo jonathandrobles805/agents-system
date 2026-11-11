@@ -68,6 +68,8 @@ jobs:
         run: node $KIT_DIR/kit/scripts/ci_guards_present.js --repo . --kit $KIT_DIR/kit
       - name: security-floor
         run: node $KIT_DIR/kit/scripts/ci_security_floor.js --repo .
+      - name: lane-artifacts
+        run: node $KIT_DIR/kit/scripts/ci_lane_artifacts.js --repo .
       - name: validate-docs
         run: node $KIT_DIR/kit/scripts/validate_docs.js --changed --repo . || node $KIT_DIR/kit/scripts/ci_changed_docs.js --repo . --base origin/{{default_branch}}
       - name: review-report

@@ -450,6 +450,19 @@
       "file": ".github/workflows/kit.yml",
       "from": "ci-job:kit/scripts",
       "kind": "runs",
+      "to": "test:lane_artifacts"
+    },
+    {
+      "file": ".github/workflows/kit.yml",
+      "from": "ci-job:kit/scripts",
+      "kind": "runs",
+      "step": "architecture map matches the code (kit/manifest.json declares every component; kit/architecture.json is current)",
+      "to": "test:lane_artifacts"
+    },
+    {
+      "file": ".github/workflows/kit.yml",
+      "from": "ci-job:kit/scripts",
+      "kind": "runs",
       "to": "test:lane"
     },
     {
@@ -551,6 +564,13 @@
       "kind": "runs",
       "step": "guards-present",
       "to": "ci:guards_present"
+    },
+    {
+      "file": "kit/ci/github.yml",
+      "from": "ci-job:template/kit-checks",
+      "kind": "runs",
+      "step": "lane-artifacts",
+      "to": "ci:lane_artifacts"
     },
     {
       "file": "kit/ci/github.yml",
@@ -663,6 +683,18 @@
     {
       "file": "kit/scripts/ci_guards_present.js",
       "from": "ci:guards_present",
+      "kind": "imports",
+      "to": "script:kitlib"
+    },
+    {
+      "file": "kit/scripts/ci_lane_artifacts.js",
+      "from": "ci:lane_artifacts",
+      "kind": "imports",
+      "to": "script:ci_common"
+    },
+    {
+      "file": "kit/scripts/ci_lane_artifacts.js",
+      "from": "ci:lane_artifacts",
       "kind": "imports",
       "to": "script:kitlib"
     },
@@ -1436,6 +1468,12 @@
       "file": "release.sh",
       "from": "shell:release.sh",
       "kind": "runs",
+      "to": "test:lane_artifacts"
+    },
+    {
+      "file": "release.sh",
+      "from": "shell:release.sh",
+      "kind": "runs",
       "to": "test:lane"
     },
     {
@@ -1907,6 +1945,42 @@
       "to": "script:kitlib"
     },
     {
+      "file": "kit/scripts/tests/lane_artifacts.test.js",
+      "from": "test:lane_artifacts",
+      "kind": "tests",
+      "to": "ci:lane_artifacts"
+    },
+    {
+      "file": "kit/scripts/tests/lane_artifacts.test.js",
+      "from": "test:lane_artifacts",
+      "kind": "tests",
+      "to": "hook:guard_edit"
+    },
+    {
+      "file": "kit/scripts/tests/lane_artifacts.test.js",
+      "from": "test:lane_artifacts",
+      "kind": "tests",
+      "to": "hook:read_log"
+    },
+    {
+      "file": "kit/scripts/tests/lane_artifacts.test.js",
+      "from": "test:lane_artifacts",
+      "kind": "tests",
+      "to": "script:bootstrap"
+    },
+    {
+      "file": "kit/scripts/tests/lane_artifacts.test.js",
+      "from": "test:lane_artifacts",
+      "kind": "tests",
+      "to": "script:kitlib"
+    },
+    {
+      "file": "kit/scripts/tests/lane_artifacts.test.js",
+      "from": "test:lane_artifacts",
+      "kind": "tests",
+      "to": "script:lane"
+    },
+    {
       "file": "kit/scripts/tests/lane.test.js",
       "from": "test:lane",
       "kind": "tests",
@@ -2049,6 +2123,12 @@
       "from": "tool:planted-faults",
       "kind": "runs",
       "to": "ci:guards_present"
+    },
+    {
+      "file": "planted-faults/run.js",
+      "from": "tool:planted-faults",
+      "kind": "runs",
+      "to": "ci:lane_artifacts"
     },
     {
       "file": "planted-faults/run.js",
@@ -2368,7 +2448,7 @@
       "attrs": {
         "display_name": "kit-checks",
         "pipeline": "the project CI that /bootstrap installs (kit/ci/github.yml)",
-        "steps": 9
+        "steps": 10
       },
       "declared": true,
       "id": "ci-job:template/kit-checks",
@@ -2499,6 +2579,15 @@
       "label": "guards-present",
       "path": "kit/scripts/ci_guards_present.js",
       "purpose": "Fails when a project's hooks differ from the kit's, are disabled, or point at scripts that no longer exist."
+    },
+    {
+      "attrs": {},
+      "declared": true,
+      "id": "ci:lane_artifacts",
+      "kind": "ci",
+      "label": "lane-artifacts",
+      "path": "kit/scripts/ci_lane_artifacts.js",
+      "purpose": "Fails when a lane artifact sits outside the project's one artifact tree (kit.json paths.work) or a source file sits inside it."
     },
     {
       "attrs": {},
@@ -3220,6 +3309,13 @@
       "kind": "test",
       "label": "lane.test.js",
       "path": "kit/scripts/tests/lane.test.js"
+    },
+    {
+      "attrs": {},
+      "id": "test:lane_artifacts",
+      "kind": "test",
+      "label": "lane_artifacts.test.js",
+      "path": "kit/scripts/tests/lane_artifacts.test.js"
     },
     {
       "attrs": {},

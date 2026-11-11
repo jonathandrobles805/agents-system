@@ -43,11 +43,16 @@ export function main() {
     const [, change, create] = K.specFileLists(lane.specPath);
     const allowed = [...change, ...create, ...lane.alwaysAllowed()];
     const specRel = K.relTo(root, lane.specPath);
-    if (rel === specRel || (rel.startsWith('docs/specs/') && rel.endsWith('.md') && !rel.endsWith('.progress.md') && !rel.includes('.review.'))) {
+    if (rel === specRel || (rel.startsWith(K.workRoot(root) + '/') && rel.endsWith('.md') && !rel.endsWith('.progress.md') && !rel.includes('.review.'))) {
       if (rel === specRel) {
         return deny(`guard-edit: '${rel}' is the approved spec. Changing it requires re-approval; write the needed change in progress.md under Escalation.`);
       }
       return deny(`guard-edit: '${rel}' is another feature's spec. Lanes edit only their own files.`);
+    }
+    // KIT-SPEC 10.11: lane artifacts live in one tree; one written anywhere else is refused (planted fault 27)
+    const work = K.workRoot(root);
+    if (K.globMatch(path.basename(rel), K.LANE_ARTIFACT_PATTERNS) && !rel.startsWith(work + '/')) {
+      return deny(`guard-edit: '${rel}' is a lane artifact outside '${work}/'. Lane files live only under ${work}/ (kit.json paths.work).`);
     }
     if (!(change.length + create.length)) {
       return deny(`guard-edit: lane '${lane.slug}' has no 'Files to change' list in ${specRel}; nothing may be edited until the spec names its files.`);

@@ -393,6 +393,21 @@ export function credentialRegex() {
   return new RegExp(loadFloor().credential_patterns.map((p) => `(?:${p})`).join('|'));
 }
 
+/** Where this project's lane artifacts live (KIT-SPEC 10.11): kit.json paths.work, default the historical docs/specs. */
+export function workRoot(root) {
+  const p = loadKitJson(root)?.paths?.work;
+  return typeof p === 'string' && p ? p.replace(/\/+$/, '') : 'docs/specs';
+}
+
+/** Where this project's decisions live: kit.json paths.decisions, default docs/decisions. */
+export function decisionsRoot(root) {
+  const p = loadKitJson(root)?.paths?.decisions;
+  return typeof p === 'string' && p ? p.replace(/\/+$/, '') : 'docs/decisions';
+}
+
+/** Patterns that identify a lane artifact by name, wherever it sits. */
+export const LANE_ARTIFACT_PATTERNS = ['*.progress.md', '*.review.md', '*.events.jsonl'];
+
 export function readHookInput() {
   let data = '';
   try {
@@ -433,7 +448,7 @@ export class Lane {
   }
 
   get specPath() {
-    const spec = typeof this.data.spec === 'string' && this.data.spec ? this.data.spec : `docs/specs/${this.slug}.md`;
+    const spec = typeof this.data.spec === 'string' && this.data.spec ? this.data.spec : `${workRoot(this.root)}/${this.slug}.md`;
     return path.resolve(this.root, spec);
   }
 
@@ -450,11 +465,12 @@ export class Lane {
   }
 
   alwaysAllowed() {
+    const work = workRoot(this.root);
     return [
-      `docs/specs/${this.slug}.progress.md`,
-      `docs/specs/${this.slug}.log`,
-      `docs/specs/${this.slug}.events.jsonl`,
-      'docs/decisions/*.md',
+      `${work}/${this.slug}.progress.md`,
+      `${work}/${this.slug}.log`,
+      `${work}/${this.slug}.events.jsonl`,
+      `${decisionsRoot(this.root)}/*.md`,
     ];
   }
 }
