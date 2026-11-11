@@ -1,5 +1,6 @@
 #!/usr/bin/env node
-// CI: the project's hooks and kit scripts are intact: settings.json hooks equal the kit fragment, disableAllHooks is not set,
+// CI: the project's hooks and kit scripts are intact: every kit hook is present and unchanged (project hooks may sit
+// next to them), disableAllHooks is not set,
 // and kit-owned files match the manifest written at bootstrap/upgrade.
 import fs from 'node:fs';
 import path from 'node:path';
@@ -35,11 +36,23 @@ export function main(argv) {
   if (stale.length) {
     problems.push(`hooks point at kit scripts that do not exist in this kit (${stale.join(', ')}): this project was set up by an older kit version; run /bootstrap --upgrade`);
   }
+  // Every kit hook must be present and unchanged; the project's own hooks may sit next to them (field test #10).
+  // An entry that runs a kit script but matches no fragment entry is a modified kit hook and fails.
   const hooks = C.dictGet(settings, 'hooks', null);
-  if (!isDeepStrictEqual(hooks, frag.hooks)) {
-    const have = C.truthy(hooks) ? hooks : {};
-    const missing = Object.keys(frag.hooks).filter((ev) => !Object.prototype.hasOwnProperty.call(have, ev));
-    problems.push(`hooks block differs from kit fragment (missing events: ${missing.length ? C.pyListRepr(missing) : 'none; entries changed'})`);
+  const have = C.truthy(hooks) && typeof hooks === 'object' && !Array.isArray(hooks) ? hooks : {};
+  for (const [ev, entries] of Object.entries(frag.hooks)) {
+    const got = Array.isArray(have[ev]) ? have[ev] : [];
+    const missing = entries.filter((e) => !got.some((g) => isDeepStrictEqual(g, e)));
+    if (missing.length) problems.push(`hooks.${ev}: ${missing.length} kit hook entr${missing.length === 1 ? 'y is' : 'ies are'} missing or changed (run /bootstrap --upgrade)`);
+  }
+  for (const [ev, entries] of Object.entries(have)) {
+    if (!Array.isArray(entries)) continue;
+    const kitEntries = Array.isArray(frag.hooks[ev]) ? frag.hooks[ev] : [];
+    for (const e of entries) {
+      if (K.isKitHookEntry(e) && !kitEntries.some((k) => isDeepStrictEqual(k, e))) {
+        problems.push(`hooks.${ev}: an entry runs a kit script but is not the kit's hook (modified kit hook)`);
+      }
+    }
   }
   const perms = C.dictGet(settings, 'permissions', null);
   const deny = pySet(C.dictGet(C.truthy(perms) ? perms : {}, 'deny', []));

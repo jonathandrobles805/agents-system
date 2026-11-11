@@ -36,10 +36,10 @@ test('generated workflow: merge_group trigger, format, coverage floor step in te
   assert.ok(wf.includes('  merge_group:\n'), 'merge queue runs the checks');
   assert.ok(wf.includes('  format:\n'));
   assert.ok(wf.includes('npx prettier --check .'));
-  assert.ok(wf.includes('ci_coverage_floor.js --repo . --base origin/main'));
+  assert.ok(wf.includes('ci_coverage_floor.js" --repo . --base origin/main'));
   assert.ok(wf.includes('--coverage.reporter=json-summary'));
   assert.ok(wf.includes('  integration:\n'));
-  assert.ok(wf.includes('no integration command configured (kit.json db.lane_adapter: none)'));
+  assert.ok(wf.includes('integration is not configured (kit.json db.lane_adapter: none)') && wf.includes('exit 1'));
   const cmds = kitJson(root).commands;
   assert.equal(cmds.format, 'npx prettier --check .');
   assert.ok(cmds.coverage.startsWith('npx vitest run --coverage'));

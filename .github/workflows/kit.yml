@@ -53,7 +53,7 @@ jobs:
           test -L "$CLAUDE_HOME/agents/implementer.md"
           test -L "$CLAUDE_HOME/kit"
           test -f "$CLAUDE_HOME/kit/dashboard/index.html"
-          ls "$CLAUDE_HOME/agents" | wc -l | grep -q 7
+          test "$(ls "$CLAUDE_HOME/agents" | wc -l)" -eq "$(ls kit/agents/*.md | wc -l)"
   eval-smoke:
     name: eval smoke set (agents, skills, templates, workflows, eval)
     runs-on: ubuntu-latest

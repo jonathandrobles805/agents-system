@@ -168,7 +168,8 @@ export function workflowJobs(lines) {
   const jobs = [];
   let end = lines.length;
   for (let i = start + 1; i < lines.length; i++) {
-    if (/^\S/.test(lines[i]) && !/^#/.test(lines[i])) {
+    // a top-level line ends the jobs section; comments and template placeholders ({{setup}}) at column 0 do not
+    if (/^\S/.test(lines[i]) && !/^#/.test(lines[i]) && !/^\{\{\w+\}\}\s*$/.test(lines[i])) {
       end = i;
       break;
     }

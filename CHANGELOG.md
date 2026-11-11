@@ -4,6 +4,15 @@ All notable changes to the kit. Each entry names the decision or lesson that cau
 
 ## [Unreleased]
 
+### Fixed (first field test, hya-sandbox; decision 0014)
+- Generated CI: the kit now loads through its own pinned root action (`action.yml`, `uses: <kit_repo>@<commit>`), so a private kit repo works without a token (one Actions access setting in the kit repo). Every job that runs a project command sets up its runtime and installs dependencies first (`commands.install`, detected from the lockfile). Commands are `run: |` block scalars (no more YAML or bash breakage on `:` or `(`). Workflow token is `contents: read`; gitleaks runs as a pinned, checksum-verified binary instead of `gitleaks-action`. A check with no command fails with `::error::`; `"none: <reason>"` passes with a visible warning; nothing is green by `echo`.
+- New `ci_audit.js`: npm audit as a ratchet; advisories at `high` or above fail unless a named human accepted them with a reason and an expiry ≤ 90 days (`.claude/audit-baseline.json`). The old default `npm audit --audit-level=high` is migrated on upgrade.
+- Bootstrap keeps the project's own hooks (merged next to the kit's, on every run and upgrade); `ci_guards_present.js` checks that every kit hook is present and unchanged and rejects a modified kit hook, instead of requiring the hooks block to equal the kit's.
+- Bootstrap appends the marked kit block to an existing `CLAUDE.md` once, leaving the human text byte for byte.
+- `bootstrap --upgrade` without `--answers` keeps the commands in `kit.json` (precedence detected < kit.json < answers); commands that name a kit script this kit no longer has are dropped.
+- Detected commands carry their evidence; a dependency-cruiser command without a config is not proposed, and one aimed at a missing `src` scans the workspace folders that exist; a `tsc -p .` without a root `tsconfig.json` is not proposed. The `commands` question lists CI checks that are `not_configured`.
+- Planted faults 39–44 (44/44); 9 tests.
+
 ### Added
 - KIT-SPEC §10.9–10.11 and planted faults 20–27: the step 2 amendment (sandbox with `srt` default and container at high risk, `degraded` state, security floor, host-side/in-lane controller, lane database adapters, lane artifact tree, idempotent bootstrap, resumable stages). Spec only; the code lands in the step 2 PR after `v0.2.0`.
 - Decisions 0008 (sandbox is the hard boundary) and 0009 (lane database adapter).

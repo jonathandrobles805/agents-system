@@ -22,6 +22,7 @@ import { GOOD_RESEARCH, review as REVIEW, spec as SPEC } from '../kit/scripts/te
 
 const ROOT = path.dirname(path.dirname(K.realResolve(fileURLToPath(import.meta.url))));
 const SCRIPTS = path.join(ROOT, 'kit', 'scripts');
+const KIT = path.join(ROOT, 'kit');
 const PYTHON = process.platform === 'win32' ? 'python' : 'python3'; // for pytest on the Python fixture project (a target project, not the kit)
 const RESULTS = [];
 
@@ -495,6 +496,73 @@ export function main(argv) {
     c = run('ci_lane_artifacts.js', ['--repo', wt]);
     fs.rmSync(path.join(wt, 'docs', 'notes'), { recursive: true, force: true });
     record(27, 'lane artifact written outside the artifact tree', 'guard-edit (PreToolUse) + ci_lane_artifacts (project CI)', hookBlocked27 && c.returncode === 1 && c.stderr.includes('lane artifact outside'), c.stderr);
+
+    // Field test (hya-sandbox) faults. One fresh repo per fault.
+    const writeP = (p, t) => {
+      fs.mkdirSync(path.dirname(p), { recursive: true });
+      write(p, t);
+    };
+    const fresh = (name) => {
+      const d = F.nodeApi(path.join(tmp, name));
+      write(path.join(d, 'package-lock.json'), '{}');
+      return d;
+    };
+    // 39 bootstrap drops a project's own hook -> kept on bootstrap and upgrade; guards-present passes with it, fails without a kit hook
+    const r39 = fresh('f39');
+    const own = { matcher: 'Bash', hooks: [{ type: 'command', command: 'scripts/hooks/worktree-guard.sh' }] };
+    writeP(path.join(r39, '.claude', 'settings.json'), JSON.stringify({ hooks: { PreToolUse: [own] } }));
+    run('bootstrap.js', ['--repo', r39]);
+    run('bootstrap.js', ['--repo', r39, '--upgrade']);
+    const s39 = JSON.parse(read(path.join(r39, '.claude', 'settings.json')));
+    const kept39 = s39.hooks.PreToolUse.filter((e) => JSON.stringify(e) === JSON.stringify(own)).length === 1;
+    const g39ok = run('ci_guards_present.js', ['--repo', r39, '--kit', KIT]);
+    s39.hooks.PreToolUse = s39.hooks.PreToolUse.filter((e) => !K.isKitHookEntry(e) || !JSON.stringify(e).includes('hook_guard_edit'));
+    write(path.join(r39, '.claude', 'settings.json'), JSON.stringify(s39));
+    const g39bad = run('ci_guards_present.js', ['--repo', r39, '--kit', KIT]);
+    record(39, "bootstrap or upgrade drops the project's own hook", 'bootstrap mergeHooks + guards-present subset check', kept39 && g39ok.returncode === 0 && g39bad.returncode === 1, `kept once: ${kept39}; with project hook: ${g39ok.returncode}; kit hook removed: ${g39bad.stderr.trim().split('\n').pop()}`);
+
+    // 40 a CI job with no command configured passes green -> the generated job errors and exits 1
+    const r40 = fresh('f40');
+    run('bootstrap.js', ['--repo', r40]);
+    const wf40 = read(path.join(r40, '.github', 'workflows', 'kit.yml'));
+    const fmt40 = wf40.slice(wf40.indexOf('  format:'), wf40.indexOf('  integration:'));
+    record(40, 'a CI check with nothing configured shows green', 'generated CI: missing command → ::error:: + exit 1; "none: <reason>" → visible warning', fmt40.includes('::error::format is not configured') && fmt40.includes('exit 1'), fmt40.trim().split('\n').slice(-2).join(' | '), 'tool-level');
+
+    // 41 upgrade without answers reverts a confirmed command -> kit.json keeps it
+    const r41 = fresh('f41');
+    run('bootstrap.js', ['--repo', r41]);
+    const kj41 = path.join(r41, '.claude', 'kit.json');
+    const k41 = JSON.parse(read(kj41));
+    k41.commands.boundaries = 'npx depcruise --config .dependency-cruiser.cjs apps packages';
+    write(kj41, JSON.stringify(k41, null, 2));
+    run('bootstrap.js', ['--repo', r41, '--upgrade']);
+    const after41 = JSON.parse(read(kj41)).commands.boundaries;
+    record(41, 'upgrade without --answers reverts a confirmed command', 'bootstrap commands(): detected < kit.json < answers', after41 === k41.commands.boundaries, `boundaries after upgrade: ${after41}`);
+
+    // 42 an existing CLAUDE.md gets no kit block -> appended once, human text byte for byte
+    const r42 = fresh('f42');
+    const mine42 = '# Project\n\nAsk before pushing.\n';
+    write(path.join(r42, 'CLAUDE.md'), mine42);
+    run('bootstrap.js', ['--repo', r42]);
+    run('bootstrap.js', ['--repo', r42, '--upgrade']);
+    const cm42 = read(path.join(r42, 'CLAUDE.md'));
+    record(42, 'a project with its own CLAUDE.md never learns about the kit', 'bootstrap appendKitBlock (once; human text untouched)', cm42.startsWith(mine42) && cm42.split('<!-- kit:begin').length === 2, `${cm42.length} bytes, ${cm42.split('<!-- kit:begin').length - 1} kit block`);
+
+    // 43 a new high advisory, or an expired acceptance -> ci_audit fails; an accepted, unexpired one passes with a warning
+    const r43 = fresh('f43');
+    const rep43 = path.join(tmp, 'audit43.json');
+    write(rep43, JSON.stringify({ vulnerabilities: { x: { name: 'x', severity: 'high', via: [{ source: 1, name: 'x', title: 't', url: 'https://github.com/advisories/GHSA-test-test-test', severity: 'high' }] } } }));
+    const new43 = run('ci_audit.js', ['--repo', r43, '--json', rep43]);
+    writeP(path.join(r43, '.claude', 'audit-baseline.json'), JSON.stringify({ accepted: [{ id: 'GHSA-test-test-test', reason: 'r', by: 'h', expires: '2000-01-01' }] }));
+    const exp43 = run('ci_audit.js', ['--repo', r43, '--json', rep43]);
+    record(43, 'a new or expired-accepted dependency advisory', 'ci_audit.js ratchet (project CI audit job)', new43.returncode === 1 && exp43.returncode === 1 && exp43.stderr.includes('expired'), `new: ${new43.returncode}; expired: ${exp43.stderr.trim().split('\n').pop()}`);
+
+    // 44 a detected command names a path or config that does not exist -> not proposed
+    const r44 = fresh('f44');
+    const pj44 = JSON.parse(read(path.join(r44, 'package.json')));
+    write(path.join(r44, 'package.json'), JSON.stringify({ ...pj44, devDependencies: { ...(pj44.devDependencies ?? {}), 'dependency-cruiser': '16.0.0' } }));
+    const det44 = JSON.parse(run('bootstrap.js', ['--repo', r44, '--dry-run', '--json']).stdout).detection;
+    record(44, 'bootstrap proposes a command aimed at a config or folder that does not exist', 'bootstrap verifyDetected (evidence per command)', !det44.commands.boundaries && /no config/.test(det44.missing_tools.boundaries ?? ''), `boundaries: ${det44.commands.boundaries ?? 'not proposed'}; ${det44.command_evidence.boundaries}`);
   } finally {
     if (a.keep) process.stderr.write(`fixtures kept at ${tmp}\n`);
     else fs.rmSync(tmp, { recursive: true, force: true });
