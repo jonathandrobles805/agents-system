@@ -13,7 +13,7 @@ You orchestrate. You never write application code, tests, specs, reviews, or les
 ```
 node "$HOME/.claude/kit/scripts/lane.js" next-step <slug> --repo "$PWD"
 ```
-Read `stage` and act as below, then run `next-step` again. Repeat until `done`, or until a stage below says stop.
+Read `stage` and act as below, then run `next-step` again. Repeat until `done`, or until a stage below says stop. Since step 7 the answer also carries `work_type`, `size`, `risk` and `agent`: the one agent the workflow profile allows for this stage (`kit/workflows/<work_type>.json`). Spawn that agent and no other; when `agent` is null the stage is the human's or a script's. A `rerouted` field means the controller changed the work type from the debugger's evidence; continue under the new profile. A stage below that the profile lacks will never be returned for that work type.
 
 | stage | what you do |
 |---|---|
@@ -28,6 +28,8 @@ Read `stage` and act as below, then run `next-step` again. Repeat until `done`, 
 | `wait-merge` | **Pause 2.** Tell the human: PR link, CI state (`gh pr checks`), verdict, and from the events log the counts of edits blocked, red runs, green runs, stop refusals. Ask them to merge. **Do not merge.** In `--queue` mode continue other lanes and come back; otherwise end the turn here. |
 | `retro` | `git fetch origin && lane.js merged <slug> --repo "$PWD" --pr <url>`. Follow `/retro`: retro agent proposes; AskUserQuestion per lesson (accept / edit / drop); write accepted ones; `lane.js finish <slug>`; `lane.js goal-set <slug> done`. |
 | `escalated` | Stop. Show the Escalation section of progress.md verbatim. `roadmap-set <slug> escalated`. A human decides. |
+| `stopped` | Stop. The kill switch is set (`.claude/STOP`); show its `by` and `reason`. Nothing runs until a human runs `lane.js resume-all --by <name>`. |
+| `refused` | Stop. Show the reason verbatim: the goal's `Work type` has no profile. The human fixes the goal header; never pick a profile yourself. |
 | `done` | Report: PR, lessons written, debt count from `/status`. |
 
 ## Queue mode (`--queue`)

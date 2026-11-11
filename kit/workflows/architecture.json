@@ -1,0 +1,30 @@
+{
+  "command": "/architecture",
+  "description": "A change to the declared architecture or design model. Research, propose, critique, human approval, then implement as lanes.",
+  "stages": [
+    "start",
+    "research",
+    "plan",
+    "approve",
+    "lane",
+    "build",
+    "review",
+    "wait-merge",
+    "done"
+  ],
+  "agents": {
+    "research": "researcher",
+    "plan": "planner",
+    "build": "implementer",
+    "review": "reviewer"
+  },
+  "human": [
+    "approve",
+    "wait-merge"
+  ],
+  "size_gated": {
+    "research_width": true
+  },
+  "risk_adds": [],
+  "work_type": "architecture"
+}

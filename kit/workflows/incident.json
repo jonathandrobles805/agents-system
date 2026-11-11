@@ -1,0 +1,29 @@
+{
+  "command": "/incident",
+  "description": "Production is broken. Triage, contain, diagnose (debugger), recover, verify, retrospective.",
+  "stages": [
+    "start",
+    "reproduce",
+    "lane",
+    "test",
+    "build",
+    "review",
+    "wait-merge",
+    "retro",
+    "done"
+  ],
+  "agents": {
+    "reproduce": "debugger",
+    "test": "tester",
+    "build": "implementer",
+    "review": "reviewer",
+    "retro": "retro"
+  },
+  "human": [
+    "wait-merge",
+    "retro"
+  ],
+  "size_gated": {},
+  "risk_adds": [],
+  "work_type": "incident"
+}

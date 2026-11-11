@@ -10,6 +10,7 @@
  *
  * Exit codes: 0 = all valid, 2 = violations (blocks in PreToolUse/SubagentStop; feeds back in PostToolUse), 1 = usage error.
  */
+import fs from "node:fs";
 import path from "node:path";
 import * as K from "./kitlib.js";
 import { ArgumentParser } from "./args.js";
@@ -140,10 +141,15 @@ const FAIL_LOCATION = new RegExp(`\`[^\`]+:${D}+\``, "u");
 const LESSON_FIELD = new RegExp(`^-${S}*([A-Za-z ]+):${S}*(.*)$`, "u");
 const CITED_SNIPPET = /`([^`]{4,})`/u;
 
+function kitDir() {
+  return K.KIT_DIR;
+}
+
 export function detectType(p) {
   const s = pyNorm(p);
   const name = s === "." || s === "/" ? "" : s.slice(s.lastIndexOf("/") + 1);
   if (name === "LESSONS.md") return "lesson";
+  if (s.includes("/docs/goals/") || s.startsWith("docs/goals/")) return name.toUpperCase() === "PROJECT.MD" ? null : "goal";
   if (s.includes("/docs/research/") || s.startsWith("docs/research/")) {
     return name.toUpperCase() === "INDEX.MD" ? null : "research";
   }
@@ -443,6 +449,24 @@ export class Validator {
     }
   }
 
+  /** A goal's classification fields (KIT-SPEC 10.12): a known work type, a known risk and size when present. Absent fields keep the defaults. */
+  goal(p, lines) {
+    const clean = K.stripHtmlComments(lines);
+    this.checkPlaceholders(p, clean);
+    const h = K.headerFields(clean);
+    const get = (k) => (h.has(k) ? [h.get(k)[0], pyStrip(h.get(k)[1]).toLowerCase()] : null);
+    const wt = get("work type") || get("work_type");
+    if (wt) {
+      const bare = wt[1].replace(/\s*\(provisional\)\s*$/, "");
+      const known = fs.readdirSync(path.join(kitDir(), "workflows")).filter((f) => f.endsWith(".json")).map((f) => f.replace(/\.json$/, ""));
+      if (!known.includes(bare)) this.add(p, wt[0], "goal-work-type", `unknown work type '${bare}'; one of ${known.join(", ")}`);
+    }
+    const risk = get("risk");
+    if (risk && !["normal", "high", "low", "medium"].includes(risk[1])) this.add(p, risk[0], "goal-risk", "risk must be normal, high, low or medium");
+    const size = get("size");
+    if (size && !["s", "m", "l"].includes(size[1])) this.add(p, size[0], "goal-size", "size must be S, M or L");
+  }
+
   lesson(p, lines) {
     const clean = K.stripHtmlComments(lines);
     this.checkPlaceholders(p, clean);
@@ -546,7 +570,7 @@ export function main(argv = process.argv.slice(2)) {
   ap.addArgument("paths", { nargs: "*" });
   ap.addArgument("--repo", { help: "repository root (default: detect from first path or cwd)" });
   ap.addArgument("--commit", { help: "resolve citations at this commit instead of the working tree" });
-  ap.addArgument("--type", { choices: ["research", "spec", "review", "lesson"], help: "force document type" });
+  ap.addArgument("--type", { choices: ["research", "spec", "review", "lesson", "goal"], help: "force document type" });
   ap.addArgument("--changed", { action: "store_true", help: "validate all changed docs per git status" });
   ap.addArgument("--hook", { action: "store_true", help: "read Claude Code hook JSON on stdin" });
   ap.addArgument("--json", { action: "store_true", help: "machine-readable output" });

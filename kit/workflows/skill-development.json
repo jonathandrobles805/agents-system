@@ -1,0 +1,29 @@
+{
+  "command": "/new-skill",
+  "description": "A new or changed kit skill. Gap, research, draft (skill-smith), review, eval, human approval, release.",
+  "stages": [
+    "start",
+    "research",
+    "plan",
+    "approve",
+    "lane",
+    "build",
+    "review",
+    "wait-merge",
+    "done"
+  ],
+  "agents": {
+    "research": "researcher",
+    "plan": "skill-smith",
+    "build": "skill-smith",
+    "review": "reviewer"
+  },
+  "human": [
+    "approve",
+    "wait-merge"
+  ],
+  "size_gated": {},
+  "risk_adds": [],
+  "kit_level": true,
+  "work_type": "skill-development"
+}

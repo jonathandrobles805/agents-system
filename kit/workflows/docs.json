@@ -1,0 +1,24 @@
+{
+  "command": "/docs",
+  "description": "Documentation only. Inspect, edit, validate content, links and examples; review; merge.",
+  "stages": [
+    "start",
+    "inspect",
+    "lane",
+    "build",
+    "review",
+    "wait-merge",
+    "done"
+  ],
+  "agents": {
+    "inspect": "researcher",
+    "build": "implementer",
+    "review": "reviewer"
+  },
+  "human": [
+    "wait-merge"
+  ],
+  "size_gated": {},
+  "risk_adds": [],
+  "work_type": "docs"
+}

@@ -366,6 +366,59 @@ export function main(argv) {
     const c26b = JSON.stringify(adrFiles()) === JSON.stringify(first) && !fs.existsSync(path.join(root26, 'docs', 'decisions'));
     record(26, 'bootstrap on a repo that already has a decisions folder', 'bootstrap adopts the folder and its numbering; re-run is a no-op', c26a && c26b, `docs/adr: ${adrFiles().join(', ')}; docs/decisions exists: ${fs.existsSync(path.join(root26, 'docs', 'decisions'))}`);
 
+    // 34–38: the workflow table (KIT-SPEC 10.12) and the kill switch (10.13), on a fresh project with a goal file
+    const root34 = path.join(tmp, 'node-api-34');
+    F.nodeApi(root34);
+    run('bootstrap.js', ['--repo', root34]);
+    const goal34 = path.join(root34, 'docs', 'goals', 'refund-route.md');
+    fs.mkdirSync(path.dirname(goal34), { recursive: true });
+    fs.mkdirSync(path.join(root34, 'src', 'util'), { recursive: true });
+    const goalText = (wt, risk = 'normal') => `# Goal: refund route\n\n- Slug: refund-route\n- Date: 2026-11-11\n- Agreed by: planted and Claude on 2026-11-11\n- Status: agreed\n- Work type: ${wt}\n- Risk: ${risk}\n- Size: M\n\n## What we want\n\nA refund route.\n\n## Done looks like\n\n- G1. routes exposes refund\n`;
+    write(path.join(root34, 'ROADMAP.md'), read(path.join(root34, 'ROADMAP.md')).replaceAll('| TODO(bootstrap: ROADMAP.md — feature) | TODO(bootstrap: ROADMAP.md — slug) | M1 | queued | — | — | — |', '| Refund route | refund-route | M1 | queued | — | — | — |'));
+    // 34 unknown work type
+    write(goal34, goalText('deployment'));
+    F.commitAll(root34, 'goal');
+    const v34 = run('validate_docs.js', [goal34, '--repo', root34]);
+    const n34 = run('lane.js', ['next-step', 'refund-route', '--repo', root34]);
+    const st34 = run('lane.js', ['start', 'refund-route', '--repo', root34]);
+    record(34, 'goal with an unknown work type', 'validate_docs + lane.js next-step + lane.js start', v34.returncode === 2 && v34.stderr.includes('goal-work-type') && JSON.parse(n34.stdout).stage === 'refused' && st34.returncode === 2, `validate exit ${v34.returncode}; next-step ${JSON.parse(n34.stdout).stage}; start exit ${st34.returncode}`);
+    // 35 agent for an unlisted stage
+    const a35 = run('lane.js', ['agent-for', 'fix', 'plan', '--repo', root34]);
+    const a35ok = run('lane.js', ['agent-for', 'fix', 'reproduce', '--repo', root34]);
+    record(35, 'agent requested for a stage its profile does not list', 'lane.js agent-for', a35.returncode === 2 && a35.stderr.includes('not in the fix profile') && JSON.parse(a35ok.stdout).agent === 'debugger', a35.stderr.trim());
+    // 38 security forces high risk
+    write(goal34, goalText('security', 'normal'));
+    F.commitAll(root34, 'security goal');
+    const n38 = JSON.parse(run('lane.js', ['next-step', 'refund-route', '--repo', root34]).stdout);
+    record(38, 'security goal without high risk in the header', 'profile force_risk', n38.risk === 'high' && n38.work_type === 'security', `risk=${n38.risk}`);
+    // 37 /work: provisional fix, cause line re-routes
+    write(goal34, goalText('fix (provisional)'));
+    const spec34 = path.join(root34, 'docs', 'specs', 'refund-route.md');
+    write(spec34, SPEC({ commit: F.commitAll(root34, 'provisional').slice(0, 7) }).replace(/^- Risk:.*$/m, '- Risk: low').replaceAll('src/domain/payment.ts', 'src/util/f.ts').replaceAll('src/api/routes.ts', 'src/util/f.ts'));
+    write(path.join(root34, 'src', 'util', 'f.ts'), 'export const a = 1;\nexport const b = 2;\nexport const c = 3;\n');
+    F.commitAll(root34, 'spec');
+    run('lane.js', ['roadmap-set', 'refund-route', 'waiting-approval', '--repo', root34]);
+    const s37 = run('lane.js', ['start', 'refund-route', '--repo', root34]);
+    const wt37 = JSON.parse(s37.stdout).worktree;
+    const prog37 = path.join(wt37, 'docs', 'specs', 'refund-route.progress.md');
+    write(prog37, read(prog37) + '\n## Reproduction\n\ncause: boot failure\n');
+    const n37 = JSON.parse(run('lane.js', ['next-step', 'refund-route', '--repo', root34]).stdout);
+    record(37, '/work given a symptom with no type', "provisional fix; the debugger's cause line re-routes (controller, logged)", n37.work_type === 'incident' && n37.rerouted && n37.rerouted.to === 'incident' && read(goal34).includes('- Work type: incident') && read(path.join(wt37, '.claude', 'session', 'events.jsonl')).includes('"event": "reroute"'), `rerouted ${n37.rerouted?.from} → ${n37.rerouted?.to}`);
+    // 36 kill switch with a live lane
+    hookEnv: {
+      const edit36 = () => hook('hook_guard_edit.js', { hook_event_name: 'PreToolUse', tool_name: 'Write', cwd: wt37, tool_input: { file_path: prog37, content: 'x' } });
+      hook('hook_read_log.js', { hook_event_name: 'PostToolUse', tool_name: 'Read', cwd: wt37, tool_input: { file_path: prog37 } });
+      const before36 = edit36().returncode;
+      run('lane.js', ['stop', '--repo', root34, '--by', 'planted', '--reason', 'fault 36']);
+      const during = edit36();
+      const bash36 = hook('hook_guard_bash.js', { hook_event_name: 'PreToolUse', tool_name: 'Bash', cwd: wt37, tool_input: { command: 'echo hi' } });
+      const next36 = JSON.parse(run('lane.js', ['next-step', 'refund-route', '--repo', root34]).stdout);
+      const noName = run('lane.js', ['resume-all', '--repo', root34]);
+      run('lane.js', ['resume-all', '--repo', root34, '--by', 'planted']);
+      const after36 = edit36().returncode;
+      record(36, 'kill switch set while a lane is live', 'guard-edit + guard-bash + next-step + start refuse; resume-all --by lifts', before36 === 0 && during.returncode === 2 && during.stderr.includes('kill switch') && bash36.returncode === 2 && next36.stage === 'stopped' && noName.returncode === 2 && after36 === 0, `edit before ${before36}, during ${during.returncode}, bash ${bash36.returncode}, next ${next36.stage}, after ${after36}`);
+    }
+
     // 32 an agent prompt edited to skip the red run -> the eval smoke set's hard metric red_before_green fails the kit PR
     //    (proven with the recorded 'skips-red-run' outcome; the claude runner would produce the same events from a real session)
     const harness = path.join(ROOT, 'kit', 'eval', 'harness.js');

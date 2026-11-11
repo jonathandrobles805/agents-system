@@ -1,0 +1,20 @@
+{
+  "command": "/investigate",
+  "description": "Answer a question about the codebase or a system. Inspect, research, report. No code changes.",
+  "stages": [
+    "start",
+    "research",
+    "report",
+    "done"
+  ],
+  "agents": {
+    "research": "researcher",
+    "report": "planner"
+  },
+  "human": [],
+  "size_gated": {
+    "research_width": true
+  },
+  "risk_adds": [],
+  "work_type": "investigation"
+}

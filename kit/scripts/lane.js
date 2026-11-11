@@ -6,6 +6,10 @@
 //   lane.js stage <slug> <stage> --repo R     set lane.json stage (research|plan|build|review) and reset its clock
 //   lane.js launch <slug> --repo R [--exec]   host side: the command that starts the lane's headless session inside its sandbox (KIT-SPEC 10.9)
 //   lane.js resume <slug> --repo R            host side: next step from files alone, logged, plus the launch command (KIT-SPEC 10.11)
+//   lane.js stop --repo R --by N --reason T    kill switch: every lane refuses transitions and mutations (KIT-SPEC 10.13)
+//   lane.js resume-all --repo R --by N         lift the kill switch (named human)
+//   lane.js profiles --repo R                  the workflow table: stages and human pauses per work_type (KIT-SPEC 10.12)
+//   lane.js agent-for <work_type> <stage>      the one agent allowed for a stage; refuses unknown types and unlisted stages
 //   lane.js wip --repo R                      active lanes vs WIP limit
 //   lane.js unknowns <draft spec> --repo R    exit 0 none / 3 resolve (1..3, one researcher each) / 2 research insufficient (>3)
 //   lane.js roadmap-set <slug> <status> --repo R
@@ -340,6 +344,9 @@ export function lanesDir(root) {
 }
 
 export function start(root, slug, base) {
+  if (isStopped(root)) return refuse([`kill switch set; lane.js resume-all --by <name> first`]);
+  const fields = goalFields(root, slug);
+  if (!profileFor(fields.work_type)) return refuse([`unknown work_type '${fields.work_type}' in docs/goals/${slug}.md; profiles: ${Object.keys(loadProfiles()).join(', ')}`]);
   const problems = precheck(root, slug);
   if (problems.length) return refuse(problems);
   const kit = asDict(K.loadKitJson(root));
@@ -371,7 +378,7 @@ export function start(root, slug, base) {
   fs.mkdirSync(pjoin(wt, '.claude'), { recursive: true });
   // Sandbox (KIT-SPEC 10.9): decide the runtime, refuse what the runtime cannot hold, scan for credentials the lane could read.
   const sandbox = SB.sandboxConfig({ root, wt, slug });
-  const highRisk = (specHeader(specPath(wt, slug)).get('risk') ?? '').toLowerCase().includes('high');
+  const highRisk = (specHeader(specPath(wt, slug)).get('risk') ?? '').toLowerCase().includes('high') || fields.risk === 'high';
   const undo = () => {
     try {
       K.git(['worktree', 'remove', '--force', wt], root);
@@ -408,6 +415,7 @@ export function start(root, slug, base) {
     feature: slug, spec: `docs/specs/${slug}.md`, stage: 'build', started: now, created: now,
     base, branch, start_commit: startCommit, budget: kget(kget(kit, 'budgets', {}), 'build', {}),
     risk: highRisk ? 'high' : 'normal',
+    work_type: fields.work_type, size: fields.size, domain: fields.domain,
     sandbox: { runtime: sandbox.runtime, state: sandbox.state, how: sandbox.how, settings: relativeTo(wt, sandboxSettings), allowed_domains: sandbox.allowedDomains.length,
       ...(highRisk && sandbox.runtime !== 'container' ? { high_risk_waiver: { by: kget(waiver, 'by', ''), reason: kget(waiver, 'reason', '') } } : {}) },
   };
@@ -581,6 +589,93 @@ export function unknowns(root, specOrDraft) {
 
 export const STAGES = ['start', 'research', 'plan', 'approve', 'lane', 'test', 'build', 'review', 'wait-merge', 'retro', 'done'];
 
+// ------------------------------------------------------------ workflow table (KIT-SPEC 10.12)
+
+const WORKFLOWS_DIR = path.join(kitDir(), 'workflows');
+let profileCache = null;
+/** Every profile in kit/workflows/*.json, keyed by work_type. The table is the only source of stages and allowed agents. */
+export function loadProfiles() {
+  if (profileCache) return profileCache;
+  const out = {};
+  for (const f of fs.readdirSync(WORKFLOWS_DIR).filter((n) => n.endsWith('.json')).sort()) {
+    const prof = asDict(JSON.parse(readText(path.join(WORKFLOWS_DIR, f))));
+    const wt = kget(prof, 'work_type', f.replace(/\.json$/, ''));
+    if (!Array.isArray(prof.stages) || !prof.stages.length) throw new Error(`workflow ${f}: stages missing`);
+    out[wt] = { ...prof, work_type: wt };
+  }
+  profileCache = out;
+  return out;
+}
+
+export function profileFor(workType) {
+  const p = loadProfiles()[workType];
+  if (!p) return null;
+  return p;
+}
+
+/** work_type / risk / size / domain from the goal header; defaults keep today's behaviour (feature, normal, M). */
+export function goalFields(root, slug) {
+  const p = pjoin(root, 'docs', 'goals', `${slug}.md`);
+  const out = { work_type: 'feature', risk: 'normal', size: 'M', domain: [], provisional: false };
+  if (!K.isFile(p)) return out;
+  const h = K.headerFields(K.stripHtmlComments(K.readLines(p)));
+  const get = (k) => (h.has(k) ? pyStrip(h.get(k)[1]).toLowerCase() : '');
+  if (get('work type') || get('work_type')) out.work_type = get('work type') || get('work_type');
+  if (get('risk')) out.risk = get('risk');
+  if (get('size')) out.size = get('size').toUpperCase();
+  if (get('domain')) out.domain = get('domain').split(',').map((x) => pyStrip(x)).filter(Boolean);
+  out.provisional = get('work type').endsWith('(provisional)') || get('work_type').endsWith('(provisional)');
+  out.work_type = out.work_type.replace(/\s*\(provisional\)\s*$/, '');
+  const prof = profileFor(out.work_type);
+  if (prof && kget(prof, 'force_risk', null)) out.risk = kget(prof, 'force_risk', out.risk);
+  return out;
+}
+
+/** Refuse a goal whose work_type has no profile; name the agent allowed for a stage; refuse an unlisted one. KIT-SPEC 10.12. */
+export function allowedAgent(workType, stage) {
+  const prof = profileFor(workType);
+  if (!prof) return { ok: false, why: `unknown work_type '${workType}'; profiles: ${Object.keys(loadProfiles()).join(', ')}` };
+  if (!prof.stages.includes(stage)) return { ok: false, why: `stage '${stage}' is not in the ${workType} profile (${prof.stages.join(' → ')})` };
+  return { ok: true, agent: kget(asDict(kget(prof, 'agents', {})), stage, null), human: (prof.human ?? []).includes(stage) };
+}
+
+// ------------------------------------------------------------ kill switch (KIT-SPEC 10.13)
+
+export function stopPath(root) {
+  return pjoin(root, '.claude', 'STOP');
+}
+export function isStopped(root) {
+  return K.isFile(stopPath(root));
+}
+export function stop(root, by, reason) {
+  fs.mkdirSync(pjoin(root, '.claude'), { recursive: true });
+  writeText(stopPath(root), K.jsonDumps({ by: by || 'unknown', reason: reason || '', at: K.isoSeconds() }, { indent: 2 }) + '\n');
+  // terminate running lane sessions: every lane's session dir gets the flag too, so in-lane hooks refuse at once
+  for (const slug of fs.existsSync(lanesDir(root)) ? fs.readdirSync(lanesDir(root)) : []) {
+    const sd = pjoin(lanesDir(root), slug, '.claude', 'session');
+    if (fs.existsSync(sd)) {
+      writeText(pjoin(sd, 'STOP'), 'stopped by the kill switch; see .claude/STOP in the main checkout\n');
+      K.appendEvent(pjoin(sd, 'events.jsonl'), { event: 'stop', by: by || 'unknown', reason: reason || '', summary: 'kill switch' });
+    }
+  }
+  process.stdout.write(`stopped: every lane refuses transitions and mutations until lane.js resume-all --by <name>\n`);
+  return 0;
+}
+export function resumeAll(root, by) {
+  if (!by) return refuse(['resume-all requires --by <name>; the kill switch is lifted by a named human']);
+  if (!isStopped(root)) return refuse(['not stopped']);
+  fs.rmSync(stopPath(root), { force: true });
+  for (const slug of fs.existsSync(lanesDir(root)) ? fs.readdirSync(lanesDir(root)) : []) {
+    const sd = pjoin(lanesDir(root), slug, '.claude', 'session');
+    if (fs.existsSync(pjoin(sd, 'STOP'))) {
+      fs.rmSync(pjoin(sd, 'STOP'), { force: true });
+      K.appendEvent(pjoin(sd, 'events.jsonl'), { event: 'resume-all', by, summary: `kill switch lifted by ${by}` });
+    }
+  }
+  process.stdout.write(`resumed by ${by}\n`);
+  return 0;
+}
+
 export function goalStatus(root, slug) {
   const p = pjoin(root, 'docs', 'goals', `${slug}.md`);
   if (!K.isFile(p)) return null;
@@ -592,11 +687,83 @@ export function goalStatus(root, slug) {
 export async function nextStep(root, slug) {
   const KS = await import('./kit_status.js');
   const kit = K.loadKitJson(root);
+  if (isStopped(root)) return { slug, stage: 'stopped', reason: `kill switch set (${pyStrip(readText(stopPath(root)))}); lane.js resume-all --by <name> to continue`, needs_human: true };
   const rows = new Map(roadmapRows(root).map((r) => [r.slug, r]));
   const row = rows.get(slug);
   const g = goalStatus(root, slug);
   if (g === null) return { slug, stage: 'start', reason: 'no agreed goal file; run /start' };
   if (g === 'done') return { slug, stage: 'done', reason: 'goal file says done' };
+  let fields = goalFields(root, slug);
+  let prof = profileFor(fields.work_type);
+  if (!prof) return { slug, stage: 'refused', reason: `unknown work_type '${fields.work_type}' in the goal; profiles: ${Object.keys(loadProfiles()).join(', ')}`, needs_human: true };
+  // /work routed provisionally; the debugger's cause line settles the kind (KIT-SPEC 10.12)
+  const rerouted = rerouteFromEvidence(root, slug, fields, prof);
+  if (rerouted) {
+    fields = goalFields(root, slug);
+    prof = profileFor(fields.work_type);
+  }
+  const raw = await nextStepFeature(root, slug, { KS, kit, rows, row, g });
+  const out = withProfile(raw, prof, fields);
+  if (rerouted) out.rerouted = rerouted;
+  return out;
+}
+
+/** Read the debugger's `cause:` line from the lane's progress file; rewrite a provisional work type when the profile says so. */
+export function rerouteFromEvidence(root, slug, fields, prof) {
+  const table = asDict(kget(prof, 'reroute', {}));
+  if (!Object.keys(table).length) return null;
+  const wt = pjoin(lanesDir(root), slug);
+  const prog = pjoin(fs.existsSync(wt) ? wt : root, K.workRoot(root), `${slug}.progress.md`);
+  if (!K.isFile(prog)) return null;
+  const m = /^cause:\s*(.+)$/m.exec(readText(prog));
+  if (!m) return null;
+  const cause = pyStrip(m[1]).toLowerCase();
+  let target = null;
+  if (/boot failure|suite cannot run/.test(cause)) target = kget(table, 'boot-failure', null);
+  else if (/design fault/.test(cause)) target = kget(table, 'design-fault', null);
+  if (!target || target === fields.work_type) {
+    if (fields.provisional) setGoalField(root, slug, 'Work type', fields.work_type); // the evidence confirmed it; drop "(provisional)"
+    return null;
+  }
+  setGoalField(root, slug, 'Work type', target);
+  K.appendEvent(pjoin(wt, '.claude', 'session', 'events.jsonl'), { event: 'reroute', from: fields.work_type, to: target, cause: m[1], summary: `rerouted ${fields.work_type} → ${target}: ${m[1]}` });
+  return { from: fields.work_type, to: target, cause: pyStrip(m[1]) };
+}
+
+/** Rewrite one header field of the goal file in place (controller-only). */
+export function setGoalField(root, slug, field, value) {
+  const p = pjoin(root, 'docs', 'goals', `${slug}.md`);
+  if (!K.isFile(p)) throw new Error(`no goal file for ${slug} (${p})`);
+  const re = new RegExp(`^(- ${field.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}:)\\s*.*$`, 'mi');
+  const text = readText(p);
+  writeText(p, re.test(text) ? text.replace(re, `$1 ${value}`) : text.replace(/^(- Status:.*)$/m, `$1\n- ${field}: ${value}`));
+}
+
+/** Map the derived position onto the profile: a stage the profile lacks is skipped forward; the allowed agent is named. */
+function withProfile(step, prof, fields) {
+  const out = { ...step, work_type: fields.work_type, risk: fields.risk, size: fields.size };
+  if (['start', 'done', 'escalated', 'stopped', 'refused'].includes(step.stage)) return out;
+  // ui at size L takes the feature shape (KIT-SPEC 10.12)
+  const shape = fields.work_type === 'ui' && fields.size === 'L' ? profileFor('feature') : prof;
+  const stages = shape.stages;
+  let stage = step.stage;
+  // the fix/incident profiles begin with the debugger: no research or plan; "research"/"plan"/"approve" map to "reproduce" until a spec exists
+  if (!stages.includes(stage)) {
+    const alias = { research: 'reproduce', plan: 'reproduce', approve: 'lane', retro: 'done', test: 'build', 'verify-ui': 'review' };
+    let cur = stage;
+    for (let i = 0; i < 6 && !stages.includes(cur); i++) cur = alias[cur] ?? 'done';
+    out.mapped_from = stage;
+    stage = cur;
+  }
+  out.stage = stage;
+  const a = allowedAgent(shape.work_type, stage);
+  out.agent = a.ok ? a.agent : null;
+  if (a.ok && a.human) out.needs_human = true;
+  if (fields.risk === 'high' && (prof.risk_adds ?? []).includes('security-signoff') && stage === 'wait-merge') out.requires = ['security-signoff'];
+  return out;
+}
+
+async function nextStepFeature(root, slug, { KS, kit, rows, row, g }) {
   if (row === undefined) return { slug, stage: 'start', reason: 'goal exists but no ROADMAP row; /start adds it' };
   const st = KS.laneState(root, row, kit);
   const pos = st.position;
@@ -754,6 +921,14 @@ export async function main(argv = process.argv.slice(2)) {
   s.addArgument('slug'); s.addArgument('--repo', { default: '.' }); s.addArgument('--pr');
   s = sub.addParser('resume');
   s.addArgument('slug'); s.addArgument('--repo', { default: '.' });
+  s = sub.addParser('stop');
+  s.addArgument('--repo', { default: '.' }); s.addArgument('--by'); s.addArgument('--reason');
+  s = sub.addParser('resume-all');
+  s.addArgument('--repo', { default: '.' }); s.addArgument('--by');
+  s = sub.addParser('profiles');
+  s.addArgument('--repo', { default: '.' });
+  s = sub.addParser('agent-for');
+  s.addArgument('work_type'); s.addArgument('stage'); s.addArgument('--repo', { default: '.' });
   s = sub.addParser('launch');
   s.addArgument('slug'); s.addArgument('--repo', { default: '.' }); s.addArgument('--exec', { action: 'store_true' }); s.addArgument('--prompt');
   s = sub.addParser('next-step');
@@ -783,6 +958,19 @@ export async function main(argv = process.argv.slice(2)) {
   }
   if (a.cmd === 'start') return start(root, a.slug, a.base);
   if (a.cmd === 'resume') return resume(root, a.slug);
+  if (a.cmd === 'stop') return stop(root, a.by, a.reason);
+  if (a.cmd === 'resume-all') return resumeAll(root, a.by);
+  if (a.cmd === 'profiles') {
+    const ps = loadProfiles();
+    process.stdout.write(K.jsonDumps(Object.fromEntries(Object.entries(ps).map(([k, v]) => [k, { command: v.command, stages: v.stages, human: v.human ?? [] }])), { indent: 2 }) + '\n');
+    return 0;
+  }
+  if (a.cmd === 'agent-for') {
+    const r = allowedAgent(a.work_type, a.stage);
+    if (!r.ok) return refuse([r.why]);
+    process.stdout.write(K.jsonDumps(r) + '\n');
+    return 0;
+  }
   if (a.cmd === 'launch') return launch(root, a.slug, { exec: !!a.exec, prompt: a.prompt ?? null });
   if (a.cmd === 'stage') return setStage(root, a.slug, a.stage);
   if (a.cmd === 'finish') return finish(root, a.slug);

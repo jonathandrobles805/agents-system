@@ -16,7 +16,7 @@ const AGENTS = fs
 const stem = (p) => path.basename(p, '.md');
 const read = (p) => fs.readFileSync(p, 'utf8');
 const escapeRe = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-const EXPECTED = new Set(['researcher', 'planner', 'spec-critic', 'tester', 'implementer', 'reviewer', 'retro']);
+const EXPECTED = new Set(['researcher', 'planner', 'spec-critic', 'tester', 'implementer', 'reviewer', 'retro', 'debugger']);
 
 function frontmatter(text) {
   const m = /^---\n([\s\S]*?)\n---\n/.exec(text);
@@ -24,7 +24,7 @@ function frontmatter(text) {
   return m[1];
 }
 
-test('all six agents exist', () => {
+test('all core agents exist', () => {
   assert.deepEqual(new Set(AGENTS.map(stem)), EXPECTED);
 });
 

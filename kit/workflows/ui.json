@@ -1,0 +1,28 @@
+{
+  "command": "/ui",
+  "description": "A user-interface change against the design model. No research at S or M; at L it takes the feature shape.",
+  "stages": [
+    "start",
+    "inspect",
+    "lane",
+    "build",
+    "verify-ui",
+    "review",
+    "wait-merge",
+    "done"
+  ],
+  "agents": {
+    "inspect": "researcher",
+    "build": "implementer",
+    "verify-ui": "reviewer",
+    "review": "reviewer"
+  },
+  "human": [
+    "wait-merge"
+  ],
+  "size_gated": {
+    "L": "feature"
+  },
+  "risk_adds": [],
+  "work_type": "ui"
+}

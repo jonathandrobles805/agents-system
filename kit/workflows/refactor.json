@@ -1,0 +1,36 @@
+{
+  "command": "/refactor",
+  "description": "Behaviour-preserving restructuring. Dependency analysis, a plan with one caller per criterion, tests, incremental implementation, verify.",
+  "stages": [
+    "start",
+    "research",
+    "plan",
+    "approve",
+    "lane",
+    "test",
+    "build",
+    "review",
+    "wait-merge",
+    "done"
+  ],
+  "agents": {
+    "research": "researcher",
+    "plan": "planner",
+    "test": "tester",
+    "build": "implementer",
+    "review": "reviewer"
+  },
+  "human": [
+    "approve",
+    "wait-merge"
+  ],
+  "size_gated": {
+    "research_width": true,
+    "critic": true
+  },
+  "risk_adds": [
+    "threat-model",
+    "second-reviewer"
+  ],
+  "work_type": "refactor"
+}

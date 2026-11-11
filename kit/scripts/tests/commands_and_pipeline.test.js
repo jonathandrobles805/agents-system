@@ -13,7 +13,9 @@ import { spec as makeSpec, review as makeReview } from './testdata.js';
 
 const KIT = path.dirname(SCRIPTS);
 const COMMANDS = fs.readdirSync(path.join(KIT, 'commands')).filter((f) => f.endsWith('.md')).sort().map((f) => path.join(KIT, 'commands', f));
-const EXPECTED = new Set(['bootstrap', 'start', 'run', 'research', 'plan', 'implement', 'review', 'sync', 'retro', 'status', 'dashboard']);
+const EXPECTED = new Set(['bootstrap', 'dashboard', 'implement', 'plan', 'research', 'retro', 'review', 'run', 'start', 'status', 'sync',
+  // step 7: one command per kind of work plus the router (KIT-SPEC 10.12)
+  'work', 'new-feature', 'fix', 'ui', 'refactor', 'docs', 'investigate', 'security', 'architecture', 'migrate', 'incident', 'new-skill']);
 const read = (p) => fs.readFileSync(p, 'utf8');
 
 test('all commands exist with frontmatter', () => {
@@ -27,7 +29,7 @@ test('all commands exist with frontmatter', () => {
 });
 
 test('commands reference real scripts and subcommands', () => {
-  const laneSubs = new Set(['precheck', 'start', 'stage', 'wip', 'unknowns', 'merged', 'incident', 'next-step', 'next', 'goal-set', 'roadmap-set', 'index', 'finish']);
+  const laneSubs = new Set(['precheck', 'start', 'stage', 'wip', 'unknowns', 'merged', 'incident', 'next-step', 'next', 'goal-set', 'roadmap-set', 'index', 'finish', 'launch', 'resume', 'stop', 'resume-all', 'profiles', 'agent-for']);
   for (const p of COMMANDS) {
     const text = read(p);
     for (const m of text.matchAll(/kit\/scripts\/([a-z_]+\.js)/g)) {

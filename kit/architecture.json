@@ -1,6 +1,69 @@
 {
   "edges": [
     {
+      "event": "PostToolUse",
+      "file": "kit/agents/debugger.md",
+      "from": "agent:debugger",
+      "kind": "hook",
+      "to": "hook:budget_check"
+    },
+    {
+      "event": "PostToolUse",
+      "file": "kit/agents/debugger.md",
+      "from": "agent:debugger",
+      "kind": "hook",
+      "to": "hook:event_log"
+    },
+    {
+      "event": "PreToolUse",
+      "file": "kit/agents/debugger.md",
+      "from": "agent:debugger",
+      "kind": "hook",
+      "matcher": "Bash",
+      "to": "hook:guard_bash"
+    },
+    {
+      "event": "PreToolUse",
+      "file": "kit/agents/debugger.md",
+      "from": "agent:debugger",
+      "kind": "hook",
+      "matcher": "Edit|MultiEdit|Write|NotebookEdit",
+      "to": "hook:guard_edit"
+    },
+    {
+      "event": "PreToolUse",
+      "file": "kit/agents/debugger.md",
+      "from": "agent:debugger",
+      "kind": "hook",
+      "matcher": "Read",
+      "to": "hook:guard_read"
+    },
+    {
+      "event": "PreToolUse",
+      "file": "kit/agents/debugger.md",
+      "from": "agent:debugger",
+      "kind": "hook",
+      "matcher": "Edit|MultiEdit|Write|NotebookEdit",
+      "to": "hook:guard_tests_only"
+    },
+    {
+      "event": "PostToolUse",
+      "file": "kit/agents/debugger.md",
+      "from": "agent:debugger",
+      "kind": "hook",
+      "matcher": "Edit|MultiEdit|Write|Bash",
+      "timeout": 300,
+      "to": "hook:post_edit_check"
+    },
+    {
+      "event": "PostToolUse",
+      "file": "kit/agents/debugger.md",
+      "from": "agent:debugger",
+      "kind": "hook",
+      "matcher": "Read|Bash",
+      "to": "hook:read_log"
+    },
+    {
       "file": "kit/agents/implementer.md",
       "from": "agent:implementer",
       "kind": "spawns",
@@ -446,6 +509,13 @@
     },
     {
       "file": ".github/workflows/kit.yml",
+      "from": "ci-job:kit/eval-smoke",
+      "kind": "runs",
+      "step": "eval smoke set against the real agents (optional; runs when a credential secret exists)",
+      "to": "test:workflows"
+    },
+    {
+      "file": ".github/workflows/kit.yml",
       "from": "ci-job:kit/scripts",
       "kind": "reads",
       "step": "settings fragment is valid JSON and references real scripts",
@@ -728,6 +798,19 @@
       "file": ".github/workflows/kit.yml",
       "from": "ci-job:kit/scripts",
       "kind": "runs",
+      "to": "test:workflows"
+    },
+    {
+      "file": ".github/workflows/kit.yml",
+      "from": "ci-job:kit/scripts",
+      "kind": "runs",
+      "step": "architecture map matches the code (kit/manifest.json declares every component; kit/architecture.json is current)",
+      "to": "test:workflows"
+    },
+    {
+      "file": ".github/workflows/kit.yml",
+      "from": "ci-job:kit/scripts",
+      "kind": "runs",
       "step": "planted-fault suite (every planted fault must be caught)",
       "to": "tool:planted-faults"
     },
@@ -1002,6 +1085,24 @@
       "to": "script:kitlib"
     },
     {
+      "file": "kit/commands/architecture.md",
+      "from": "command:architecture",
+      "kind": "follows",
+      "to": "command:run"
+    },
+    {
+      "file": "kit/commands/architecture.md",
+      "from": "command:architecture",
+      "kind": "follows",
+      "to": "command:start"
+    },
+    {
+      "file": "kit/commands/architecture.md",
+      "from": "command:architecture",
+      "kind": "runs",
+      "to": "script:validate_docs"
+    },
+    {
       "file": "kit/commands/bootstrap.md",
       "from": "command:bootstrap",
       "kind": "runs",
@@ -1026,6 +1127,42 @@
       "to": "script:kit_status"
     },
     {
+      "file": "kit/commands/docs.md",
+      "from": "command:docs",
+      "kind": "follows",
+      "to": "command:run"
+    },
+    {
+      "file": "kit/commands/docs.md",
+      "from": "command:docs",
+      "kind": "follows",
+      "to": "command:start"
+    },
+    {
+      "file": "kit/commands/docs.md",
+      "from": "command:docs",
+      "kind": "runs",
+      "to": "script:validate_docs"
+    },
+    {
+      "file": "kit/commands/fix.md",
+      "from": "command:fix",
+      "kind": "follows",
+      "to": "command:run"
+    },
+    {
+      "file": "kit/commands/fix.md",
+      "from": "command:fix",
+      "kind": "follows",
+      "to": "command:start"
+    },
+    {
+      "file": "kit/commands/fix.md",
+      "from": "command:fix",
+      "kind": "runs",
+      "to": "script:validate_docs"
+    },
+    {
       "file": "kit/commands/implement.md",
       "from": "command:implement",
       "kind": "spawns",
@@ -1048,6 +1185,96 @@
       "from": "command:implement",
       "kind": "runs",
       "to": "script:lane"
+    },
+    {
+      "file": "kit/commands/incident.md",
+      "from": "command:incident",
+      "kind": "follows",
+      "to": "command:run"
+    },
+    {
+      "file": "kit/commands/incident.md",
+      "from": "command:incident",
+      "kind": "follows",
+      "to": "command:start"
+    },
+    {
+      "file": "kit/commands/incident.md",
+      "from": "command:incident",
+      "kind": "runs",
+      "to": "script:validate_docs"
+    },
+    {
+      "file": "kit/commands/investigate.md",
+      "from": "command:investigate",
+      "kind": "follows",
+      "to": "command:run"
+    },
+    {
+      "file": "kit/commands/investigate.md",
+      "from": "command:investigate",
+      "kind": "follows",
+      "to": "command:start"
+    },
+    {
+      "file": "kit/commands/investigate.md",
+      "from": "command:investigate",
+      "kind": "runs",
+      "to": "script:validate_docs"
+    },
+    {
+      "file": "kit/commands/migrate.md",
+      "from": "command:migrate",
+      "kind": "follows",
+      "to": "command:run"
+    },
+    {
+      "file": "kit/commands/migrate.md",
+      "from": "command:migrate",
+      "kind": "follows",
+      "to": "command:start"
+    },
+    {
+      "file": "kit/commands/migrate.md",
+      "from": "command:migrate",
+      "kind": "runs",
+      "to": "script:validate_docs"
+    },
+    {
+      "file": "kit/commands/new-feature.md",
+      "from": "command:new-feature",
+      "kind": "follows",
+      "to": "command:run"
+    },
+    {
+      "file": "kit/commands/new-feature.md",
+      "from": "command:new-feature",
+      "kind": "follows",
+      "to": "command:start"
+    },
+    {
+      "file": "kit/commands/new-feature.md",
+      "from": "command:new-feature",
+      "kind": "runs",
+      "to": "script:validate_docs"
+    },
+    {
+      "file": "kit/commands/new-skill.md",
+      "from": "command:new-skill",
+      "kind": "follows",
+      "to": "command:run"
+    },
+    {
+      "file": "kit/commands/new-skill.md",
+      "from": "command:new-skill",
+      "kind": "follows",
+      "to": "command:start"
+    },
+    {
+      "file": "kit/commands/new-skill.md",
+      "from": "command:new-skill",
+      "kind": "runs",
+      "to": "script:validate_docs"
     },
     {
       "file": "kit/commands/plan.md",
@@ -1082,6 +1309,24 @@
     {
       "file": "kit/commands/plan.md",
       "from": "command:plan",
+      "kind": "runs",
+      "to": "script:validate_docs"
+    },
+    {
+      "file": "kit/commands/refactor.md",
+      "from": "command:refactor",
+      "kind": "follows",
+      "to": "command:run"
+    },
+    {
+      "file": "kit/commands/refactor.md",
+      "from": "command:refactor",
+      "kind": "follows",
+      "to": "command:start"
+    },
+    {
+      "file": "kit/commands/refactor.md",
+      "from": "command:refactor",
       "kind": "runs",
       "to": "script:validate_docs"
     },
@@ -1200,6 +1445,24 @@
       "to": "script:lane"
     },
     {
+      "file": "kit/commands/security.md",
+      "from": "command:security",
+      "kind": "follows",
+      "to": "command:run"
+    },
+    {
+      "file": "kit/commands/security.md",
+      "from": "command:security",
+      "kind": "follows",
+      "to": "command:start"
+    },
+    {
+      "file": "kit/commands/security.md",
+      "from": "command:security",
+      "kind": "runs",
+      "to": "script:validate_docs"
+    },
+    {
       "file": "kit/commands/start.md",
       "from": "command:start",
       "kind": "follows",
@@ -1228,6 +1491,90 @@
       "from": "command:status",
       "kind": "runs",
       "to": "script:kit_status"
+    },
+    {
+      "file": "kit/commands/ui.md",
+      "from": "command:ui",
+      "kind": "follows",
+      "to": "command:run"
+    },
+    {
+      "file": "kit/commands/ui.md",
+      "from": "command:ui",
+      "kind": "follows",
+      "to": "command:start"
+    },
+    {
+      "file": "kit/commands/ui.md",
+      "from": "command:ui",
+      "kind": "runs",
+      "to": "script:validate_docs"
+    },
+    {
+      "file": "kit/commands/work.md",
+      "from": "command:work",
+      "kind": "follows",
+      "to": "command:docs"
+    },
+    {
+      "file": "kit/commands/work.md",
+      "from": "command:work",
+      "kind": "follows",
+      "to": "command:fix"
+    },
+    {
+      "file": "kit/commands/work.md",
+      "from": "command:work",
+      "kind": "follows",
+      "to": "command:incident"
+    },
+    {
+      "file": "kit/commands/work.md",
+      "from": "command:work",
+      "kind": "follows",
+      "to": "command:investigate"
+    },
+    {
+      "file": "kit/commands/work.md",
+      "from": "command:work",
+      "kind": "follows",
+      "to": "command:migrate"
+    },
+    {
+      "file": "kit/commands/work.md",
+      "from": "command:work",
+      "kind": "follows",
+      "to": "command:new-feature"
+    },
+    {
+      "file": "kit/commands/work.md",
+      "from": "command:work",
+      "kind": "follows",
+      "to": "command:refactor"
+    },
+    {
+      "file": "kit/commands/work.md",
+      "from": "command:work",
+      "kind": "follows",
+      "to": "command:run"
+    },
+    {
+      "file": "kit/commands/work.md",
+      "from": "command:work",
+      "kind": "follows",
+      "to": "command:security"
+    },
+    {
+      "file": "kit/commands/work.md",
+      "from": "command:work",
+      "kind": "follows",
+      "to": "command:start"
+    },
+    {
+      "file": "kit/commands/work.md",
+      "from": "command:work",
+      "kind": "follows",
+      "to": "command:ui"
     },
     {
       "file": "kit/scripts/hook_budget_check.js",
@@ -1808,6 +2155,12 @@
       "from": "shell:release.sh",
       "kind": "runs",
       "to": "test:validate_spec_review"
+    },
+    {
+      "file": "release.sh",
+      "from": "shell:release.sh",
+      "kind": "runs",
+      "to": "test:workflows"
     },
     {
       "file": "release.sh",
@@ -2416,6 +2769,36 @@
       "to": "script:validate_docs"
     },
     {
+      "file": "kit/scripts/tests/workflows.test.js",
+      "from": "test:workflows",
+      "kind": "tests",
+      "to": "hook:guard_bash"
+    },
+    {
+      "file": "kit/scripts/tests/workflows.test.js",
+      "from": "test:workflows",
+      "kind": "tests",
+      "to": "hook:guard_edit"
+    },
+    {
+      "file": "kit/scripts/tests/workflows.test.js",
+      "from": "test:workflows",
+      "kind": "tests",
+      "to": "hook:read_log"
+    },
+    {
+      "file": "kit/scripts/tests/workflows.test.js",
+      "from": "test:workflows",
+      "kind": "tests",
+      "to": "script:lane"
+    },
+    {
+      "file": "kit/scripts/tests/workflows.test.js",
+      "from": "test:workflows",
+      "kind": "tests",
+      "to": "script:validate_docs"
+    },
+    {
       "file": "audit/boards.js",
       "from": "tool:audit",
       "kind": "runs",
@@ -2628,6 +3011,27 @@
   ],
   "kit_version": "0.2.0",
   "nodes": [
+    {
+      "attrs": {
+        "description": "Reproduces a reported failure, localizes its cause (bisecting when a known-good commit exists), writes the failing test that pins it, and names the kind of work the evidence shows. Read-only on application code; the implementer fixes. First stage of the fix and incident profiles.",
+        "model": "opus",
+        "tools": [
+          "Read",
+          "Grep",
+          "Glob",
+          "Write",
+          "Edit",
+          "Bash"
+        ]
+      },
+      "declared": true,
+      "id": "agent:debugger",
+      "kind": "agent",
+      "label": "debugger",
+      "path": "kit/agents/debugger.md",
+      "purpose": "Reproduces a failure, localizes it, writes the failing test, and names the kind of work the evidence shows; never fixes.",
+      "writes": "test files and the lane progress file only"
+    },
     {
       "attrs": {
         "description": "Builds exactly what an approved spec says, in its own worktree, tests first, under hooks that block unread or out-of-spec edits. Use for /implement.",
@@ -3087,6 +3491,25 @@
     {
       "attrs": {
         "allowed_tools": [
+          "Read",
+          "Write",
+          "Bash",
+          "AskUserQuestion"
+        ],
+        "argument_hint": "<what you want, in one sentence>",
+        "description": "A change to the declared architecture or design model: start it as work type `architecture` and carry it through the `architecture` workflow profile (kit/workflows/architecture.json). The controller decides every stage from files; this command only classifies and hands off."
+      },
+      "declared": true,
+      "id": "command:architecture",
+      "kind": "command",
+      "label": "architecture",
+      "path": "kit/commands/architecture.md",
+      "purpose": "Starts a change to the declared architecture or design model: research, propose, critique, approval, then lanes.",
+      "writes": "the goal file header fields; everything else is /start and /run"
+    },
+    {
+      "attrs": {
+        "allowed_tools": [
           "Bash",
           "Read",
           "Write",
@@ -3120,6 +3543,44 @@
     {
       "attrs": {
         "allowed_tools": [
+          "Read",
+          "Write",
+          "Bash",
+          "AskUserQuestion"
+        ],
+        "argument_hint": "<what you want, in one sentence>",
+        "description": "Documentation only: start it as work type `docs` and carry it through the `docs` workflow profile (kit/workflows/docs.json). The controller decides every stage from files; this command only classifies and hands off."
+      },
+      "declared": true,
+      "id": "command:docs",
+      "kind": "command",
+      "label": "docs",
+      "path": "kit/commands/docs.md",
+      "purpose": "Starts a documentation change: inspect, edit, validate, review, merge.",
+      "writes": "the goal file header fields; everything else is /start and /run"
+    },
+    {
+      "attrs": {
+        "allowed_tools": [
+          "Read",
+          "Write",
+          "Bash",
+          "AskUserQuestion"
+        ],
+        "argument_hint": "<what you want, in one sentence>",
+        "description": "A defect with a symptom you can describe: start it as work type `fix` and carry it through the `fix` workflow profile (kit/workflows/fix.json). The controller decides every stage from files; this command only classifies and hands off."
+      },
+      "declared": true,
+      "id": "command:fix",
+      "kind": "command",
+      "label": "fix",
+      "path": "kit/commands/fix.md",
+      "purpose": "Starts a fix under the fix profile: debugger reproduces and pins, implementer fixes, review, merge.",
+      "writes": "the goal file header fields; everything else is /start and /run"
+    },
+    {
+      "attrs": {
+        "allowed_tools": [
           "Bash",
           "Read",
           "Agent"
@@ -3137,6 +3598,101 @@
     {
       "attrs": {
         "allowed_tools": [
+          "Read",
+          "Write",
+          "Bash",
+          "AskUserQuestion"
+        ],
+        "argument_hint": "<what you want, in one sentence>",
+        "description": "Production is broken: start it as work type `incident` and carry it through the `incident` workflow profile (kit/workflows/incident.json). The controller decides every stage from files; this command only classifies and hands off."
+      },
+      "declared": true,
+      "id": "command:incident",
+      "kind": "command",
+      "label": "incident",
+      "path": "kit/commands/incident.md",
+      "purpose": "Starts incident response: triage, contain, diagnose, recover, verify, retrospective.",
+      "writes": "the goal file header fields; everything else is /start and /run"
+    },
+    {
+      "attrs": {
+        "allowed_tools": [
+          "Read",
+          "Write",
+          "Bash",
+          "AskUserQuestion"
+        ],
+        "argument_hint": "<what you want, in one sentence>",
+        "description": "A question about the codebase or a system; no code changes: start it as work type `investigation` and carry it through the `investigation` workflow profile (kit/workflows/investigation.json). The controller decides every stage from files; this command only classifies and hands off."
+      },
+      "declared": true,
+      "id": "command:investigate",
+      "kind": "command",
+      "label": "investigate",
+      "path": "kit/commands/investigate.md",
+      "purpose": "Answers a question about the codebase: inspect, research, report; no code changes.",
+      "writes": "the goal file header fields; everything else is /start and /run"
+    },
+    {
+      "attrs": {
+        "allowed_tools": [
+          "Read",
+          "Write",
+          "Bash",
+          "AskUserQuestion"
+        ],
+        "argument_hint": "<what you want, in one sentence>",
+        "description": "A data or schema migration: start it as work type `migration` and carry it through the `migration` workflow profile (kit/workflows/migration.json). The controller decides every stage from files; this command only classifies and hands off."
+      },
+      "declared": true,
+      "id": "command:migrate",
+      "kind": "command",
+      "label": "migrate",
+      "path": "kit/commands/migrate.md",
+      "purpose": "Starts a data or schema migration: always high risk, with backup and restore validation.",
+      "writes": "the goal file header fields; everything else is /start and /run"
+    },
+    {
+      "attrs": {
+        "allowed_tools": [
+          "Read",
+          "Write",
+          "Bash",
+          "AskUserQuestion"
+        ],
+        "argument_hint": "<what you want, in one sentence>",
+        "description": "A new capability: start it as work type `feature` and carry it through the `feature` workflow profile (kit/workflows/feature.json). The controller decides every stage from files; this command only classifies and hands off."
+      },
+      "declared": true,
+      "id": "command:new-feature",
+      "kind": "command",
+      "label": "new-feature",
+      "path": "kit/commands/new-feature.md",
+      "purpose": "Starts a feature under the feature profile: research, plan, critique, approval, tests, build, review, merge, retro.",
+      "writes": "the goal file header fields; everything else is /start and /run"
+    },
+    {
+      "attrs": {
+        "allowed_tools": [
+          "Read",
+          "Write",
+          "Bash",
+          "AskUserQuestion"
+        ],
+        "argument_hint": "<what you want, in one sentence>",
+        "description": "A new or changed kit skill: start it as work type `skill-development` and carry it through the `skill-development` workflow profile (kit/workflows/skill-development.json). The controller decides every stage from files; this command only classifies and hands off."
+      },
+      "declared": true,
+      "id": "command:new-skill",
+      "kind": "command",
+      "label": "new-skill",
+      "path": "kit/commands/new-skill.md",
+      "purpose": "Starts kit-level skill development: gap, research, skill-smith draft, review, eval, approval, release.",
+      "writes": "the goal file header fields; everything else is /start and /run"
+    },
+    {
+      "attrs": {
+        "allowed_tools": [
           "Bash",
           "Read",
           "Agent"
@@ -3150,6 +3706,25 @@
       "label": "plan",
       "path": "kit/commands/plan.md",
       "purpose": "Turns research into a validated spec through planner, spec-critic and the unknown-question budget."
+    },
+    {
+      "attrs": {
+        "allowed_tools": [
+          "Read",
+          "Write",
+          "Bash",
+          "AskUserQuestion"
+        ],
+        "argument_hint": "<what you want, in one sentence>",
+        "description": "Behaviour-preserving restructuring: start it as work type `refactor` and carry it through the `refactor` workflow profile (kit/workflows/refactor.json). The controller decides every stage from files; this command only classifies and hands off."
+      },
+      "declared": true,
+      "id": "command:refactor",
+      "kind": "command",
+      "label": "refactor",
+      "path": "kit/commands/refactor.md",
+      "purpose": "Starts a behaviour-preserving refactor: analysis, plan with one caller per criterion, pinning tests, incremental build, verify.",
+      "writes": "the goal file header fields; everything else is /start and /run"
     },
     {
       "attrs": {
@@ -3233,6 +3808,25 @@
           "AskUserQuestion"
         ],
         "argument_hint": "<what you want, in one sentence>",
+        "description": "A security finding or review: start it as work type `security` and carry it through the `security` workflow profile (kit/workflows/security.json). The controller decides every stage from files; this command only classifies and hands off."
+      },
+      "declared": true,
+      "id": "command:security",
+      "kind": "command",
+      "label": "security",
+      "path": "kit/commands/security.md",
+      "purpose": "Starts security work: always high risk, threat model, second reviewer, human security sign-off.",
+      "writes": "the goal file header fields; everything else is /start and /run"
+    },
+    {
+      "attrs": {
+        "allowed_tools": [
+          "Read",
+          "Write",
+          "Bash",
+          "AskUserQuestion"
+        ],
+        "argument_hint": "<what you want, in one sentence>",
         "description": "Begin a feature the right way: a short discussion until the human and Claude agree on the end goal, then a goal file, a roadmap row, and a hand-off to /run. Use this instead of describing a feature in plain chat."
       },
       "declared": true,
@@ -3272,6 +3866,44 @@
       "label": "sync",
       "path": "kit/commands/sync.md",
       "purpose": "Brings a worktree up to date with the default branch and runs the tests."
+    },
+    {
+      "attrs": {
+        "allowed_tools": [
+          "Read",
+          "Write",
+          "Bash",
+          "AskUserQuestion"
+        ],
+        "argument_hint": "<what you want, in one sentence>",
+        "description": "A user-interface change against the design model: start it as work type `ui` and carry it through the `ui` workflow profile (kit/workflows/ui.json). The controller decides every stage from files; this command only classifies and hands off."
+      },
+      "declared": true,
+      "id": "command:ui",
+      "kind": "command",
+      "label": "ui",
+      "path": "kit/commands/ui.md",
+      "purpose": "Starts a UI change under the ui profile: inspect, build, visual and accessibility verification, review; feature shape at size L.",
+      "writes": "the goal file header fields; everything else is /start and /run"
+    },
+    {
+      "attrs": {
+        "allowed_tools": [
+          "Read",
+          "Write",
+          "Bash",
+          "AskUserQuestion"
+        ],
+        "argument_hint": "<the symptom or wish, in your own words>",
+        "description": "Start work when you do not know what kind it is. Routes provisionally to `fix`; the debugger's evidence settles the real kind (fix, incident, refactor) and the controller re-routes. The user never has to classify."
+      },
+      "declared": true,
+      "id": "command:work",
+      "kind": "command",
+      "label": "work",
+      "path": "kit/commands/work.md",
+      "purpose": "Routes work whose kind is unknown: provisionally fix, then the debugger's evidence settles fix, incident or refactor.",
+      "writes": "the goal file header fields; everything else is /start and /run"
     },
     {
       "attrs": {
@@ -3863,6 +4495,13 @@
     },
     {
       "attrs": {},
+      "id": "test:workflows",
+      "kind": "test",
+      "label": "workflows.test.js",
+      "path": "kit/scripts/tests/workflows.test.js"
+    },
+    {
+      "attrs": {},
       "id": "tool:audit",
       "kind": "tool",
       "label": "audit/boards.js",
@@ -3969,6 +4608,18 @@
       "agents": [],
       "commands": [],
       "id": "escalated",
+      "pause": null
+    },
+    {
+      "agents": [],
+      "commands": [],
+      "id": "stopped",
+      "pause": null
+    },
+    {
+      "agents": [],
+      "commands": [],
+      "id": "refused",
       "pause": null
     },
     {
