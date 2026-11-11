@@ -40,6 +40,7 @@
     "ci:dep_diff": { "purpose": "Fails when a dependency is added that the spec does not declare." },
     "ci:claude_md_cap": { "purpose": "Fails when CLAUDE.md grows past its size cap." },
     "ci:guards_present": { "purpose": "Fails when a project's hooks differ from the kit's, are disabled, or point at scripts that no longer exist." },
+    "ci:lane_artifacts": { "purpose": "Fails when a lane artifact sits outside the project's one artifact tree (kit.json paths.work) or a source file sits inside it." },
     "ci:security_floor": { "purpose": "Fails when any settings scope loosens the kit's security floor: a floor deny entry missing, an allow that grants what the floor denies, or hooks disabled." },
     "ci:changed_docs": { "purpose": "Validates every document changed against the base branch." },
     "ci:review_report": { "purpose": "Fails a lane branch without a valid PASS review that names the current head commit." },

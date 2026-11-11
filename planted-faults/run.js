@@ -364,6 +364,22 @@ export function main(argv) {
     run('bootstrap.js', ['--repo', root26]);
     const c26b = JSON.stringify(adrFiles()) === JSON.stringify(first) && !fs.existsSync(path.join(root26, 'docs', 'decisions'));
     record(26, 'bootstrap on a repo that already has a decisions folder', 'bootstrap adopts the folder and its numbering; re-run is a no-op', c26a && c26b, `docs/adr: ${adrFiles().join(', ')}; docs/decisions exists: ${fs.existsSync(path.join(root26, 'docs', 'decisions'))}`);
+
+    // 25 agent process restarted mid-stage -> next-step derived from files is identical across cold processes; resume logs it
+    const s25a = run('lane.js', ['next-step', 'refund-route', '--repo', root]).stdout;
+    const s25b = run('lane.js', ['next-step', 'refund-route', '--repo', root]).stdout;
+    r = run('lane.js', ['resume', 'refund-route', '--repo', root]);
+    const same25 = s25a === s25b && r.returncode === 0 && JSON.stringify(JSON.parse(r.stdout).next) === JSON.stringify(JSON.parse(s25a));
+    record(25, 'agent process restarted mid-stage', 'lane.js next-step / resume from files alone', same25 && read(path.join(wt, '.claude', 'session', 'events.jsonl')).includes('"event": "resume"'), s25a.trim());
+
+    // 27 lane artifact written outside docs/work (today docs/specs) -> guard-edit blocks in the lane; ci_lane_artifacts fails in CI
+    r = hook('hook_guard_edit.js', { ...base, hook_event_name: 'PreToolUse', tool_name: 'Write', tool_input: { file_path: path.join(wt, 'docs', 'notes', 'refund-route.progress.md'), content: 'x' } });
+    const hookBlocked27 = r.returncode === 2 && r.stderr.includes('lane artifact outside');
+    fs.mkdirSync(path.join(wt, 'docs', 'notes'), { recursive: true });
+    write(path.join(wt, 'docs', 'notes', 'refund-route.progress.md'), '# stray\n');
+    c = run('ci_lane_artifacts.js', ['--repo', wt]);
+    fs.rmSync(path.join(wt, 'docs', 'notes'), { recursive: true, force: true });
+    record(27, 'lane artifact written outside the artifact tree', 'guard-edit (PreToolUse) + ci_lane_artifacts (project CI)', hookBlocked27 && c.returncode === 1 && c.stderr.includes('lane artifact outside'), c.stderr);
   } finally {
     if (a.keep) process.stderr.write(`fixtures kept at ${tmp}\n`);
     else fs.rmSync(tmp, { recursive: true, force: true });

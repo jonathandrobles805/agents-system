@@ -5,6 +5,7 @@
 //   lane.js start <slug> --repo R [--base B]  precheck, then worktree ../<repo>-lanes/<slug> on branch wt/<slug> from fresh base; lane.json; progress skeleton
 //   lane.js stage <slug> <stage> --repo R     set lane.json stage (research|plan|build|review) and reset its clock
 //   lane.js launch <slug> --repo R [--exec]   host side: the command that starts the lane's headless session inside its sandbox (KIT-SPEC 10.9)
+//   lane.js resume <slug> --repo R            host side: next step from files alone, logged, plus the launch command (KIT-SPEC 10.11)
 //   lane.js wip --repo R                      active lanes vs WIP limit
 //   lane.js unknowns <draft spec> --repo R    exit 0 none / 3 resolve (1..3, one researcher each) / 2 research insufficient (>3)
 //   lane.js roadmap-set <slug> <status> --repo R
@@ -471,6 +472,16 @@ export function launch(root, slug, { exec = false, prompt = null } = {}) {
   return r.status ?? 1;
 }
 
+/** Host side: resume a lane from its files alone. Prints the next step and the launch command; the transcript is never needed (KIT-SPEC 10.11). */
+export async function resume(root, slug) {
+  const wt = pjoin(lanesDir(root), slug);
+  if (!K.isFile(pjoin(wt, '.claude', 'lane.json'))) return refuse([`no lane for ${slug}`]);
+  const step = await nextStep(root, slug);
+  K.appendEvent(pjoin(wt, '.claude', 'session', 'events.jsonl'), { event: 'resume', step: kget(step, 'step', null), summary: `resumed from files at ${kget(step, 'step', '?')}` });
+  process.stdout.write(K.jsonDumps({ slug, next: step, launch: `lane.js launch ${slug} --repo ${root}` }, { indent: 2 }) + '\n');
+  return 0;
+}
+
 export function setStage(root, slug, stage) {
   const wt = pjoin(lanesDir(root), slug);
   const lf = pjoin(wt, '.claude', 'lane.json');
@@ -728,6 +739,8 @@ export async function main(argv = process.argv.slice(2)) {
   s.addArgument('slug'); s.addArgument('stage', { choices: ['research', 'plan', 'test', 'build', 'review'] }); s.addArgument('--repo', { default: '.' });
   s = sub.addParser('merged');
   s.addArgument('slug'); s.addArgument('--repo', { default: '.' }); s.addArgument('--pr');
+  s = sub.addParser('resume');
+  s.addArgument('slug'); s.addArgument('--repo', { default: '.' });
   s = sub.addParser('launch');
   s.addArgument('slug'); s.addArgument('--repo', { default: '.' }); s.addArgument('--exec', { action: 'store_true' }); s.addArgument('--prompt');
   s = sub.addParser('next-step');
@@ -756,6 +769,7 @@ export async function main(argv = process.argv.slice(2)) {
     return 0;
   }
   if (a.cmd === 'start') return start(root, a.slug, a.base);
+  if (a.cmd === 'resume') return resume(root, a.slug);
   if (a.cmd === 'launch') return launch(root, a.slug, { exec: !!a.exec, prompt: a.prompt ?? null });
   if (a.cmd === 'stage') return setStage(root, a.slug, a.stage);
   if (a.cmd === 'finish') return finish(root, a.slug);
