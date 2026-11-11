@@ -408,6 +408,9 @@ export function main(argv) {
     //    (the lane above has a full events log; the telemetry store under this run's CLAUDE_HOME is empty)
     const home28 = path.join(tmp, 'home28');
     fs.mkdirSync(home28, { recursive: true });
+    const kj28 = path.join(root, '.claude', 'kit.json');
+    const kit28 = JSON.parse(read(kj28));
+    write(kj28, K.jsonDumps({ ...kit28, telemetry: { show_cost: true } })); // cost display is opt-in; the faults test the figure when shown
     let st = JSON.parse(run('kit_status.js', ['--repo', root, '--json'], { env: { CLAUDE_HOME: home28 } }).stdout);
     const l28 = st.lanes.find((l) => l.slug === 'refund-route');
     const eventsLines = read(path.join(wt, '.claude', 'session', 'events.jsonl')).trim().split('\n').length;
@@ -421,7 +424,8 @@ export function main(argv) {
     write(path.join(storeDir, '2026-11.jsonl'), rec(0.333) + '\n' + rec(0.1) + '\n');
     st = JSON.parse(run('kit_status.js', ['--repo', root, '--json'], { env: { CLAUDE_HOME: home28 } }).stdout);
     const l29 = st.lanes.find((l) => l.slug === 'refund-route');
-    record(29, "a cost figure shown differs from the exporter's", 'metrics.js against the collector store', l29 && l29.cost && l29.cost.usd === 0.43 && l29.cost.source === 'telemetry', `shown ${l29?.cost?.usd} from 0.333 + 0.1`);
+    record(29, "a cost figure shown differs from the exporter's", 'metrics.js against the collector store', l29 && l29.cost && l29.cost.usd === 0.43 && l29.cost.source === 'telemetry' && l29.cost.basis === 'api-equivalent', `shown ${l29?.cost?.usd} (${l29?.cost?.basis}) from 0.333 + 0.1`);
+    write(kj28, K.jsonDumps(kit28));
 
     // 25 agent process restarted mid-stage -> next-step derived from files is identical across cold processes; resume logs it
     const s25a = run('lane.js', ['next-step', 'refund-route', '--repo', root]).stdout;

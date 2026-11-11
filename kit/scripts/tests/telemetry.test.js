@@ -152,7 +152,14 @@ test('kit_status shows the exporter\'s cost to the cent, and flags a lane withou
   const dir = path.join(home, 'kit-telemetry');
   const out = JSON.parse(runScript('lane.js', ['start', 'refund-route', '--repo', root]).stdout);
   assert.ok(out.worktree);
-  const projectName = JSON.parse(fs.readFileSync(path.join(root, '.claude', 'kit.json'), 'utf8')).project;
+  // cost display is optional and off by default (KIT-SPEC 9.4)
+  let status0 = JSON.parse(runScript('kit_status.js', ['--repo', root, '--json']).stdout);
+  assert.equal(status0.lanes.find((l) => l.slug === 'refund-route').cost, null);
+  const kjPath = path.join(root, '.claude', 'kit.json');
+  const kj = JSON.parse(fs.readFileSync(kjPath, 'utf8'));
+  kj.telemetry = { show_cost: true };
+  fs.writeFileSync(kjPath, JSON.stringify(kj, null, 2));
+  const projectName = kj.project;
   let status = JSON.parse(runScript('kit_status.js', ['--repo', root, '--json']).stdout);
   let lane = status.lanes.find((l) => l.slug === 'refund-route');
   assert.equal(lane.cost.usd, null);
@@ -165,6 +172,7 @@ test('kit_status shows the exporter\'s cost to the cent, and flags a lane withou
   lane = status.lanes.find((l) => l.slug === 'refund-route');
   assert.equal(lane.cost.usd, 0.43);
   assert.equal(lane.cost.source, SOURCE);
+  assert.equal(lane.cost.basis, 'api-equivalent');
   assert.equal(lane.cost.api_requests, 2);
   fs.rmSync(dir, { recursive: true, force: true });
 });

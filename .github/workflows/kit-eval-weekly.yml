@@ -19,14 +19,17 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-      - name: requires a credential (subscription token preferred)
+      - name: credential present? (optional; subscription token preferred)
+        id: cred
         env:
           CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
         run: |
-          if [ -z "$CLAUDE_CODE_OAUTH_TOKEN" ] && [ -z "$ANTHROPIC_API_KEY" ]; then echo "::error::no CLAUDE_CODE_OAUTH_TOKEN (claude setup-token) or ANTHROPIC_API_KEY secret; the eval cannot run"; exit 1; fi
-      - run: npm install -g @anthropic-ai/claude-code @anthropic-ai/sandbox-runtime && sudo apt-get install -y bubblewrap socat
+          if [ -z "$CLAUDE_CODE_OAUTH_TOKEN" ] && [ -z "$ANTHROPIC_API_KEY" ]; then echo "::notice::no credential secret; the scheduled eval is optional and did not run. Run the full set locally when you want a baseline: npm run eval:full"; echo "skip=1" >> "$GITHUB_OUTPUT"; fi
+      - if: steps.cred.outputs.skip != '1'
+        run: npm install -g @anthropic-ai/claude-code @anthropic-ai/sandbox-runtime && sudo apt-get install -y bubblewrap socat
       - name: full set
+        if: steps.cred.outputs.skip != '1'
         env:
           CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
@@ -35,7 +38,7 @@ jobs:
           BASE=kit/eval/baselines/$(cat VERSION).json
           if [ -f "$BASE" ]; then node kit/eval/harness.js run --set full --runner claude --n 3 --baseline "$BASE" --out eval-out; else node kit/eval/harness.js run --set full --runner claude --n 3 --out eval-out; echo "no baseline for $(cat VERSION) yet; this run's report can become it: harness.js baseline --from eval-out/report.json --out $BASE"; fi
       - uses: actions/upload-artifact@v4
-        if: always()
+        if: steps.cred.outputs.skip != '1'
         with:
           name: eval-report
           path: eval-out/report.json
