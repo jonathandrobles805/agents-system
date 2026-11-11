@@ -21,6 +21,7 @@ For every item in `questions`, ask the human (use AskUserQuestion when available
 - `wip_limit`: default 2.
 - `layers`: name each layer, its directories (use the detected `dirs` as the draft), and what it may import from. Also ask for 2–5 invariants stated so a check could test them.
 - `high_risk_paths`: default list shown; confirm or edit.
+- `dev tools installed`: any package installed during bootstrap (for example `dependency-cruiser`) is a new dependency. Write a decision record in the project's decisions folder, `NNNN-adopt-dev-tools.md`, with a `## New dependencies` section listing each one with a reason, and commit it with the bootstrap; outside a lane, a decision record changed by the branch is where `dep-diff` reads declarations.
 - `commands`: show each detected command with its `evidence` (where it was found); confirm or correct each. For every CI check under `not_configured`, ask for a command or `none: <reason>`: a check with neither fails CI, a `none` check passes with a visible warning. Never fill one in yourself. Offer to install missing tools; install only on an explicit yes.
 - `credentials`: list the credential files found; confirm they stay denied to lanes, or that the human will move them.
 - `drift`: if stale branches are listed, tell the human bootstrap can continue but lanes should not start until those branches are merged, synced, or deleted.

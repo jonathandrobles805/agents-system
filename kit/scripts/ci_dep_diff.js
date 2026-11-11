@@ -1,5 +1,7 @@
 #!/usr/bin/env node
-// CI: any dependency added versus the base branch must be declared under the spec's '## New dependencies'.
+// CI: any dependency added versus the base branch must be declared under '## New dependencies' in the lane's spec, or,
+// for a change that is not a lane (bootstrap, tooling), in a decision record added or changed by the same branch.
+// A decision record is human-approved; nothing else can declare a dependency.
 import * as K from './kitlib.js';
 import * as C from './ci_common.js';
 import { isMain } from './kitlib.js';
@@ -89,6 +91,18 @@ export function declared(spec) {
   return out;
 }
 
+/** Decision records (.md under the decisions folder) added or changed between base and HEAD. */
+export function changedDecisions(root, base) {
+  const dir = K.decisionsRoot(root);
+  let out;
+  try {
+    out = K.git(['diff', '--name-only', `${base}...HEAD`, '--', dir], root);
+  } catch {
+    return [];
+  }
+  return out.split('\n').map((l) => l.trim()).filter((l) => l.endsWith('.md'));
+}
+
 export function main(argv) {
   const ap = C.makeParser('ci_dep_diff.js', [{ flag: '--repo', default: '.' }, { flag: '--base', default: 'origin/main' }]);
   const a = C.parseArgs(ap, argv);
@@ -103,10 +117,14 @@ export function main(argv) {
   const added = new Set([...depsAt(root, null)].map((d) => d.toLowerCase()).filter((d) => !baseLower.has(d)));
   if (!added.size) return C.ok('dep-diff: no new dependencies');
   const slug = C.laneSlug(root);
-  const decl = slug ? declared(C.joinPath(root, 'docs', 'specs', `${slug}.md`)) : new Set();
+  const decl = slug ? declared(C.joinPath(root, K.workRoot(root), `${slug}.md`)) : new Set();
+  for (const f of changedDecisions(root, a.base)) for (const d of declared(C.joinPath(root, f))) decl.add(d);
   const undeclared = C.sortedStrings([...added].filter((d) => !decl.has(d)));
   if (undeclared.length) {
-    return C.fail(`dep-diff: dependencies added but not declared in the spec's New dependencies: ${undeclared.join(', ')}`);
+    return C.fail(
+      `dep-diff: dependencies added but not declared: ${undeclared.join(', ')}. ` +
+      `Declare each under '## New dependencies' in the lane's spec, or, outside a lane, in a decision record (${K.decisionsRoot(root)}/) changed by this branch.`,
+    );
   }
   return C.ok(`dep-diff: ${added.size} new dependenc${added.size === 1 ? 'y' : 'ies'}, all declared`);
 }
