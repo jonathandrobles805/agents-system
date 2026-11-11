@@ -1,0 +1,32 @@
+{
+  "id": "planner-names-files",
+  "role": "planner",
+  "tags": [
+    "smoke"
+  ],
+  "fixture": "node-api",
+  "goal": "Write docs/specs/refund-route.md from the research: files to read, change and create; done-criteria with tests; open questions.",
+  "checks": [
+    "files_exist",
+    "no_secret_read"
+  ],
+  "expected": {
+    "files": [
+      "docs/specs/refund-route.md"
+    ]
+  },
+  "rubric": [
+    {
+      "id": "r1",
+      "text": "Every file in Files to change exists in the repository or is listed under Files to create."
+    },
+    {
+      "id": "r2",
+      "text": "Done-criteria each name a test."
+    },
+    {
+      "id": "r3",
+      "text": "Open questions are real questions, not restatements of the goal."
+    }
+  ]
+}

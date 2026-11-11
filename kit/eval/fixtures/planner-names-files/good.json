@@ -1,0 +1,36 @@
+{
+  "files": {
+    "docs/specs/refund-route.md": "# Spec: Refund route\n\n- Slug: refund-route\n\n## Files to change\n\n- `src/api/routes.ts`\n"
+  },
+  "events": [
+    {
+      "event": "read",
+      "tool": "Read",
+      "path": "docs/research/routes-shape.md",
+      "result": "ok"
+    },
+    {
+      "event": "read",
+      "tool": "Read",
+      "path": "src/api/routes.ts",
+      "result": "ok"
+    },
+    {
+      "event": "edit",
+      "tool": "Edit",
+      "path": "docs/specs/refund-route.md",
+      "result": "ok"
+    }
+  ],
+  "git": {
+    "log": [
+      "abc1234 eval"
+    ]
+  },
+  "judge": {
+    "r1": 1,
+    "r2": 1,
+    "r3": 1
+  },
+  "ms": 1200
+}

@@ -366,6 +366,23 @@ export function main(argv) {
     const c26b = JSON.stringify(adrFiles()) === JSON.stringify(first) && !fs.existsSync(path.join(root26, 'docs', 'decisions'));
     record(26, 'bootstrap on a repo that already has a decisions folder', 'bootstrap adopts the folder and its numbering; re-run is a no-op', c26a && c26b, `docs/adr: ${adrFiles().join(', ')}; docs/decisions exists: ${fs.existsSync(path.join(root26, 'docs', 'decisions'))}`);
 
+    // 32 an agent prompt edited to skip the red run -> the eval smoke set's hard metric red_before_green fails the kit PR
+    //    (proven with the recorded 'skips-red-run' outcome; the claude runner would produce the same events from a real session)
+    const harness = path.join(ROOT, 'kit', 'eval', 'harness.js');
+    const ev32 = sh(process.execPath, [harness, 'run', '--set', 'smoke', '--runner', 'fixture', '--variant', 'skips-red-run', '--out', path.join(tmp, 'eval-32'), '--json'], { env: childEnv() });
+    const rep32 = ev32.stdout ? JSON.parse(ev32.stdout) : {};
+    const okGood = sh(process.execPath, [harness, 'run', '--set', 'smoke', '--runner', 'fixture', '--out', path.join(tmp, 'eval-32-good')], { env: childEnv() });
+    record(32, 'agent prompt edited to skip the red run', 'eval smoke set: hard metric red_before_green (kit CI)', ev32.returncode === 1 && (rep32.violations ?? []).some((v) => v.checks.includes('red_before_green')) && okGood.returncode === 0, `violations: ${(rep32.violations ?? []).map((v) => v.task + ':' + v.checks.join('+')).join(', ')}; good run exit ${okGood.returncode}`, 'kit CI');
+
+    // 33 a kit change that lowers a quality metric -> full set regresses against the baseline; tag blocked
+    const goodFull = sh(process.execPath, [harness, 'run', '--set', 'full', '--runner', 'fixture', '--n', '3', '--out', path.join(tmp, 'eval-33-good'), '--json'], { env: childEnv() });
+    const goodRep = JSON.parse(goodFull.stdout);
+    const base33 = path.join(tmp, 'baseline-33.json');
+    write(base33, K.jsonDumps({ kit_version: 'planted', tasks: Object.fromEntries(Object.entries(goodRep.results).map(([id, r]) => [id, r.summary])) }));
+    const drop = sh(process.execPath, [harness, 'run', '--set', 'full', '--runner', 'fixture', '--n', '3', '--baseline', base33, '--variant', 'quality-drop', '--out', path.join(tmp, 'eval-33-drop'), '--json'], { env: childEnv() });
+    const dropRep = drop.stdout ? JSON.parse(drop.stdout) : {};
+    record(33, 'a kit change that lowers a quality metric', 'eval full set vs committed baseline (nightly; tag blocked)', drop.returncode === 1 && (dropRep.regressions ?? []).some((r) => r.task === 'implementer-red-then-green') && (dropRep.violations ?? []).length === 0, `regressions: ${(dropRep.regressions ?? []).map((r) => `${r.task}.${r.metric} ${r.run.toFixed(2)}<${r.baseline.toFixed(2)}`).join(', ')}`, 'kit CI');
+
     // 30 PR changes CI or kit configuration without the owner's review -> CODEOWNERS covers the paths; protection requires a code owner (GitHub enforces)
     const co = read(path.join(root, '.github', 'CODEOWNERS'));
     const wf30 = read(path.join(root, '.github', 'workflows', 'kit.yml'));
@@ -391,6 +408,9 @@ export function main(argv) {
     //    (the lane above has a full events log; the telemetry store under this run's CLAUDE_HOME is empty)
     const home28 = path.join(tmp, 'home28');
     fs.mkdirSync(home28, { recursive: true });
+    const kj28 = path.join(root, '.claude', 'kit.json');
+    const kit28 = JSON.parse(read(kj28));
+    write(kj28, K.jsonDumps({ ...kit28, telemetry: { show_cost: true } })); // cost display is opt-in; the faults test the figure when shown
     let st = JSON.parse(run('kit_status.js', ['--repo', root, '--json'], { env: { CLAUDE_HOME: home28 } }).stdout);
     const l28 = st.lanes.find((l) => l.slug === 'refund-route');
     const eventsLines = read(path.join(wt, '.claude', 'session', 'events.jsonl')).trim().split('\n').length;
@@ -404,7 +424,8 @@ export function main(argv) {
     write(path.join(storeDir, '2026-11.jsonl'), rec(0.333) + '\n' + rec(0.1) + '\n');
     st = JSON.parse(run('kit_status.js', ['--repo', root, '--json'], { env: { CLAUDE_HOME: home28 } }).stdout);
     const l29 = st.lanes.find((l) => l.slug === 'refund-route');
-    record(29, "a cost figure shown differs from the exporter's", 'metrics.js against the collector store', l29 && l29.cost && l29.cost.usd === 0.43 && l29.cost.source === 'telemetry', `shown ${l29?.cost?.usd} from 0.333 + 0.1`);
+    record(29, "a cost figure shown differs from the exporter's", 'metrics.js against the collector store', l29 && l29.cost && l29.cost.usd === 0.43 && l29.cost.source === 'telemetry' && l29.cost.basis === 'api-equivalent', `shown ${l29?.cost?.usd} (${l29?.cost?.basis}) from 0.333 + 0.1`);
+    write(kj28, K.jsonDumps(kit28));
 
     // 25 agent process restarted mid-stage -> next-step derived from files is identical across cold processes; resume logs it
     const s25a = run('lane.js', ['next-step', 'refund-route', '--repo', root]).stdout;

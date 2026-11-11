@@ -316,7 +316,7 @@ Token and cost figures come from Claude Code's own OpenTelemetry export and from
 - **Collector.** `kit/telemetry/collector.js` (Node, no dependencies) accepts OTLP/HTTP JSON on `/v1/logs`, `/v1/metrics` and `/v1/traces`, and appends each record, flattened with its resource attributes, to `$CLAUDE_HOME/kit-telemetry/<YYYY-MM>.jsonl`. It is started by the host side of `lane.js` when a lane launches and may run standalone. It stores; it never interprets.
 - **Metrics.** `kit/scripts/metrics.js` reads the collector's store only. Per lane and per project it reports: cost (sum of `cost_usd` on `claude_code.api_request` events), input/output/cache tokens, API requests, API errors, tool calls by tool and outcome, duration, and the models used. Every figure carries `source: telemetry` and the time range it covers. When the store has no records for a lane, the figure is `null` with `source: telemetry-missing`; it is never estimated from `.events.jsonl`, which remains the hook-level log (§9.1).
 - **Where it shows.** `kit-status` and the dashboard take `cost` and `tokens` per lane from `metrics.js`, with the source beside the number; a lane whose session ran with the exporter off is flagged, not filled in. Budgets (§10.2) stay in hours and tool calls, which hooks can count; a cost cap (OPERATING-MODEL §12) reads the telemetry figure.
-- **Honesty of the figure.** Claude Code documents `cost_usd` as approximate and for trend analysis, not billing. The kit shows it as Claude Code's figure, never as an invoice, and never adjusts it.
+- **Cost is optional.** Telemetry is always collected because it is the only record of what a lane did (tool calls, errors, models, sessions). The cost figure is shown only when `kit.json telemetry.show_cost` is true (default false); it is Claude Code's approximate `cost_usd`, labelled `api-equivalent`, and under a subscription it is not what the owner pays. There is no cost cap unless the project sets `telemetry.cost_cap_usd`; the default is none. Budgets stay in hours and tool calls.
 
 ## 10. Acceptance criteria
 
@@ -364,6 +364,8 @@ The kit is done when all of the following hold:
 | 29 | A cost figure shown anywhere differs from the exporter's | `metrics.js` against the collector store | figure equals the sum of `cost_usd` records for the lane, to the cent |
 | 30 | PR changes `kit.yml` or `.claude/` without the owner's review | CODEOWNERS + `require_code_owner_reviews` (GitHub) | merge blocked until the owner reviews |
 | 31 | Coverage below the floor, or the floor lowered in `kit.json` | `ci_coverage_floor` | CI fail; the floor only rises |
+| 32 | An agent prompt edited to skip the red run | eval smoke set (hard metric `red_before_green`) | kit PR blocked |
+| 33 | A kit change that lowers a quality metric | eval full set against the committed baseline | regression beyond the baseline's variance; tag blocked |
 
 ---
 
@@ -455,6 +457,18 @@ Production credentials never enter a lane: the sandbox makes their paths unreada
 
 ---
 
+## 11A. Evaluation of the kit itself (step 6)
+
+The kit's agents, skills, templates and workflow table are measured before they are released (OPERATING-MODEL §14, constraint 13). Tasks are files; the harness never changes shape as the set grows.
+
+- **Layout.** `kit/eval/benchmarks/<role-or-kind>/<task>/task.json` (goal, fixture, `tags` such as `smoke`, mechanical `checks`, and a `rubric` of gradable statements); `kit/eval/baselines/<kit-version>.json` (per-task mean and standard deviation per metric, committed); `kit/eval/harness.js`; `kit/eval/score.js`; `kit/eval/runners/` (`claude`: a headless Claude Code session in a sandboxed copy of the fixture with the kit installed; `fixture`: replays recorded outputs, for the kit's own tests and for machines without an API key).
+- **Scoring.** Mechanical checks come first and are hard metrics: a red run before green, no secret read, no out-of-scope edit, provenance tags present, a review with evidence, the right tool chosen. A hard-metric failure blocks regardless of the rubric. The rubric is graded against the end state (files and git), never the transcript; the judge is given the rubric and the task's calibration examples. Every score is written to `kit/eval/results/<run-id>/`, with the inputs that produced it.
+- **Two runs of the same harness.** *Smoke*: one task per core role plus one per workflow kind whose files the change touches, N=1, on every kit PR touching `kit/agents/`, `kit/skills/`, `kit/templates/`, `kit/workflows/` or `kit/eval/`; a failed task or a hard-metric violation blocks the PR. *Full*: all tasks, N=3, before a tag and optionally weekly; a regression is a mean drop beyond the baseline's standard deviation on any metric and blocks the tag.
+- **Where the eval runs is the owner's choice.** The harness self-check with recorded fixtures runs on every kit PR and is mandatory: it proves the gate works. The smoke set against the real agents is **required before merging a change to agents, skills, templates, the workflow table or the eval, but not required to run in CI.** The default is local: `npm run eval:smoke -- --runner claude` on the owner's machine, under the logged-in Claude Code session (the subscription; no key). CI runs it too only when a credential secret exists (`CLAUDE_CODE_OAUTH_TOKEN` from `claude setup-token`, preferred, or `ANTHROPIC_API_KEY`; the token wins when both are set); without one, the step posts a notice naming the local command and passes. The weekly full run is optional in the same way; a human commits its baseline.
+- **Honesty.** The runner records which runner produced a result; a `fixture` result is never written into a baseline.
+
+---
+
 ## 12. Open questions
 
 None blocking. Two unknowns from the research file are scheduled for verification in Phase 1 before the affected scripts are written.
@@ -475,6 +489,7 @@ See `docs/decisions/`:
 - 0009 Lane database of the project's kind through a declared adapter; production credentials never in a lane
 - 0010 Cost and tokens come from Claude Code's OpenTelemetry export only; the kit never estimates
 - 0011 Quality gates are ratchets, CI configuration needs the owner, merges go through a queue
+- 0012 Agent, skill, template and workflow changes are measured by the eval harness before release
 
 ---
 

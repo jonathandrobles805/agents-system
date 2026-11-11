@@ -1,0 +1,35 @@
+{
+  "files": {
+    "LESSONS.md": "# Lessons\n\n## Debt (text-only)\n\n- none\n\n## Enforced\n\n- refund routes must delegate to the service \u2192 boundaries lint rule (added)\n"
+  },
+  "events": [
+    {
+      "event": "read",
+      "tool": "Read",
+      "path": "docs/specs/refund-route.review.md",
+      "result": "ok"
+    },
+    {
+      "event": "read",
+      "tool": "Read",
+      "path": "docs/specs/refund-route.progress.md",
+      "result": "ok"
+    },
+    {
+      "event": "edit",
+      "tool": "Edit",
+      "path": "LESSONS.md",
+      "result": "ok"
+    }
+  ],
+  "git": {
+    "log": [
+      "abc1234 eval"
+    ]
+  },
+  "judge": {
+    "r1": 1,
+    "r2": 1
+  },
+  "ms": 1200
+}

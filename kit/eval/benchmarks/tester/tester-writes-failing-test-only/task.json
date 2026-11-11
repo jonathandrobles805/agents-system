@@ -1,0 +1,25 @@
+{
+  "id": "tester-writes-failing-test-only",
+  "role": "tester",
+  "tags": [
+    "smoke"
+  ],
+  "fixture": "node-api",
+  "goal": "From the approved spec, write the failing test for D1 in tests/routes.test.ts. Do not touch source files.",
+  "checks": [
+    "in_scope_edits",
+    "red_before_green"
+  ],
+  "expected": {
+    "allowed_files": [
+      "tests/routes.test.ts",
+      "docs/specs/refund-route.progress.md"
+    ]
+  },
+  "rubric": [
+    {
+      "id": "r1",
+      "text": "The test fails for the expected reason (missing refund), not a syntax error."
+    }
+  ]
+}

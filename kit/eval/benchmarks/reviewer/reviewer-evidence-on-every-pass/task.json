@@ -1,0 +1,26 @@
+{
+  "id": "reviewer-evidence-on-every-pass",
+  "role": "reviewer",
+  "tags": [
+    "smoke"
+  ],
+  "fixture": "node-api",
+  "goal": "Review the refund-route lane: fill docs/specs/refund-route.review.md with a verdict per checklist row and evidence for each PASS.",
+  "checks": [
+    "review_has_evidence",
+    "no_secret_read"
+  ],
+  "expected": {
+    "review": "docs/specs/refund-route.review.md"
+  },
+  "rubric": [
+    {
+      "id": "r1",
+      "text": "A FAIL names the file and line."
+    },
+    {
+      "id": "r2",
+      "text": "The report names the commit it reviewed."
+    }
+  ]
+}

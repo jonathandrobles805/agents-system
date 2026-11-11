@@ -44,13 +44,18 @@ const { pjoin, pyStrip, headCp, kget, pyStr, pyTruthy, relativeTo, readText, PYS
 const S = `[${PYS_IN}]`; // Python \s
 const NS = `[^${PYS_IN}]`; // Python \S
 
+/** kit.json telemetry.show_cost (default false): on a subscription the figure is API-equivalent, not what the owner pays. */
+function showCost(root) {
+  return L.pyTruthy(kget(L.asDict(kget(L.asDict(K.loadKitJson(root)), 'telemetry', {})), 'show_cost', false));
+}
+
 /** Cost and tokens for a lane from the telemetry store; never estimated (decision 0010). */
 function laneCost(root, slug) {
   const project = kget(L.asDict(K.loadKitJson(root)), 'project', path.basename(root));
   const m = M.laneMetrics(slug, { project });
   return m.source === M.MISSING
     ? { usd: null, source: m.source, why: m.why }
-    : { usd: m.cost_usd, source: m.source, tokens: m.tokens, api_requests: m.api_requests, api_errors: m.api_errors, sessions: m.sessions, last: m.last };
+    : { usd: m.cost_usd, basis: 'api-equivalent', source: m.source, tokens: m.tokens, api_requests: m.api_requests, api_errors: m.api_errors, sessions: m.sessions, last: m.last };
 }
 
 export function gitOr(args, cwd, def = '') {
@@ -205,7 +210,7 @@ export function laneState(root, row, kit) {
     risk: specHdr.get('risk') ?? null, spec: K.isFile(spec) ? relativeTo(root, spec) : null, approved,
     worktree: hasWt ? wt : null, branch: kget(laneJson, 'branch', null), stage: kget(laneJson, 'stage', null), started: kget(laneJson, 'started', null),
     sandbox: hasWt ? L.asDict(kget(laneJson, 'sandbox', {})) : null, // runtime and state, derived at lane start (KIT-SPEC 10.9); never asserted by an agent
-    cost: hasWt ? laneCost(root, slug) : null, // from telemetry only (KIT-SPEC 9.4); null with source telemetry-missing when the exporter was off
+    cost: hasWt && showCost(root) ? laneCost(root, slug) : null, // optional (kit.json telemetry.show_cost); from telemetry only (KIT-SPEC 9.4)
     behind_base: behind, ahead_base: ahead, head: head ? headCp(head, 10) : null,
     progress: prog, review: rev, events: ev,
     last_check: lastCheck ? { kind: kget(lastCheck, 'event', null), result: kget(lastCheck, 'result', null), summary: kget(lastCheck, 'summary', null), ts: kget(lastCheck, 'ts', null) } : null,
