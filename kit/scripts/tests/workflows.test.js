@@ -251,3 +251,32 @@ test('field test #36–#38: a fix lane driven from the main checkout — reads a
   assert.equal(fromWt.stage, fromRoot.stage, JSON.stringify({ fromWt, fromRoot }));
   assert.notEqual(fromWt.stage, 'retro');
 });
+
+test('field test #47: a fix lane re-routed to refactor by the debugger plans, gets approved and scoped before any test or build', (t) => {
+  const { root } = project(t);
+  setGoal(root, 'refund-route', 'Work type', 'fix');
+  const specRel = path.join('docs', 'specs', 'refund-route.md');
+  const approvedSpec = read(root, specRel);
+  fs.rmSync(path.join(root, specRel));
+  F.commitAll(root, 'a fix goal has no spec yet');
+  const r = runScript('lane.js', ['start', 'refund-route', '--repo', root]);
+  assert.equal(r.returncode, 0, r.stderr);
+  const wt = JSON.parse(r.stdout).worktree;
+  const prog = path.join(wt, 'docs', 'specs', 'refund-route.progress.md');
+  fs.writeFileSync(prog, read(prog).replace('## Current step', '- evidence [verified]\n\ncause: design fault across 8 callers\n\n## Current step'));
+  let step = next(root, 'refund-route');
+  assert.equal(step.work_type, 'refactor', JSON.stringify(step));
+  assert.ok(step.rerouted);
+  assert.equal(step.stage, 'plan', JSON.stringify(step));
+  assert.equal(step.agent, 'planner');
+  fs.writeFileSync(path.join(wt, specRel), approvedSpec.replace(/^- Status: .*$/m, '- Status: waiting-approval').replace(/^.*Approved by:.*$/m, ''));
+  step = next(root, 'refund-route');
+  assert.equal(step.stage, 'approve');
+  fs.writeFileSync(path.join(wt, specRel), approvedSpec);
+  step = next(root, 'refund-route');
+  assert.equal(step.stage, 'scope', JSON.stringify(step));
+  assert.equal(runScript('lane.js', ['scope', 'refund-route', '--repo', root]).returncode, 0);
+  step = next(root, 'refund-route');
+  assert.equal(step.stage, 'test', JSON.stringify(step));
+  assert.equal(step.agent, 'tester');
+});
