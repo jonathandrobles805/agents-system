@@ -199,7 +199,7 @@ test('next step walks the pipeline from facts', (t) => {
   // lane, no red runs -> test (tester first)
   assert.equal(stage().stage, 'test');
   const prog = path.join(wt, 'docs/specs/refund-route.progress.md');
-  write(path.join(wt, 'docs/specs/refund-route.log'), '=== run\n1 failed\n\n=== run\n1 passed\n');
+  write(path.join(wt, '.claude/session/refund-route.log'), '=== 2026-11-11T10:00:00 test: npm test -> exit 1\n1 failed\n\n=== 2026-11-11T10:05:00 test: npm test -> exit 0\n1 passed\n');
   write(prog, read(prog).replaceAll('| — | — |', '| refund-route.log#1 | — |'));
   assert.equal(stage().stage, 'build');
   write(prog, read(prog).replaceAll('| refund-route.log#1 | — |', '| refund-route.log#1 | refund-route.log#4 |'));

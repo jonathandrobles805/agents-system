@@ -456,8 +456,10 @@ export class Lane {
     return path.join(this.root, 'docs', 'specs', `${this.slug}.progress.md`);
   }
 
+  /** Check output is machine output: it lives with the session files, not in docs/ (field test #44: a project's own
+   * structure check rejects *.log under docs/). References keep the form `<slug>.log#<line>`. */
   get logPath() {
-    return path.join(this.root, 'docs', 'specs', `${this.slug}.log`);
+    return path.join(this.root, '.claude', 'session', `${this.slug}.log`);
   }
 
   get eventsPath() {
@@ -659,3 +661,11 @@ export function reviewHeadOk(root, reviewedSha) {
 /** A settings.json hook entry belongs to the kit when one of its commands runs a script from the installed kit (any version). */
 export const isKitHookEntry = (entry) =>
   Array.isArray(entry?.hooks) && entry.hooks.some((h) => typeof h?.command === 'string' && /\.claude\/kit\/scripts\//.test(h.command));
+
+/**
+ * The lane a tool call acts on: the lane that holds the file (a subagent started from the main checkout may edit a
+ * worktree's files), else the lane of the session's working directory (field test #37).
+ */
+export function laneFor(cwd, absPath) {
+  return (absPath ? findLane(absPath) : null) ?? (cwd ? findLane(cwd) : null);
+}

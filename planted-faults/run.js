@@ -240,7 +240,7 @@ export function main(argv) {
 
     // 12 implementer says done with a criterion still red
     const prog = path.join(wt, 'docs', 'specs', 'refund-route.progress.md');
-    write(path.join(wt, 'docs', 'specs', 'refund-route.log'), '=== run\n1 failed\n');
+    write(path.join(wt, '.claude', 'session', 'refund-route.log'), '=== run\n1 failed\n');
     write(prog, read(prog).replaceAll('| — | — |', '| refund-route.log#1 | — |'));
     r = hook('hook_done_check.js', { ...base, hook_event_name: 'Stop', stop_hook_active: false });
     record(12, 'implementer stops with a criterion still red', 'done-check (Stop)', blocked(r) && r.stdout.includes('D1'), r.stdout);

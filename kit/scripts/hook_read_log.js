@@ -29,7 +29,11 @@ export function main() {
   }
   for (const p of paths.map((x) => K.stripChars(x, '\'"'))) {
     if (p.startsWith('-')) continue;
-    K.recordRead(root, text(d.session_id), K.relTo(root, path.isAbsolute(p) ? p : path.join(cwd, p)));
+    const abs = path.isAbsolute(p) ? p : path.join(cwd, p);
+    // record the read where the edit guard will look for it: in the lane that holds the file, if any
+    const lane = K.laneFor(null, abs);
+    const r = lane ? lane.root : root;
+    K.recordRead(r, text(d.session_id), K.relTo(r, abs));
   }
   return 0;
 }

@@ -119,7 +119,7 @@ export function progressInfo(prog) {
     for (const [, cells] of dc.tableRows()) {
       if (cells.length >= 5) {
         info.criteria += 1;
-        if (cells[3].includes('#')) info.red += 1;
+        if (cells[3].includes('#') || /^P\d+$/.test(cells[0].trim())) info.red += 1; // a P-criterion (preserved) needs no red run
         if (cells[4].includes('#')) info.green += 1;
       }
     }
@@ -189,8 +189,13 @@ export function laneState(root, row, kit) {
   const branch = kget(laneJson, 'branch', null) || `wt/${slug}`;
   const startCommit = kget(laneJson, 'start_commit', null) || kget(kget(lanes, slug, null) || {}, 'start_commit', null);
   const tip = gitOr(['rev-parse', '--verify', '--quiet', branch], root);
-  if (tip && tip !== startCommit) {
-    mergedInGit = spawnSync('git', ['merge-base', '--is-ancestor', tip, base], { cwd: root }).status === 0;
+  // Only a lane with commits of its own can be merged: a lane that only took base in would otherwise look merged
+  // (field test #38). Own commits = the lane's first-parent line since it started, without merges; sync.sh merges
+  // base with --no-ff so that line stays the lane's own.
+  if (tip && startCommit && tip !== startCommit) {
+    const own = Number(gitOr(['rev-list', '--first-parent', '--no-merges', '--count', `${startCommit}..${tip}`], root) || 0);
+    const ancestor = spawnSync('git', ['merge-base', '--is-ancestor', tip, base], { cwd: root }).status === 0;
+    mergedInGit = ancestor && own > 0;
   }
   // position
   let pos;

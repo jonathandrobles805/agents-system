@@ -3,6 +3,7 @@
 //
 //   lane.js precheck <slug> --repo R          may /implement start? (spec valid + approved, no open questions, WIP, no file overlap)
 //   lane.js scope <slug> --repo R             fix/incident: after the human approved the in-lane spec, check it and copy its criteria
+//   lane.js check <slug> <criterion> --repo R -- <command>   run a criterion's command in the lane, log it, print the log ref
 //   lane.js start <slug> --repo R [--base B]  precheck, then worktree ../<repo>-lanes/<slug> on branch wt/<slug> from fresh base; lane.json; progress skeleton
 //   lane.js stage <slug> <stage> --repo R     set lane.json stage (research|plan|build|review) and reset its clock
 //   lane.js launch <slug> --repo R [--exec]   host side: the command that starts the lane's headless session inside its sandbox (KIT-SPEC 10.9)
@@ -356,7 +357,24 @@ export function scope(root, slug) {
     const overlap = [...intersect(mine, files)].sort(cmp);
     if (overlap.length) problems.push(`file overlap with active spec '${other}': ${overlap.join(', ')}`);
   }
+  // The lane opened before its spec, from the goal's risk; the spec may raise it (the validator derives risk from the
+  // paths it touches). Re-apply the high-risk sandbox rule here, as lane.js start does for a feature (field test #41).
+  const laneData = asDict(JSON.parse(readText(lj)));
+  const specHigh = (specHeader(sp).get('risk') ?? '').toLowerCase().includes('high');
+  const kitR = asDict(K.loadKitJson(root));
+  const waiverR = asDict(kget(asDict(kget(kitR, 'sandbox', {})), 'high_risk_waiver', {}));
+  const waivedR = pyTruthy(kget(waiverR, 'reason', '')) && pyTruthy(kget(waiverR, 'by', ''));
+  const runtime = kget(asDict(kget(laneData, 'sandbox', {})), 'runtime', null);
+  if (specHigh && runtime !== 'container' && !waivedR) {
+    problems.push(`spec is high-risk: a high-risk lane requires the container sandbox runtime; this lane runs '${runtime ?? 'none'}'. Install docker (or podman) and restart the lane, or record a waiver in .claude/kit.json: "sandbox": { "high_risk_waiver": { "by": "<name>", "reason": "<why>" } }.`);
+  }
   if (problems.length) return refuse(problems);
+  if (specHigh && laneData.risk !== 'high') {
+    laneData.risk = 'high';
+    if (runtime !== 'container') laneData.sandbox = { ...asDict(laneData.sandbox), high_risk_waiver: { by: kget(waiverR, 'by', ''), reason: kget(waiverR, 'reason', '') } };
+    K.appendEvent(pjoin(wt, '.claude', 'session', 'events.jsonl'), { event: 'risk', from: 'normal', to: 'high', summary: 'the approved spec raised the lane to high risk' });
+    if (runtime !== 'container') K.appendEvent(pjoin(wt, '.claude', 'session', 'events.jsonl'), { event: 'waiver', what: 'high-risk without container', by: kget(waiverR, 'by', ''), reason: kget(waiverR, 'reason', ''), summary: `high-risk lane without container, waived by ${kget(waiverR, 'by', '')}` });
+  }
   const prog = pjoin(wt, K.workRoot(wt), `${slug}.progress.md`);
   const text = K.isFile(prog) ? readText(prog) : '';
   const sep = '|---|---|---|---|---|\n';
@@ -371,11 +389,30 @@ export function scope(root, slug) {
     writeText(prog, text.slice(0, at + sep.length) + rows.join('\n') + '\n' + text.slice(at + sep.length));
     added = rows.length;
   }
-  const lane = asDict(JSON.parse(readText(lj)));
-  lane.stage = 'test';
-  writeText(lj, K.jsonDumps(lane, { indent: 2 }) + '\n');
+  laneData.stage = 'test';
+  writeText(lj, K.jsonDumps(laneData, { indent: 2 }) + '\n');
   K.appendEvent(pjoin(wt, '.claude', 'session', 'events.jsonl'), { event: 'scope', criteria: added, summary: `spec approved; ${added} criteria copied into progress; lane at test` });
   process.stdout.write(K.jsonDumps({ slug, stage: 'test', criteria_added: added, files: [...mine].sort(cmp) }) + '\n');
+  return 0;
+}
+
+/**
+ * Run a command for a done-criterion in the lane's worktree and append it to the lane log, the same way post-edit-check
+ * does; prints the log reference to put in progress.md's Red run or Green run cell (field test #43). The reference is
+ * evidence, not a claim: done-check reads the exit code on that log line.
+ */
+export function check(root, slug, criterion, cmd) {
+  const wt = pjoin(lanesDir(root), slug);
+  if (!K.isFile(pjoin(wt, '.claude', 'lane.json'))) return refuse([`no lane for ${slug}; run lane.js start ${slug} first`]);
+  if (!cmd) return refuse(['give the command after --']);
+  const r = spawnSync('bash', ['-c', cmd], { cwd: wt, encoding: 'utf8', timeout: 900000, maxBuffer: 64 * 1024 * 1024 });
+  const code = r.status ?? 1;
+  const out = `${r.stdout ?? ''}${r.stderr ?? ''}`;
+  const lane = K.findLane(wt);
+  const line = K.appendLog(lane.logPath, `${criterion}: ${cmd} -> exit ${code}`, out);
+  const ref = `${path.basename(lane.logPath)}#${line}`;
+  K.appendEvent(lane.eventsPath, { event: 'check', criterion, command: cmd, result: code === 0 ? 'ok' : 'fail', ref, summary: `${criterion}: exit ${code}` });
+  process.stdout.write(K.jsonDumps({ criterion, exit: code, ref, tail: K.splitlines(out).slice(-8) }) + '\n');
   return 0;
 }
 
@@ -404,6 +441,18 @@ export function precheck(root, slug) {
     if (overlap.length) problems.push(`file overlap with active spec '${other}': ${overlap.join(', ')}`);
   }
   return problems;
+}
+
+/** The main checkout for a path inside a lane worktree (it has .claude/lane.json); any other path is returned as is. */
+export function mainCheckout(root) {
+  if (!K.isFile(pjoin(root, '.claude', 'lane.json'))) return root;
+  try {
+    const common = pyStrip(K.git(['rev-parse', '--path-format=absolute', '--git-common-dir'], root));
+    const main = path.dirname(common);
+    return K.isDir(main) && main !== root ? K.realResolve(main) : root;
+  } catch {
+    return root;
+  }
 }
 
 export function lanesDir(root) {
@@ -773,6 +822,10 @@ export async function nextStep(root, slug) {
     fields = goalFields(root, slug);
     prof = profileFor(fields.work_type);
   }
+  // The spec may raise the risk the goal declared (the validator derives it from the paths touched); never lower it.
+  for (const sp of [specPath(root, slug), pjoin(lanesDir(root), slug, K.workRoot(root), `${slug}.md`)]) {
+    if (K.isFile(sp) && (specHeader(sp).get('risk') ?? '').toLowerCase().includes('high')) fields = { ...fields, risk: 'high' };
+  }
   const ctx = { KS, kit, rows, row, g };
   const raw = isReproFirst(prof) ? await nextStepRepro(root, slug, ctx) : await nextStepFeature(root, slug, ctx);
   const out = withProfile(raw, prof, fields);
@@ -1011,7 +1064,9 @@ export async function main(argv = process.argv.slice(2)) {
     s.addArgument('--repo', { default: '.' });
     if (name === 'start') s.addArgument('--base');
   }
-  let s = sub.addParser('stage');
+  let s = sub.addParser('check');
+  s.addArgument('slug'); s.addArgument('criterion'); s.addArgument('command', { nargs: '*' }); s.addArgument('--repo', { default: '.' });
+  s = sub.addParser('stage');
   s.addArgument('slug'); s.addArgument('stage', { choices: ['research', 'reproduce', 'plan', 'test', 'build', 'review'] }); s.addArgument('--repo', { default: '.' });
   s = sub.addParser('merged');
   s.addArgument('slug'); s.addArgument('--repo', { default: '.' }); s.addArgument('--pr');
@@ -1045,7 +1100,8 @@ export async function main(argv = process.argv.slice(2)) {
   s.addArgument('action', { choices: ['lookup', 'add'] }); s.addArgument('question', { nargs: '?' }); s.addArgument('--repo', { default: '.' });
   s.addArgument('--json', { action: 'store_true' }); s.addArgument('--slug'); s.addArgument('--keywords', { default: '' }); s.addArgument('--files', { default: '' }); s.addArgument('--commit', { default: '' });
   const a = ap.parseArgs(argv);
-  const root = K.realResolve(a.repo);
+  // --repo may name a lane worktree; lane.js always works on the main checkout (field test #38: next-step from a worktree said 'merged')
+  const root = mainCheckout(K.realResolve(a.repo));
   if (a.cmd === 'precheck') {
     const p = precheck(root, a.slug);
     if (p.length) return refuse(p);
@@ -1054,6 +1110,7 @@ export async function main(argv = process.argv.slice(2)) {
   }
   if (a.cmd === 'start') return start(root, a.slug, a.base);
   if (a.cmd === 'scope') return scope(root, a.slug);
+  if (a.cmd === 'check') return check(root, a.slug, a.criterion, (a.command ?? []).join(' '));
   if (a.cmd === 'resume') return resume(root, a.slug);
   if (a.cmd === 'stop') return stop(root, a.by, a.reason);
   if (a.cmd === 'resume-all') return resumeAll(root, a.by);

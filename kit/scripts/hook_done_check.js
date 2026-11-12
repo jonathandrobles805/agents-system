@@ -40,10 +40,25 @@ export function main() {
       continue;
     }
     const [rid, , , red, green] = cells;
-    for (const [label, ref] of stage === 'test' ? [['red', red]] : [['red', red], ['green', green]]) {
+    // A P-criterion is preserved behaviour (must stay green): it has no honest red run (field test #42).
+    const keep = /^P\d+$/.test(rid.trim());
+    const checks = stage === 'test' ? (keep ? [] : [['red', red]]) : keep ? [['green', green]] : [['red', red], ['green', green]];
+    for (const [label, ref] of checks) {
       const m = /#(\d+)/.exec(ref);
-      if (!m) missing.push(`${rid}: no ${label} run reference (expected ${logName}#<line>)`);
-      else if (Number(m[1]) > logLines.length) missing.push(`${rid}: ${label} run ref ${ref} points past the end of ${logName} (${logLines.length} lines)`);
+      if (!m) {
+        missing.push(`${rid}: no ${label} run reference (expected ${logName}#<line>)`);
+        continue;
+      }
+      const at = Number(m[1]);
+      if (at > logLines.length) {
+        missing.push(`${rid}: ${label} run ref ${ref} points past the end of ${logName} (${logLines.length} lines)`);
+        continue;
+      }
+      // The reference must point at a logged run whose exit code says what the cell claims: red failed, green passed.
+      const ex = /-> exit (-?\d+)\s*$/.exec(logLines[at - 1] ?? '');
+      if (!ex) missing.push(`${rid}: ${label} run ref ${ref} is not a logged run (=== … -> exit N); log it with post-edit-check or lane.js check`);
+      else if (label === 'red' && Number(ex[1]) === 0) missing.push(`${rid}: red run ref ${ref} passed (exit 0); a red run must fail`);
+      else if (label === 'green' && Number(ex[1]) !== 0) missing.push(`${rid}: green run ref ${ref} failed (exit ${ex[1]}); a green run must pass`);
     }
   }
   if (missing.length) {

@@ -17,7 +17,7 @@ export function main() {
   const d = K.readHookInput();
   if (!d || Object.keys(d).length === 0) return 0;
   const cwd = text(d.cwd) || '.';
-  const root = K.projectRoot(cwd);
+  let root = K.projectRoot(cwd);
   // kill switch (KIT-SPEC 10.13): a STOP flag in the lane's session or the project refuses every mutation
   if (K.isFile(path.join(cwd, '.claude', 'session', 'STOP')) || K.isFile(path.join(root, '.claude', 'STOP'))) {
     process.stderr.write(`guard-edit: the kill switch is set; no mutations until lane.js resume-all --by <name>\n`);
@@ -27,8 +27,15 @@ export function main() {
   const fp = text(ti.file_path) || text(ti.notebook_path);
   if (!fp) return 0;
   const absPath = path.isAbsolute(fp) ? fp : path.join(cwd, fp);
+  const lane = K.laneFor(cwd, absPath);
+  if (lane) {
+    if (K.isFile(path.join(lane.root, '.claude', 'session', 'STOP'))) {
+      process.stderr.write(`guard-edit: the kill switch is set; no mutations until lane.js resume-all --by <name>\n`);
+      return 2;
+    }
+    root = lane.root;
+  }
   const rel = K.relTo(root, absPath);
-  const lane = K.findLane(cwd);
   const events = lane ? lane.eventsPath : path.join(root, '.claude', 'session', 'events.jsonl');
 
   const deny = (reason) => {

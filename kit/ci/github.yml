@@ -12,6 +12,7 @@ on:
   merge_group:
   push:
     branches: [{{default_branch}}]
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -145,6 +146,9 @@ jobs:
 
   mutation:
     name: mutation (threshold {{mutation_threshold}}%)
+    # Mutation runs are long (10+ minutes on a real repo) and private repos pay per minute. kit.json mutation_in_ci:
+    # "manual" (default) runs it only from Actions → kit → Run workflow; "pr" runs it on every change.
+    if: {{mutation_if}}
     runs-on: ubuntu-latest
     # Warning-only until {{mutation_blocking_after}} features have merged; then ci_mutation_gate.js makes it blocking.
     continue-on-error: ${{ needs.mutation-gate.outputs.blocking != 'true' }}

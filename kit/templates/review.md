@@ -28,6 +28,7 @@
 | R10 | progress.md complete and consistent with log | {{PASS|FAIL}} | {{evidence}} |
 | R11 | Adversarial test written from the spec passes | {{PASS|FAIL}} | {{evidence}} |
 | R12 | High-risk change ships behind a feature flag (or spec says Risk: low) | {{PASS|FAIL}} | {{evidence}} |
+| R13 | The project's own done gate passes (its CLAUDE.md rules and `kit.json commands.verify`, if set) | {{PASS|FAIL}} | {{evidence}} |
 
 ## Adversarial tests added
 

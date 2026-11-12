@@ -4,6 +4,19 @@ All notable changes to the kit. Each entry names the decision or lesson that cau
 
 ## [Unreleased]
 
+### Fixed (live run of a whole fix lane on a clone of hya-sandbox; field test #34–#46)
+- Hooks find the lane from the edited file's path, not only the session's directory: a subagent started from the main checkout can now work in a lane (#37). Reads are logged where the edit guard looks.
+- Red typecheck/test results count as fix attempts only in the build stage; while reproducing or writing red tests they are recorded, not fed back as "fix it" (#36, #40).
+- `"none: <reason>"` commands are never run as shell commands by post-edit-check or the coverage floor (#39).
+- `lane.js` run from inside a worktree works on the main checkout; sync merges base with `--no-ff`, and a lane is "merged in git" only with commits of its own (#38: a fast-forwarded empty lane looked merged).
+- `sync.sh` installs dependencies when the worktree never did or a lockfile changed; it fails (exit 4) when no test command is configured (#34).
+- The spec's risk raises the lane's: `next-step` reports it, and `lane.js scope` re-applies the high-risk sandbox rule (container or recorded waiver) when the spec raised the risk after the lane opened (#41).
+- New `lane.js check <slug> <criterion> -- <cmd>`: run a criterion's command in the lane, log it, print the reference. The done-check now reads the exit code on a referenced line: a red run must have failed, a green run must have passed. `P<n>` criteria (preserved behaviour) need a green run only (#42, #43).
+- The tester may write a file the approved spec names as a criterion's test (for example a check in a verify script) (#43).
+- Lane check output moved from `docs/specs/<slug>.log` to `.claude/session/<slug>.log` (a project's structure check rejected *.log under docs/) (#44).
+- Planner: the project's own required companion files (changelog, handoff, folder docs) go in Files to change (#45). Review template: R13, the project's own done gate (#46).
+- Generated CI: the mutation job runs only from Actions → Run workflow unless `kit.json mutation_in_ci` is `"pr"` (cost: 10+ minutes per push on a private repo).
+
 ### Fixed (field test #32)
 - The `fix` and `incident` workflows could not get past their first stage: `lane.js start` required an approved spec, which those profiles never produce, the debugger could not write its progress file without a lane, and `/run` had no row for `reproduce`. Now the lane opens from the agreed goal (`start → lane → reproduce → plan → approve → scope → test → …`); in a lane without an approved spec the edit guard allows only the progress file and the lane's own draft spec; the debugger proposes the pinning test instead of writing it; the planner writes the spec in the lane; a human approves; new `lane.js scope` validates it and copies its criteria. End-to-end test drives a fix goal from start to test; planted fault 45 (45/45).
 
