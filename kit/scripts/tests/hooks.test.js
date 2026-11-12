@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
+import { isoSeconds } from '../kitlib.js';
 import { git } from './fixtures.js';
 import { SCRIPTS, makeRepo, runScript } from './helpers.js';
 import { GOOD_SPEC } from './testdata.js';
@@ -21,7 +22,11 @@ function makeLane(repo, specText = GOOD_SPEC, stage = 'build', extra = null) {
   write(repo, 'docs/specs/refund-endpoint.md', specText);
   git(['add', 'docs/specs/refund-endpoint.md'], repo);
   git(['-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-q', '-m', 'spec'], repo);
-  const lane = { feature: 'refund-endpoint', spec: 'docs/specs/refund-endpoint.md', stage, started: '2026-11-08T10:00:00', ...(extra ?? {}) };
+  // `started` is measured against the current clock by hook_budget_check.hoursSince, so it must be relative:
+  // an absolute date silently crosses any hours budget once enough real time has passed. Two hours ago keeps
+  // 'budget check time limit' (hours: 0.001) over its budget and 'budget check blocks after limit' (hours: 100)
+  // well under its own, whatever the date. The format is the one lane.js:530 writes: local wall-clock, no zone.
+  const lane = { feature: 'refund-endpoint', spec: 'docs/specs/refund-endpoint.md', stage, started: isoSeconds(new Date(Date.now() - 2 * 3.6e6)), ...(extra ?? {}) };
   write(repo, '.claude/lane.json', JSON.stringify(lane));
   return repo;
 }
@@ -271,7 +276,7 @@ test('budget check blocks after limit and writes escalation', (t) => {
 
 test('budget check time limit', (t) => {
   const repo = makeRepo(t);
-  makeLane(repo, GOOD_SPEC, 'build', { budget: { tool_calls: 1000, hours: 0.001 } }); // started 2026-11-08T10:00 => long ago
+  makeLane(repo, GOOD_SPEC, 'build', { budget: { tool_calls: 1000, hours: 0.001 } }); // makeLane starts the lane two hours ago
   const r = run('hook_budget_check.js', post(repo, 'Read', { file_path: 'x' }));
   assert.equal(JSON.parse(r.stdout).decision, 'block');
 });
