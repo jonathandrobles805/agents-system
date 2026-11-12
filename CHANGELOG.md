@@ -4,6 +4,9 @@ All notable changes to the kit. Each entry names the decision or lesson that cau
 
 ## [Unreleased]
 
+### Fixed (field test #47, first run with real agents)
+- A fix lane the debugger re-routed to refactor (`cause: design fault …`) was sent straight to `build` with 0/0 criteria: the refactor profile used the feature derivation, which reads any open lane as building. Now no profile reaches `test` or `build` while its lane has no approved, scoped spec: such a lane goes plan → approve → scope first (`inLanePlanning`), and `scope` is a script stage in every profile. End-to-end test of the re-route.
+
 ### Fixed (live run of a whole fix lane on a clone of hya-sandbox; field test #34–#46)
 - Hooks find the lane from the edited file's path, not only the session's directory: a subagent started from the main checkout can now work in a lane (#37). Reads are logged where the edit guard looks.
 - Red typecheck/test results count as fix attempts only in the build stage; while reproducing or writing red tests they are recorded, not fed back as "fix it" (#36, #40).

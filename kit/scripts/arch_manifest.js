@@ -418,7 +418,7 @@ export function laneStages(laneText) {
   // next-step is the entry point; since step 7 it delegates the position derivation to nextStepFeature and maps the
   // result onto the goal's profile, so both bodies carry stages the /run table must document
   const stages = new Set();
-  for (const fn of ['export async function nextStep', 'async function nextStepFeature', 'async function nextStepRepro']) {
+  for (const fn of ['export async function nextStep', 'async function nextStepFeature', 'async function nextStepRepro', 'export function inLanePlanning']) {
     const at = laneText.indexOf(fn);
     if (at < 0) continue;
     const end = laneText.indexOf('\n}\n', at);

@@ -827,7 +827,8 @@ export async function nextStep(root, slug) {
     if (K.isFile(sp) && (specHeader(sp).get('risk') ?? '').toLowerCase().includes('high')) fields = { ...fields, risk: 'high' };
   }
   const ctx = { KS, kit, rows, row, g };
-  const raw = isReproFirst(prof) ? await nextStepRepro(root, slug, ctx) : await nextStepFeature(root, slug, ctx);
+  let raw = isReproFirst(prof) ? await nextStepRepro(root, slug, ctx) : await nextStepFeature(root, slug, ctx);
+  if (['test', 'build'].includes(raw.stage)) raw = inLanePlanning(root, slug) ?? raw;
   const out = withProfile(raw, prof, fields);
   if (rerouted) out.rerouted = rerouted;
   return out;
@@ -873,6 +874,12 @@ function withProfile(step, prof, fields) {
   const stages = shape.stages;
   let stage = step.stage;
   // a stage the profile lacks maps forward (fix/incident derive their own early stages in nextStepRepro)
+  // scope (lane.js scope) is a script stage any profile may need after a re-route from fix/incident; never map it away
+  if (stage === 'scope') {
+    out.stage = 'scope';
+    out.agent = null;
+    return out;
+  }
   if (!stages.includes(stage)) {
     const alias = { research: 'reproduce', plan: 'reproduce', approve: 'lane', retro: 'done', test: 'build', 'verify-ui': 'review' };
     let cur = stage;
@@ -900,16 +907,29 @@ async function nextStepRepro(root, slug, ctx) {
   const work = K.workRoot(wt);
   const prog = pjoin(wt, work, `${slug}.progress.md`);
   if (!/^cause:\s*\S/m.test(K.isFile(prog) ? readText(prog) : '')) return { slug, stage: 'reproduce', reason: 'no cause: line in the progress file yet' };
-  const sp = pjoin(wt, work, `${slug}.md`);
-  if (!K.isFile(sp)) return { slug, stage: 'plan', reason: 'reproduced; no spec in the lane yet' };
+  return inLanePlanning(root, slug) ?? feat;
+}
+
+/**
+ * A lane that opened before its spec (fix/incident, or one re-routed from them): plan → approve → scope inside the
+ * lane, before any test or build. Null when the lane's spec is approved and scoped (or there is no lane). Every
+ * profile goes through this, so no profile can send an agent to test or build a lane without an approved spec
+ * (field test #47: a fix re-routed to refactor was sent straight to build with 0/0 criteria).
+ */
+export function inLanePlanning(root, slug) {
+  const wt = pjoin(lanesDir(root), slug);
+  const lj = pjoin(wt, '.claude', 'lane.json');
+  if (!K.isFile(lj)) return null;
+  const sp = pjoin(wt, K.workRoot(wt), `${slug}.md`);
+  if (!K.isFile(sp)) return { slug, stage: 'plan', reason: 'the lane has no spec yet' };
   if (!APPROVAL_RE.test(readText(sp))) {
     const status = (specHeader(sp).get('status') ?? '').toLowerCase();
     if (status === 'waiting-approval') return { slug, stage: 'approve', reason: 'spec waits for the human', needs_human: true };
     return { slug, stage: 'plan', reason: `spec status '${status}' is not waiting-approval; finish planning` };
   }
-  const lane = asDict(JSON.parse(readText(pjoin(wt, '.claude', 'lane.json'))));
+  const lane = asDict(JSON.parse(readText(lj)));
   if (['reproduce', 'plan', 'approve'].includes(String(kget(lane, 'stage', '')))) return { slug, stage: 'scope', reason: 'spec approved; lane.js scope copies its criteria and moves the lane to test' };
-  return feat;
+  return null;
 }
 
 async function nextStepFeature(root, slug, { KS, kit, rows, row, g }) {
