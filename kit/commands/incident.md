@@ -10,7 +10,7 @@ Production is broken. The human said: $ARGUMENTS
 
 Triage, contain, diagnose (debugger), recover, verify, retrospective.
 
-Profile `incident`: `start → reproduce → lane → test → build → review → wait-merge → retro → done`. Human pauses: wait-merge, retro.
+Profile `incident`: `start → lane → reproduce → plan → approve → scope → test → build → review → wait-merge → retro → done`. The lane opens from the goal; the debugger works inside it; the planner writes the recovery spec; a human approves it. Human pauses: approve, wait-merge, retro.
 
 ## Step 1: classify, then start
 

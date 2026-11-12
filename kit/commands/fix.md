@@ -8,9 +8,9 @@ A defect with a symptom you can describe. The human said: $ARGUMENTS
 
 ## What this kind of work is
 
-The debugger reproduces and localizes first (read-only) and writes the failing test; no research or plan stage. If its report says the service does not boot or the suite cannot run, the controller re-routes to `incident`; if it finds a design fault, to `refactor` with a spec.
+The lane opens from the agreed goal alone. Inside it, the debugger reproduces and localizes (it writes only the progress file, ending with a `cause:` line); the planner writes a short spec from the goal and the reproduction; you approve it; then the usual test → build → review. No research stage. If the debugger's report says the service does not boot or the suite cannot run, the controller re-routes to `incident`; if it finds a design fault, to `refactor`.
 
-Profile `fix`: `start → reproduce → lane → test → build → review → wait-merge → retro → done`. Human pauses: wait-merge.
+Profile `fix`: `start → lane → reproduce → plan → approve → scope → test → build → review → wait-merge → retro → done`. Human pauses: approve, wait-merge.
 
 ## Step 1: classify, then start
 

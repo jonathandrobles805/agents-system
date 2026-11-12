@@ -2,6 +2,7 @@
 // lane: the mechanical half of the pipeline commands. Agents do the thinking; this does the git and file bookkeeping.
 //
 //   lane.js precheck <slug> --repo R          may /implement start? (spec valid + approved, no open questions, WIP, no file overlap)
+//   lane.js scope <slug> --repo R             fix/incident: after the human approved the in-lane spec, check it and copy its criteria
 //   lane.js start <slug> --repo R [--base B]  precheck, then worktree ../<repo>-lanes/<slug> on branch wt/<slug> from fresh base; lane.json; progress skeleton
 //   lane.js stage <slug> <stage> --repo R     set lane.json stage (research|plan|build|review) and reset its clock
 //   lane.js launch <slug> --repo R [--exec]   host side: the command that starts the lane's headless session inside its sandbox (KIT-SPEC 10.9)
@@ -312,6 +313,72 @@ export function wip(root) {
   return [lanes.length, limit, lanes];
 }
 
+/** A profile whose debugger works before any spec exists (fix, incident): its lane opens from the goal. */
+export function isReproFirst(prof) {
+  if (!prof || !Array.isArray(prof.stages)) return false;
+  const l = prof.stages.indexOf('lane');
+  const r = prof.stages.indexOf('reproduce');
+  return l >= 0 && r > l;
+}
+
+/** May a fix/incident lane open from its goal? Agreed goal, kill switch off, WIP limit. The spec gate moves to lane.js scope. */
+export function goalPrecheck(root, slug) {
+  const problems = [];
+  const g = goalStatus(root, slug);
+  if (!['agreed', 'running'].includes(g ?? '')) problems.push(`goal docs/goals/${slug}.md is '${g ?? 'missing'}', needs 'agreed' (run /start)`);
+  const [n, limit, lanes] = wip(root);
+  if (n >= limit) problems.push(`WIP limit reached: ${n}/${limit} in flight (${lanes.join(', ')}). Merge or escalate one first.`);
+  return problems;
+}
+
+/**
+ * fix/incident, after the human approved the spec the planner wrote inside the lane: check it like precheck does
+ * (valid, approved, no file overlap with other active lanes), fill the progress criteria from its done-criteria, and
+ * move the lane to test. Idempotent: criteria rows already present are left alone.
+ */
+export function scope(root, slug) {
+  const wt = pjoin(lanesDir(root), slug);
+  const lj = pjoin(wt, '.claude', 'lane.json');
+  if (!K.isFile(lj)) return refuse([`no lane for ${slug}; run lane.js start ${slug} first`]);
+  const sp = specPath(wt, slug);
+  if (!K.isFile(sp)) return refuse([`spec ${relativeTo(wt, sp)} does not exist in the lane; the planner writes it after the reproduction`]);
+  const problems = [];
+  const v = new V.Validator(wt, null, K.loadKitJson(wt));
+  v.run(sp, 'spec');
+  for (const x of v.v) problems.push(`spec invalid: ${x}`);
+  const status = (specHeader(sp).get('status') ?? '').toLowerCase();
+  if (!['approved', 'building'].includes(status)) problems.push(`spec status is '${specHeader(sp).get('status') ?? ''}', needs 'approved' (a human sets it with the approval line)`);
+  if (!APPROVAL_RE.test(readText(sp))) problems.push('no approval line (Approved by: <name> on <date> at <commit>)');
+  const [, change, create] = K.specFileLists(sp);
+  const mine = new Set([...change, ...create]);
+  if (!mine.size) problems.push('spec lists no files to change or create');
+  for (const [other, files] of activeSpecs(root, slug)) {
+    const overlap = [...intersect(mine, files)].sort(cmp);
+    if (overlap.length) problems.push(`file overlap with active spec '${other}': ${overlap.join(', ')}`);
+  }
+  if (problems.length) return refuse(problems);
+  const prog = pjoin(wt, K.workRoot(wt), `${slug}.progress.md`);
+  const text = K.isFile(prog) ? readText(prog) : '';
+  const sep = '|---|---|---|---|---|\n';
+  const at = text.indexOf(sep);
+  const hasRows = at >= 0 && /^\| *\S+ *\|/.test(text.slice(at + sep.length));
+  let added = 0;
+  if (at >= 0 && !hasRows) {
+    const rows = [];
+    const dc = K.parseSections(K.stripHtmlComments(K.readLines(sp))).get('done-criteria');
+    if (dc) for (const [, cells] of dc.tableRows()) if (cells.length >= 3) rows.push(`| ${cells[0]} | ${cells[1]} | ${cells[2]} | — | — |`);
+    if (!rows.length) return refuse(['spec has no done-criteria rows to copy into the progress file']);
+    writeText(prog, text.slice(0, at + sep.length) + rows.join('\n') + '\n' + text.slice(at + sep.length));
+    added = rows.length;
+  }
+  const lane = asDict(JSON.parse(readText(lj)));
+  lane.stage = 'test';
+  writeText(lj, K.jsonDumps(lane, { indent: 2 }) + '\n');
+  K.appendEvent(pjoin(wt, '.claude', 'session', 'events.jsonl'), { event: 'scope', criteria: added, summary: `spec approved; ${added} criteria copied into progress; lane at test` });
+  process.stdout.write(K.jsonDumps({ slug, stage: 'test', criteria_added: added, files: [...mine].sort(cmp) }) + '\n');
+  return 0;
+}
+
 export function precheck(root, slug) {
   const problems = [];
   const sp = specPath(root, slug);
@@ -347,7 +414,9 @@ export function start(root, slug, base) {
   if (isStopped(root)) return refuse([`kill switch set; lane.js resume-all --by <name> first`]);
   const fields = goalFields(root, slug);
   if (!profileFor(fields.work_type)) return refuse([`unknown work_type '${fields.work_type}' in docs/goals/${slug}.md; profiles: ${Object.keys(loadProfiles()).join(', ')}`]);
-  const problems = precheck(root, slug);
+  // fix/incident: the lane opens from the agreed goal alone; the debugger works inside it, the spec comes after (KIT-SPEC 10.12)
+  const reproFirst = isReproFirst(profileFor(fields.work_type)) && !K.isFile(specPath(root, slug));
+  const problems = reproFirst ? goalPrecheck(root, slug) : precheck(root, slug);
   if (problems.length) return refuse(problems);
   const kit = asDict(K.loadKitJson(root));
   base = base || kget(kit, 'default_branch', 'main');
@@ -412,7 +481,7 @@ export function start(root, slug, base) {
   const now = K.isoSeconds();
   const startCommit = pyStrip(K.git(['rev-parse', 'HEAD'], wt));
   const lane = {
-    feature: slug, spec: `docs/specs/${slug}.md`, stage: 'build', started: now, created: now,
+    feature: slug, spec: `docs/specs/${slug}.md`, stage: reproFirst ? 'reproduce' : 'build', started: now, created: now,
     base, branch, start_commit: startCommit, budget: kget(kget(kit, 'budgets', {}), 'build', {}),
     risk: highRisk ? 'high' : 'normal',
     work_type: fields.work_type, size: fields.size, domain: fields.domain,
@@ -429,7 +498,7 @@ export function start(root, slug, base) {
   // progress skeleton from the spec's done-criteria
   const sp = specPath(wt, slug);
   const rows = [];
-  const dc = K.parseSections(K.stripHtmlComments(K.readLines(sp))).get('done-criteria');
+  const dc = K.isFile(sp) ? K.parseSections(K.stripHtmlComments(K.readLines(sp))).get('done-criteria') : null;
   if (dc) {
     for (const [, cells] of dc.tableRows()) {
       if (cells.length >= 3) rows.push(`| ${cells[0]} | ${cells[1]} | ${cells[2]} | — | — |`);
@@ -440,7 +509,9 @@ export function start(root, slug, base) {
     prog,
     `# Progress: ${slug}\n\n- Spec: \`docs/specs/${slug}.md\`\n- Worktree: \`${wt}\`\n- Branch: \`${branch}\`\n- Started: ${now}\n- Last update: ${now}\n\n` +
       '## Done-criteria\n\n| # | Criterion | Test | Red run | Green run |\n|---|---|---|---|---|\n' + rows.join('\n') +
-      "\n\n## Current step\n\nreading the spec's files\n\n## Uncertainties\n\n- none\n\n## Escalation\n\n- Attempts: {{n}} of 3\n- Failure: {{what fails}}\n- Tried: {{what each attempt changed}}\n- Needs: {{decision or information}}\n",
+      (reproFirst ? "\n\n## Reproduction\n\n<!-- debugger: the steps, what happens, what should happen, the failing command and its output; end with exactly one cause: line. The criteria table above is filled by lane.js scope once the spec is approved. -->\n" : '') +
+      (reproFirst ? '\n## Current step\n\nreproducing' : "\n\n## Current step\n\nreading the spec's files") +
+      '\n\n## Uncertainties\n\n- none\n\n## Escalation\n\n- Attempts: {{n}} of 3\n- Failure: {{what fails}}\n- Tried: {{what each attempt changed}}\n- Needs: {{decision or information}}\n',
   );
   roadmapSet(wt, slug, 'building', { lane: relativeTo(path.dirname(root), wt) });
   // register the lane in the main checkout's kit.json (not committed by the lane)
@@ -702,7 +773,8 @@ export async function nextStep(root, slug) {
     fields = goalFields(root, slug);
     prof = profileFor(fields.work_type);
   }
-  const raw = await nextStepFeature(root, slug, { KS, kit, rows, row, g });
+  const ctx = { KS, kit, rows, row, g };
+  const raw = isReproFirst(prof) ? await nextStepRepro(root, slug, ctx) : await nextStepFeature(root, slug, ctx);
   const out = withProfile(raw, prof, fields);
   if (rerouted) out.rerouted = rerouted;
   return out;
@@ -747,7 +819,7 @@ function withProfile(step, prof, fields) {
   const shape = fields.work_type === 'ui' && fields.size === 'L' ? profileFor('feature') : prof;
   const stages = shape.stages;
   let stage = step.stage;
-  // the fix/incident profiles begin with the debugger: no research or plan; "research"/"plan"/"approve" map to "reproduce" until a spec exists
+  // a stage the profile lacks maps forward (fix/incident derive their own early stages in nextStepRepro)
   if (!stages.includes(stage)) {
     const alias = { research: 'reproduce', plan: 'reproduce', approve: 'lane', retro: 'done', test: 'build', 'verify-ui': 'review' };
     let cur = stage;
@@ -761,6 +833,30 @@ function withProfile(step, prof, fields) {
   if (a.ok && a.human) out.needs_human = true;
   if (fields.risk === 'high' && (prof.risk_adds ?? []).includes('security-signoff') && stage === 'wait-merge') out.requires = ['security-signoff'];
   return out;
+}
+
+/**
+ * fix/incident: lane (from the goal) → reproduce (debugger, until a cause: line) → plan (planner writes the spec in the
+ * lane) → approve (human) → scope (lane.js scope) → then the feature positions: test, build, review, wait-merge, retro.
+ */
+async function nextStepRepro(root, slug, ctx) {
+  const feat = await nextStepFeature(root, slug, ctx);
+  if (['start', 'retro', 'done', 'escalated', 'wait-merge', 'review'].includes(feat.stage)) return feat;
+  const wt = pjoin(lanesDir(root), slug);
+  if (!K.isFile(pjoin(wt, '.claude', 'lane.json'))) return { slug, stage: 'lane', reason: 'agreed goal; a fix lane opens from the goal alone' };
+  const work = K.workRoot(wt);
+  const prog = pjoin(wt, work, `${slug}.progress.md`);
+  if (!/^cause:\s*\S/m.test(K.isFile(prog) ? readText(prog) : '')) return { slug, stage: 'reproduce', reason: 'no cause: line in the progress file yet' };
+  const sp = pjoin(wt, work, `${slug}.md`);
+  if (!K.isFile(sp)) return { slug, stage: 'plan', reason: 'reproduced; no spec in the lane yet' };
+  if (!APPROVAL_RE.test(readText(sp))) {
+    const status = (specHeader(sp).get('status') ?? '').toLowerCase();
+    if (status === 'waiting-approval') return { slug, stage: 'approve', reason: 'spec waits for the human', needs_human: true };
+    return { slug, stage: 'plan', reason: `spec status '${status}' is not waiting-approval; finish planning` };
+  }
+  const lane = asDict(JSON.parse(readText(pjoin(wt, '.claude', 'lane.json'))));
+  if (['reproduce', 'plan', 'approve'].includes(String(kget(lane, 'stage', '')))) return { slug, stage: 'scope', reason: 'spec approved; lane.js scope copies its criteria and moves the lane to test' };
+  return feat;
 }
 
 async function nextStepFeature(root, slug, { KS, kit, rows, row, g }) {
@@ -909,14 +1005,14 @@ export function indexAdd(root, question, slug, keywords, files, commit) {
 export async function main(argv = process.argv.slice(2)) {
   const ap = new ArgumentParser({ prog: 'lane.js', description: DOC });
   const sub = ap.addSubparsers({ dest: 'cmd', required: true });
-  for (const name of ['precheck', 'start', 'finish']) {
+  for (const name of ['precheck', 'start', 'finish', 'scope']) {
     const s = sub.addParser(name);
     s.addArgument('slug');
     s.addArgument('--repo', { default: '.' });
     if (name === 'start') s.addArgument('--base');
   }
   let s = sub.addParser('stage');
-  s.addArgument('slug'); s.addArgument('stage', { choices: ['research', 'plan', 'test', 'build', 'review'] }); s.addArgument('--repo', { default: '.' });
+  s.addArgument('slug'); s.addArgument('stage', { choices: ['research', 'reproduce', 'plan', 'test', 'build', 'review'] }); s.addArgument('--repo', { default: '.' });
   s = sub.addParser('merged');
   s.addArgument('slug'); s.addArgument('--repo', { default: '.' }); s.addArgument('--pr');
   s = sub.addParser('resume');
@@ -957,6 +1053,7 @@ export async function main(argv = process.argv.slice(2)) {
     return 0;
   }
   if (a.cmd === 'start') return start(root, a.slug, a.base);
+  if (a.cmd === 'scope') return scope(root, a.slug);
   if (a.cmd === 'resume') return resume(root, a.slug);
   if (a.cmd === 'stop') return stop(root, a.by, a.reason);
   if (a.cmd === 'resume-all') return resumeAll(root, a.by);

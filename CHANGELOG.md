@@ -4,6 +4,9 @@ All notable changes to the kit. Each entry names the decision or lesson that cau
 
 ## [Unreleased]
 
+### Fixed (field test #32)
+- The `fix` and `incident` workflows could not get past their first stage: `lane.js start` required an approved spec, which those profiles never produce, the debugger could not write its progress file without a lane, and `/run` had no row for `reproduce`. Now the lane opens from the agreed goal (`start → lane → reproduce → plan → approve → scope → test → …`); in a lane without an approved spec the edit guard allows only the progress file and the lane's own draft spec; the debugger proposes the pinning test instead of writing it; the planner writes the spec in the lane; a human approves; new `lane.js scope` validates it and copies its criteria. End-to-end test drives a fix goal from start to test; planted fault 45 (45/45).
+
 ### Fixed (first field test, hya-sandbox; decision 0014)
 - Generated CI: the kit now loads through its own pinned root action (`action.yml`, `uses: <kit_repo>@<commit>`), so a private kit repo works without a token (one Actions access setting in the kit repo). Every job that runs a project command sets up its runtime and installs dependencies first (`commands.install`, detected from the lockfile). Commands are `run: |` block scalars (no more YAML or bash breakage on `:` or `(`). Workflow token is `contents: read`; gitleaks runs as a pinned, checksum-verified binary instead of `gitleaks-action`. A check with no command fails with `::error::`; `"none: <reason>"` passes with a visible warning; nothing is green by `echo`.
 - New `ci_audit.js`: npm audit as a ratchet; advisories at `high` or above fail unless a named human accepted them with a reason and an expiry ≤ 90 days (`.claude/audit-baseline.json`). The old default `npm audit --audit-level=high` is migrated on upgrade.

@@ -1,10 +1,13 @@
 {
   "command": "/fix",
-  "description": "A defect with a reproducible symptom. The debugger reproduces and localizes (read-only) and writes the failing test; the implementer fixes; review; human merge.",
+  "description": "A defect with a reproducible symptom. The lane opens from the agreed goal; the debugger reproduces and localizes inside it (read-only, writes only the progress file); the planner writes a short spec from the goal and the reproduction; a human approves it; the tester writes the failing test; the implementer fixes; review; human merge.",
   "stages": [
     "start",
-    "reproduce",
     "lane",
+    "reproduce",
+    "plan",
+    "approve",
+    "scope",
     "test",
     "build",
     "review",
@@ -14,12 +17,14 @@
   ],
   "agents": {
     "reproduce": "debugger",
+    "plan": "planner",
     "test": "tester",
     "build": "implementer",
     "review": "reviewer",
     "retro": "retro"
   },
   "human": [
+    "approve",
     "wait-merge"
   ],
   "size_gated": {},

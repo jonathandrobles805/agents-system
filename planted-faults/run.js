@@ -384,7 +384,7 @@ export function main(argv) {
     const st34 = run('lane.js', ['start', 'refund-route', '--repo', root34]);
     record(34, 'goal with an unknown work type', 'validate_docs + lane.js next-step + lane.js start', v34.returncode === 2 && v34.stderr.includes('goal-work-type') && JSON.parse(n34.stdout).stage === 'refused' && st34.returncode === 2, `validate exit ${v34.returncode}; next-step ${JSON.parse(n34.stdout).stage}; start exit ${st34.returncode}`);
     // 35 agent for an unlisted stage
-    const a35 = run('lane.js', ['agent-for', 'fix', 'plan', '--repo', root34]);
+    const a35 = run('lane.js', ['agent-for', 'fix', 'research', '--repo', root34]);
     const a35ok = run('lane.js', ['agent-for', 'fix', 'reproduce', '--repo', root34]);
     record(35, 'agent requested for a stage its profile does not list', 'lane.js agent-for', a35.returncode === 2 && a35.stderr.includes('not in the fix profile') && JSON.parse(a35ok.stdout).agent === 'debugger', a35.stderr.trim());
     // 38 security forces high risk
@@ -563,6 +563,17 @@ export function main(argv) {
     write(path.join(r44, 'package.json'), JSON.stringify({ ...pj44, devDependencies: { ...(pj44.devDependencies ?? {}), 'dependency-cruiser': '16.0.0' } }));
     const det44 = JSON.parse(run('bootstrap.js', ['--repo', r44, '--dry-run', '--json']).stdout).detection;
     record(44, 'bootstrap proposes a command aimed at a config or folder that does not exist', 'bootstrap verifyDetected (evidence per command)', !det44.commands.boundaries && /no config/.test(det44.missing_tools.boundaries ?? ''), `boundaries: ${det44.commands.boundaries ?? 'not proposed'}; ${det44.command_evidence.boundaries}`);
+
+    // 45 a fix lane dead-ends at reproduce (no spec, no lane, debugger cannot write) -> the lane opens from the goal and walks to test
+    const r45 = fresh('f45');
+    const g45 = path.join(r45, 'docs', 'goals', 'fix-it.md');
+    writeP(g45, '# Goal: fix-it\n\n- Slug: fix-it\n- Date: 2026-11-11\n- Agreed by: J and Claude on 2026-11-11\n- Status: agreed\n- Work type: fix\n\n## What we want\n\nA fix.\n\n## Done looks like\n\n- G1. it works\n');
+    run('bootstrap.js', ['--repo', r45]);
+    write(path.join(r45, 'ROADMAP.md'), read(path.join(r45, 'ROADMAP.md')).replace(/^\| TODO\(bootstrap: ROADMAP\.md — feature\).*$/m, '| fix it | fix-it | M1 | queued | — | — | — |'));
+    F.commitAll(r45, 'goal');
+    const s45 = run('lane.js', ['start', 'fix-it', '--repo', r45]);
+    const n45 = s45.returncode === 0 ? JSON.parse(run('lane.js', ['next-step', 'fix-it', '--repo', r45]).stdout) : {};
+    record(45, 'a fix lane cannot get past reproduce', 'lane.js start from the goal (fix/incident) + next-step reproduce → plan → approve → scope', s45.returncode === 0 && n45.stage === 'reproduce' && n45.agent === 'debugger', `start: ${s45.returncode} ${s45.stderr.trim().split('\n')[0] ?? ''}; next: ${n45.stage} ${n45.agent}`);
   } finally {
     if (a.keep) process.stderr.write(`fixtures kept at ${tmp}\n`);
     else fs.rmSync(tmp, { recursive: true, force: true });

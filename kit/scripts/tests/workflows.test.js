@@ -6,6 +6,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import * as L from '../lane.js';
+import * as K from '../kitlib.js';
 import * as F from './fixtures.js';
 import { runScript, tmpPath } from './helpers.js';
 import { project } from './testdata.js';
@@ -51,8 +52,9 @@ test('the workflow table: eleven profiles, every stage names at most one agent, 
 test('allowedAgent: the one agent for a stage; unknown type and unlisted stage are refused', () => {
   assert.deepEqual(L.allowedAgent('feature', 'build'), { ok: true, agent: 'implementer', human: false });
   assert.deepEqual(L.allowedAgent('feature', 'approve'), { ok: true, agent: null, human: true });
-  assert.equal(L.allowedAgent('fix', 'plan').ok, false);
-  assert.ok(L.allowedAgent('fix', 'plan').why.includes("not in the fix profile"));
+  assert.equal(L.allowedAgent('fix', 'research').ok, false);
+  assert.ok(L.allowedAgent('fix', 'research').why.includes("not in the fix profile"));
+  assert.deepEqual(L.allowedAgent('fix', 'plan'), { ok: true, agent: 'planner', human: false });
   assert.equal(L.allowedAgent('deployment', 'build').ok, false);
   assert.ok(L.allowedAgent('deployment', 'build').why.includes("unknown work_type 'deployment'"));
   const r = runScript('lane.js', ['agent-for', 'ui', 'research']);
@@ -86,17 +88,48 @@ test('unknown work_type: next-step refuses, lane start refuses, validate-docs fl
   assert.ok(v.stderr.includes('goal-work-type'));
 });
 
-test('a profile without research/plan maps those positions forward: fix goes to reproduce, and the agent is the debugger', (t) => {
+test('fix lane end to end from the goal alone: lane → reproduce → plan → approve → scope → test (fault 45: the fix lane dead-ends at reproduce)', (t) => {
   const { root } = project(t);
   setGoal(root, 'refund-route', 'Work type', 'fix');
-  // remove the spec so the lane is at the "no spec" position, which the feature route calls research/plan
-  fs.rmSync(path.join(root, 'docs', 'specs', 'refund-route.md'));
-  F.commitAll(root, 'no spec');
-  const step = next(root, 'refund-route');
-  assert.equal(step.work_type, 'fix');
-  assert.equal(step.stage, 'reproduce', JSON.stringify(step));
+  const specRel = path.join('docs', 'specs', 'refund-route.md');
+  const approvedSpec = read(root, specRel);
+  fs.rmSync(path.join(root, specRel));
+  F.commitAll(root, 'a fix goal has no spec yet');
+  let step = next(root, 'refund-route');
+  assert.equal(step.stage, 'lane', JSON.stringify(step));
+  const r = runScript('lane.js', ['start', 'refund-route', '--repo', root]);
+  assert.equal(r.returncode, 0, r.stderr);
+  const wt = JSON.parse(r.stdout).worktree;
+  assert.equal(JSON.parse(read(wt, '.claude', 'lane.json')).stage, 'reproduce');
+  const prog = path.join(wt, 'docs', 'specs', 'refund-route.progress.md');
+  assert.ok(read(prog).includes('## Reproduction'));
+  step = next(root, 'refund-route');
+  assert.equal(step.stage, 'reproduce');
   assert.equal(step.agent, 'debugger');
-  assert.ok(step.mapped_from);
+  // the debugger's only write: the reproduction and the cause line, in the lane's progress file (allowed by the lane)
+  assert.ok(new K.Lane(wt, { feature: 'refund-route' }).alwaysAllowed().includes('docs/specs/refund-route.progress.md'));
+  fs.writeFileSync(prog, read(prog).replace('## Current step', '- `npx vitest run` fails on routes.test.ts [verified]\n\ncause: single defect in src/api/routes.ts\n\n## Current step'));
+  step = next(root, 'refund-route');
+  assert.equal(step.stage, 'plan', JSON.stringify(step));
+  assert.equal(step.agent, 'planner');
+  const draft = approvedSpec.replace(/^- Status: .*$/m, '- Status: waiting-approval').replace(/^.*Approved by:.*$/m, '');
+  fs.writeFileSync(path.join(wt, specRel), draft);
+  step = next(root, 'refund-route');
+  assert.equal(step.stage, 'approve');
+  assert.equal(step.needs_human, true);
+  // scope refuses until the human approved
+  assert.equal(runScript('lane.js', ['scope', 'refund-route', '--repo', root]).returncode, 2);
+  fs.writeFileSync(path.join(wt, specRel), approvedSpec);
+  step = next(root, 'refund-route');
+  assert.equal(step.stage, 'scope', JSON.stringify(step));
+  const sc = runScript('lane.js', ['scope', 'refund-route', '--repo', root]);
+  assert.equal(sc.returncode, 0, sc.stderr);
+  assert.ok(JSON.parse(sc.stdout).criteria_added > 0);
+  assert.equal(runScript('lane.js', ['scope', 'refund-route', '--repo', root]).returncode, 0, 'idempotent');
+  assert.equal(JSON.parse(sc.stdout).criteria_added, (read(prog).match(/\| — \| — \|$/gm) ?? []).length);
+  step = next(root, 'refund-route');
+  assert.equal(step.stage, 'test', JSON.stringify(step));
+  assert.equal(step.agent, 'tester');
 });
 
 test('security and migration force risk high; a high-risk lane needs the container runtime', (t) => {

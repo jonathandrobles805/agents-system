@@ -468,7 +468,7 @@ Routing is a version-controlled table: one profile per kind of work in `kit/work
 | Work type | Command | Stages |
 |---|---|---|
 | feature | `/new-feature` | start → research → plan → **approve** → lane → test → build → review → **wait-merge** → retro → done |
-| fix | `/fix` | start → reproduce (debugger) → lane → test → build → review → **wait-merge** → retro → done |
+| fix | `/fix` | start → lane (from the goal) → reproduce (debugger) → plan (planner, in the lane) → **approve** → scope → test → build → review → **wait-merge** → retro → done |
 | ui | `/ui` | start → inspect → lane → build → verify-ui → review → **wait-merge** → done; at size L, the feature shape |
 | refactor | `/refactor` | start → research → plan → **approve** → lane → test → build → review → **wait-merge** → done |
 | docs | `/docs` | start → inspect → lane → build → review → **wait-merge** → done |
@@ -478,6 +478,8 @@ Routing is a version-controlled table: one profile per kind of work in `kit/work
 | migration | `/migrate` | feature stages without retro; risk forced high; requires backup and restore validation |
 | incident | `/incident` | the fix stages, with retro |
 | skill-development | `/new-skill` | start → research → plan (skill-smith) → **approve** → lane → build (skill-smith) → review → **wait-merge** → done; kit-level |
+
+**fix and incident open their lane from the goal (field test #32).** A defect has no spec until it is understood, so `lane.js start` opens a fix/incident lane from an agreed goal alone (WIP and kill switch still apply), at stage `reproduce`. In the lane, before a spec exists, the edit guard allows only the lane's progress file and the lane's own unapproved spec. The debugger writes its reproduction and `cause:` line to progress; the planner writes the spec from the goal and the reproduction; a human approves it; `lane.js scope` then checks it like `precheck` (valid, approved, files listed, no overlap with another lane), copies its done-criteria into progress, and moves the lane to `test`. From there the lane is a normal one. Planted fault 45.
 
 **Goal fields.** `docs/goals/<slug>.md` carries `Work type`, `Risk`, `Size` and `Domain`. Absent fields mean `feature`, `normal`, `M`, none, so every existing goal keeps today's route. `validate_docs` rejects an unknown work type, risk or size. `security` and `migration` force `Risk: high`.
 

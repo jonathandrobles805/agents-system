@@ -48,7 +48,11 @@ export function main() {
     const [, change, create] = K.specFileLists(lane.specPath);
     const allowed = [...change, ...create, ...lane.alwaysAllowed()];
     const specRel = K.relTo(root, lane.specPath);
+    // fix/incident lanes open before their spec exists (KIT-SPEC 10.12): until a human approves it, the lane's own spec
+    // may be written (the planner, after the debugger's reproduction); once the approval line is there it is frozen.
+    const specApproved = K.isFile(lane.specPath) && /Approved by:/.test(fs.readFileSync(lane.specPath, 'utf8'));
     if (rel === specRel || (rel.startsWith(K.workRoot(root) + '/') && rel.endsWith('.md') && !rel.endsWith('.progress.md') && !rel.includes('.review.'))) {
+      if (rel === specRel && !specApproved) return exists && !K.wasRead(root, text(d.session_id), rel) ? deny(`guard-edit: '${rel}' has not been read in this session. Read the file first, then edit it.`) : 0;
       if (rel === specRel) {
         return deny(`guard-edit: '${rel}' is the approved spec. Changing it requires re-approval; write the needed change in progress.md under Escalation.`);
       }
@@ -60,7 +64,9 @@ export function main() {
       return deny(`guard-edit: '${rel}' is a lane artifact outside '${work}/'. Lane files live only under ${work}/ (kit.json paths.work).`);
     }
     if (!(change.length + create.length)) {
-      return deny(`guard-edit: lane '${lane.slug}' has no 'Files to change' list in ${specRel}; nothing may be edited until the spec names its files.`);
+      // no spec yet (or no files in it): only the lane's own artifacts (progress, log, events) and decision records
+      if (K.globMatch(rel, lane.alwaysAllowed())) return exists && !K.wasRead(root, text(d.session_id), rel) ? deny(`guard-edit: '${rel}' has not been read in this session. Read the file first, then edit it.`) : 0;
+      return deny(`guard-edit: lane '${lane.slug}' has no 'Files to change' list in ${specRel}; nothing but the lane's progress file may be edited until the spec names its files.`);
     }
     if (!K.globMatch(rel, allowed)) {
       return deny(
