@@ -29,7 +29,7 @@ test('all commands exist with frontmatter', () => {
 });
 
 test('commands reference real scripts and subcommands', () => {
-  const laneSubs = new Set(['precheck', 'start', 'stage', 'wip', 'unknowns', 'merged', 'incident', 'next-step', 'next', 'goal-set', 'roadmap-set', 'index', 'finish', 'launch', 'resume', 'stop', 'resume-all', 'profiles', 'agent-for']);
+  const laneSubs = new Set(['precheck', 'start', 'stage', 'wip', 'unknowns', 'merged', 'incident', 'next-step', 'next', 'goal-set', 'roadmap-set', 'index', 'finish', 'launch', 'resume', 'stop', 'resume-all', 'profiles', 'agent-for', 'scope']);
   for (const p of COMMANDS) {
     const text = read(p);
     for (const m of text.matchAll(/kit\/scripts\/([a-z_]+\.js)/g)) {

@@ -1407,7 +1407,19 @@
       "file": "kit/commands/run.md",
       "from": "command:run",
       "kind": "spawns",
+      "to": "agent:debugger"
+    },
+    {
+      "file": "kit/commands/run.md",
+      "from": "command:run",
+      "kind": "spawns",
       "to": "agent:implementer"
+    },
+    {
+      "file": "kit/commands/run.md",
+      "from": "command:run",
+      "kind": "spawns",
+      "to": "agent:planner"
     },
     {
       "file": "kit/commands/run.md",
@@ -2833,6 +2845,12 @@
       "file": "kit/scripts/tests/workflows.test.js",
       "from": "test:workflows",
       "kind": "tests",
+      "to": "script:kitlib"
+    },
+    {
+      "file": "kit/scripts/tests/workflows.test.js",
+      "from": "test:workflows",
+      "kind": "tests",
       "to": "script:lane"
     },
     {
@@ -3062,7 +3080,7 @@
   "nodes": [
     {
       "attrs": {
-        "description": "Reproduces a reported failure, localizes its cause (bisecting when a known-good commit exists), writes the failing test that pins it, and names the kind of work the evidence shows. Read-only on application code; the implementer fixes. First stage of the fix and incident profiles.",
+        "description": "Reproduces a reported failure inside the lane, localizes its cause (bisecting when a known-good commit exists), proposes the failing test that will pin it, and names the kind of work the evidence shows. Writes only the lane's progress file; the planner writes the spec, the tester the test, the implementer the fix. First agent of the fix and incident profiles.",
         "model": "opus",
         "tools": [
           "Read",
@@ -4693,6 +4711,22 @@
         "status"
       ],
       "id": "done",
+      "pause": null
+    },
+    {
+      "agents": [
+        "debugger"
+      ],
+      "commands": [],
+      "id": "reproduce",
+      "pause": null
+    },
+    {
+      "agents": [
+        "planner"
+      ],
+      "commands": [],
+      "id": "scope",
       "pause": null
     }
   ],

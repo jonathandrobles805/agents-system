@@ -1,10 +1,13 @@
 {
   "command": "/incident",
-  "description": "Production is broken. Triage, contain, diagnose (debugger), recover, verify, retrospective.",
+  "description": "Production is broken. The lane opens from the agreed goal; the debugger triages, reproduces and localizes inside it; the planner writes the recovery spec; a human approves it; test, fix, review, human merge, retrospective.",
   "stages": [
     "start",
-    "reproduce",
     "lane",
+    "reproduce",
+    "plan",
+    "approve",
+    "scope",
     "test",
     "build",
     "review",
@@ -14,12 +17,14 @@
   ],
   "agents": {
     "reproduce": "debugger",
+    "plan": "planner",
     "test": "tester",
     "build": "implementer",
     "review": "reviewer",
     "retro": "retro"
   },
   "human": [
+    "approve",
     "wait-merge",
     "retro"
   ],
