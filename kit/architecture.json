@@ -400,6 +400,13 @@
       "from": "ci-job:kit/eval-smoke",
       "kind": "runs",
       "step": "eval smoke set against the real agents (optional; runs when a credential secret exists)",
+      "to": "test:bypass"
+    },
+    {
+      "file": ".github/workflows/kit.yml",
+      "from": "ci-job:kit/eval-smoke",
+      "kind": "runs",
+      "step": "eval smoke set against the real agents (optional; runs when a credential secret exists)",
       "to": "test:ci_scripts"
     },
     {
@@ -592,6 +599,19 @@
       "kind": "runs",
       "step": "architecture map matches the code (kit/manifest.json declares every component; kit/architecture.json is current)",
       "to": "test:bootstrap"
+    },
+    {
+      "file": ".github/workflows/kit.yml",
+      "from": "ci-job:kit/scripts",
+      "kind": "runs",
+      "to": "test:bypass"
+    },
+    {
+      "file": ".github/workflows/kit.yml",
+      "from": "ci-job:kit/scripts",
+      "kind": "runs",
+      "step": "architecture map matches the code (kit/manifest.json declares every component; kit/architecture.json is current)",
+      "to": "test:bypass"
     },
     {
       "file": ".github/workflows/kit.yml",
@@ -2095,6 +2115,12 @@
       "file": "release.sh",
       "from": "shell:release.sh",
       "kind": "runs",
+      "to": "test:bypass"
+    },
+    {
+      "file": "release.sh",
+      "from": "shell:release.sh",
+      "kind": "runs",
       "to": "test:ci_scripts"
     },
     {
@@ -2360,6 +2386,84 @@
       "from": "test:bootstrap",
       "kind": "tests",
       "to": "script:kitlib"
+    },
+    {
+      "file": "kit/scripts/tests/bypass.test.js",
+      "from": "test:bypass",
+      "kind": "tests",
+      "to": "ci:guards_present"
+    },
+    {
+      "file": "kit/scripts/tests/bypass.test.js",
+      "from": "test:bypass",
+      "kind": "tests",
+      "to": "ci:security_floor"
+    },
+    {
+      "file": "kit/scripts/tests/bypass.test.js",
+      "from": "test:bypass",
+      "kind": "tests",
+      "to": "ci:test_count"
+    },
+    {
+      "file": "kit/scripts/tests/bypass.test.js",
+      "from": "test:bypass",
+      "kind": "tests",
+      "to": "hook:done_check"
+    },
+    {
+      "file": "kit/scripts/tests/bypass.test.js",
+      "from": "test:bypass",
+      "kind": "tests",
+      "to": "hook:guard_bash"
+    },
+    {
+      "file": "kit/scripts/tests/bypass.test.js",
+      "from": "test:bypass",
+      "kind": "tests",
+      "to": "hook:guard_edit"
+    },
+    {
+      "file": "kit/scripts/tests/bypass.test.js",
+      "from": "test:bypass",
+      "kind": "tests",
+      "to": "hook:guard_read"
+    },
+    {
+      "file": "kit/scripts/tests/bypass.test.js",
+      "from": "test:bypass",
+      "kind": "tests",
+      "to": "hook:post_edit_check"
+    },
+    {
+      "file": "kit/scripts/tests/bypass.test.js",
+      "from": "test:bypass",
+      "kind": "tests",
+      "to": "script:bootstrap"
+    },
+    {
+      "file": "kit/scripts/tests/bypass.test.js",
+      "from": "test:bypass",
+      "kind": "tests",
+      "to": "script:kitlib"
+    },
+    {
+      "file": "kit/scripts/tests/bypass.test.js",
+      "from": "test:bypass",
+      "kind": "tests",
+      "to": "script:lane"
+    },
+    {
+      "file": "kit/scripts/tests/bypass.test.js",
+      "from": "test:bypass",
+      "kind": "tests",
+      "to": "script:sandbox"
+    },
+    {
+      "file": "kit/scripts/tests/bypass.test.js",
+      "from": "test:bypass",
+      "kind": "tests",
+      "to": "script:validate_docs"
     },
     {
       "file": "kit/scripts/tests/ci_scripts.test.js",
@@ -4468,6 +4572,13 @@
       "kind": "test",
       "label": "bootstrap_adopt.test.js",
       "path": "kit/scripts/tests/bootstrap_adopt.test.js"
+    },
+    {
+      "attrs": {},
+      "id": "test:bypass",
+      "kind": "test",
+      "label": "bypass.test.js",
+      "path": "kit/scripts/tests/bypass.test.js"
     },
     {
       "attrs": {},
