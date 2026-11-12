@@ -848,6 +848,7 @@ export class Bootstrap {
       budgets: get(existing, 'budgets', DEFAULT_BUDGETS),
       mutation_threshold: get(existing, 'mutation_threshold', 70),
       mutation_blocking_after_features: get(existing, 'mutation_blocking_after_features', 2),
+      mutation_in_ci: get(existing, 'mutation_in_ci', 'manual'),
       second_reviewer_model: get(existing, 'second_reviewer_model', get(ans, 'second_reviewer_model', '')), // empty = same model family, different checklist
       claude_md_cap_bytes: get(existing, 'claude_md_cap_bytes', 4000),
       // KIT-SPEC 10.10: the lane database adapter, from detection unless answered or already set
@@ -1011,12 +1012,28 @@ if git remote get-url origin >/dev/null 2>&1; then
 else
   TARGET="$BASE"
 fi
-if ! git merge --no-edit "$TARGET"; then
+# --no-ff: the lane keeps its own first-parent line, so a lane with nothing of its own never looks merged
+if ! git merge --no-ff --no-edit "$TARGET"; then
   echo "sync: merge conflict with $BASE. Resolve once (counts as a failed attempt), re-run tests, or escalate." >&2
   exit 3
 fi
-${pyStr(get(cmds, 'test', 'echo "no test command configured"'))}
+${this.syncInstall(cmds)}${isConfigured(get(cmds, 'test', null)) ? pyStr(get(cmds, 'test', '')) : 'echo "sync: no test command configured; nothing proves this worktree passes" >&2; exit 4'}
 echo "sync: up to date with $BASE and tests pass"
+`;
+  }
+
+  /** sync.sh: install dependencies when this worktree has never installed them or a lockfile changed (field test #34). */
+  syncInstall(cmds) {
+    const inst = get(cmds, 'install', null);
+    if (!isConfigured(inst)) return '';
+    return `# dependencies: install when this worktree never did, or when a lockfile changed since the last install
+LOCKSUM="$({ cat package-lock.json npm-shrinkwrap.json pnpm-lock.yaml yarn.lock bun.lock uv.lock poetry.lock requirements.txt go.sum Cargo.lock 2>/dev/null || true; } | sha256sum | cut -c1-16)"
+MARK=.claude/session/install.sum
+if [ ! -f "$MARK" ] || [ "$(cat "$MARK")" != "$LOCKSUM" ]; then
+  echo "sync: installing dependencies (${pyStr(inst).replaceAll('"', '\\"')})"
+  ${pyStr(inst)}
+  mkdir -p .claude/session && echo "$LOCKSUM" > "$MARK"
+fi
 `;
   }
 
@@ -1046,6 +1063,7 @@ echo "sync: up to date with $BASE and tests pass"
       ...values, ['setup', this.ciSetup(cmds)], ['default_branch', kit.default_branch],
       ['kit_version', KIT_VERSION], ['kit_repo', repo], ['kit_ref', ref],
       ['gitleaks_version', GITLEAKS.version], ['gitleaks_sha256', GITLEAKS.sha256],
+      ['mutation_if', get(kit, 'mutation_in_ci', 'manual') === 'pr' ? 'true' : "github.event_name == 'workflow_dispatch'"],
       ['mutation_threshold', pyStr(kit.mutation_threshold)], ['mutation_blocking_after', pyStr(kit.mutation_blocking_after_features)],
     ]);
     return ['.github/workflows/kit.yml', text];
@@ -1165,7 +1183,7 @@ echo "sync: up to date with $BASE and tests pass"
       this.write('LESSONS.md', this.lessons(), 'human');
       this.write('.github/CODEOWNERS', this.codeowners(), 'human');
       this.write('docs/research/INDEX.md', tmpl('index.md'), 'human');
-      this.write('docs/specs/README.md', '# Specs\n\nOne file per feature, from `~/.claude/kit/templates/spec.md`. Companion files: `<slug>.progress.md`, `<slug>.review.md`, `<slug>.log`, `<slug>.events.jsonl`.\n', 'human');
+      this.write('docs/specs/README.md', '# Specs\n\nOne file per feature, from `~/.claude/kit/templates/spec.md`. Companion files: `<slug>.progress.md`, `<slug>.review.md`, `<slug>.events.jsonl`; check output goes to `.claude/session/<slug>.log`.\n', 'human');
       this.write(this.decisionPath('adopt-agent-kit'), fill(tmpl('decision.md'), [
         ['NNNN', this.nextDecisionNumber()], ['title', 'Adopt the agent kit'], ['date', TODAY],
         ['what situation forced a decision', 'Agents guessed, branches drifted, and rules lived only in prompts.'],

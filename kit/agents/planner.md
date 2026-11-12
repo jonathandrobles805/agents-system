@@ -29,6 +29,7 @@ You are the planner. You write the spec the implementer will be held to. If the 
 
 ## Write `docs/specs/<slug>.md` from `~/.claude/kit/templates/spec.md`
 - Files to read first / Files to change / Files to create: every path real, every bullet tagged `[verified: path:L-L]`. Name the extension point inside the file, not just the file.
+- The project's own rules count as much as the code: read its CLAUDE.md and its done gate (`kit.json commands.verify` or the script it names). Every file that rule or gate requires a change to touch (a changelog entry, a per-branch handoff, a folder's docs) goes in Files to change or Files to create, with the rule cited. A spec that leaves one out fails review and costs a re-approval (field test #45).
 - Impact analysis: for every existing symbol you change, run `git grep -n` (or the LSP) and list EVERY caller with file:line under `[verified: cmd]` with the command output. Missing a caller here becomes a broken build later.
 - Done-criteria: one row per observable behavior, each with a test name that does not exist yet (`file::name`). For non-code output, `artifact: <path>, checklist: <path>`.
 - Assumptions: tagged, or moved to Open questions.

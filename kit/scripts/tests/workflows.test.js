@@ -206,3 +206,48 @@ test('profiles and the goal template are consistent with the commands and agents
   const tmpl = read(kit, 'templates', 'goal.md');
   for (const f of ['- Work type:', '- Risk:', '- Size:', '- Domain:']) assert.ok(tmpl.includes(f), f);
 });
+
+test('field test #36–#38: a fix lane driven from the main checkout — reads and edits land in the lane, red is not an attempt before build, next-step agrees from either checkout', (t) => {
+  const { root } = project(t);
+  setGoal(root, 'refund-route', 'Work type', 'fix');
+  fs.rmSync(path.join(root, 'docs', 'specs', 'refund-route.md'));
+  F.commitAll(root, 'a fix goal has no spec yet');
+  const r = runScript('lane.js', ['start', 'refund-route', '--repo', root]);
+  assert.equal(r.returncode, 0, r.stderr);
+  const wt = JSON.parse(r.stdout).worktree;
+  const prog = path.join(wt, 'docs', 'specs', 'refund-route.progress.md');
+  const sid = 'debugger-session';
+  // #37: the debugger runs as a subagent whose cwd is the main checkout; it reads then writes the lane's progress file
+  const call = (name, payload) => runScript(name, [], { stdin: JSON.stringify({ session_id: sid, cwd: root, ...payload }) });
+  assert.equal(call('hook_read_log.js', { tool_name: 'Read', tool_input: { file_path: prog } }).returncode, 0);
+  const w = { tool_name: 'Write', tool_input: { file_path: prog, content: 'x' } };
+  const ge = call('hook_guard_edit.js', w);
+  assert.equal(ge.returncode, 0, ge.stderr);
+  assert.equal(call('hook_guard_tests_only.js', w).returncode, 0);
+  // and still cannot write application code in the lane
+  assert.equal(call('hook_guard_edit.js', { tool_name: 'Write', tool_input: { file_path: path.join(wt, 'src', 'api', 'routes.ts'), content: 'x' } }).returncode, 2);
+  // #36: a red check while reproducing is expected; four in a row do not escalate
+  const kj = path.join(wt, '.claude', 'kit.json');
+  const k = JSON.parse(read(kj));
+  k.commands = { ...(k.commands ?? {}), typecheck: 'node -e "process.exit(1)"', test: 'node -e "process.exit(0)"', lint: 'none: no linter adopted' };
+  delete k.commands.test_affected;
+  fs.writeFileSync(kj, JSON.stringify(k, null, 2));
+  for (let i = 0; i < 4; i++) {
+    const pe = call('hook_post_edit_check.js', w);
+    // #40: red while reproducing is recorded, not fed back as "fix it"; #39: "none: <reason>" is never run as a command
+    assert.equal(pe.returncode, 0, pe.stdout + pe.stderr);
+    assert.ok(!pe.stdout.includes('"block"'), pe.stdout);
+  }
+  assert.ok(!read(path.join(wt, '.claude', 'session', 'refund-route.log')).includes('none: no linter'), 'none: is not run');
+  assert.ok(!/Attempts: \d+ of 3/.test(read(prog)) || read(prog).includes('{{n}}'), 'no escalation written while reproducing');
+  // in build, the same red result is counted and escalates on the third
+  const lj = path.join(wt, '.claude', 'lane.json');
+  fs.writeFileSync(lj, JSON.stringify({ ...JSON.parse(read(lj)), stage: 'build' }, null, 2));
+  for (let i = 0; i < 3; i++) call('hook_post_edit_check.js', w);
+  assert.ok(/Attempts: 3 of 3/.test(read(prog)), read(prog).slice(-400));
+  // #38: next-step gives the same answer from the worktree as from the main checkout
+  const fromWt = JSON.parse(runScript('lane.js', ['next-step', 'refund-route', '--repo', wt]).stdout);
+  const fromRoot = JSON.parse(runScript('lane.js', ['next-step', 'refund-route', '--repo', root]).stdout);
+  assert.equal(fromWt.stage, fromRoot.stage, JSON.stringify({ fromWt, fromRoot }));
+  assert.notEqual(fromWt.stage, 'retro');
+});

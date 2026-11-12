@@ -104,7 +104,7 @@ test('pipeline mechanics end to end', (t) => {
   // post-edit check: red (marker absent) -> block decision + log + event
   r = hook('hook_post_edit_check.js', { ...base, hook_event_name: 'PostToolUse', tool_name: 'Write', tool_input: { file_path: 'tests/routes.test.ts' } });
   assert.equal(JSON.parse(r.stdout).decision, 'block');
-  const log = path.join(wt, 'docs/specs/refund-route.log');
+  const log = path.join(wt, '.claude/session/refund-route.log');
   const events = path.join(wt, 'docs/specs/refund-route.events.jsonl');
   assert.ok(read(log).includes('1 failed, 2 passed'));
   const redLine = lines(log).findIndex((l) => l.startsWith('=== ')) + 1;

@@ -2839,6 +2839,18 @@
       "file": "kit/scripts/tests/workflows.test.js",
       "from": "test:workflows",
       "kind": "tests",
+      "to": "hook:guard_tests_only"
+    },
+    {
+      "file": "kit/scripts/tests/workflows.test.js",
+      "from": "test:workflows",
+      "kind": "tests",
+      "to": "hook:post_edit_check"
+    },
+    {
+      "file": "kit/scripts/tests/workflows.test.js",
+      "from": "test:workflows",
+      "kind": "tests",
       "to": "hook:read_log"
     },
     {

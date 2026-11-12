@@ -65,7 +65,7 @@ export function check({ root, base = null, ratchet = false }) {
   const kitPath = path.join(root, '.claude', 'kit.json');
   const kit = K.loadKitJson(root);
   const floor = typeof kit.coverage_floor === 'number' ? kit.coverage_floor : null;
-  const hasCommand = typeof kit.commands?.coverage === 'string' && kit.commands.coverage;
+  const hasCommand = typeof kit.commands?.coverage === 'string' && kit.commands.coverage.trim() !== '' && !/^none\b/i.test(kit.commands.coverage.trim());
   const cov = readCoverage(root);
   const problems = [];
   const notes = [];

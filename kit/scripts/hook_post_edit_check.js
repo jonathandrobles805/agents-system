@@ -128,11 +128,18 @@ export function weakenedTests(cwd) {
   return problems;
 }
 
+/** Red results count as fix attempts only in the build stage (lane.json stage). */
+export function attemptsCount(lane) {
+  return String(lane?.data?.stage ?? 'build') === 'build';
+}
+
 export function main() {
   const d = K.readHookInput();
   if (!d || Object.keys(d).length === 0) return 0;
   const cwd = text(d.cwd) || '.';
-  const lane = K.findLane(cwd);
+  const ti0 = d.tool_input && typeof d.tool_input === 'object' ? d.tool_input : {};
+  const fp0 = text(ti0.file_path) || text(ti0.notebook_path);
+  const lane = K.laneFor(cwd, fp0 ? (path.isAbsolute(fp0) ? fp0 : path.join(cwd, fp0)) : null);
   const root = lane ? lane.root : K.projectRoot(cwd);
   const kit = K.loadKitJson(root) ?? {};
   if (!lane && !kit.always_check) return 0;
@@ -152,7 +159,8 @@ export function main() {
   let testGreen = false;
 
   const step = (name, cmd) => {
-    if (typeof cmd !== 'string' || !cmd) return;
+    if (typeof cmd !== 'string' || !cmd.trim()) return;
+    if (/^none\b/i.test(cmd.trim())) return; // "none: <reason>" turns a check off on purpose; it is not a command (field test #39)
     if (cmd.includes('{file}')) {
       if (!rel) return;
       cmd = cmd.replaceAll('{file}', () => rel);
@@ -191,8 +199,9 @@ export function main() {
     }
   }
 
-  // Attempt counter: the same failure red N times in a row is an escalation, not a fourth try.
-  if (lane) {
+  // Attempt counter: the same failure red N times in a row is an escalation, not a fourth try. Only in build: while
+  // reproducing, planning or writing tests, red is the expected result, not a failed fix (field test #36).
+  if (lane && attemptsCount(lane)) {
     if (testGreen && !redSigs.length) resetAttempts(lane, sid);
     for (const [sig, ref] of redSigs) {
       const n = bumpAttempt(lane, sid, sig);
@@ -207,7 +216,16 @@ export function main() {
     }
   }
 
-  if (failures.length) return K.feedbackBlock('post-edit-check found problems. Fix them before continuing; do not mark anything done.\n\n' + failures.join('\n\n'));
+  if (failures.length) {
+    // Outside build, a red typecheck or test is the expected state (reproducing a defect, writing red tests): record it,
+    // do not tell the agent to fix it. Scope violations and weakened tests still block in every stage (field test #40).
+    if (lane && !attemptsCount(lane)) {
+      const blocking = failures.filter((f) => f.startsWith('[scope]') || f.startsWith('[tests weakened]'));
+      if (!blocking.length) return 0;
+      return K.feedbackBlock('post-edit-check found problems. Fix them before continuing.\n\n' + blocking.join('\n\n'));
+    }
+    return K.feedbackBlock('post-edit-check found problems. Fix them before continuing; do not mark anything done.\n\n' + failures.join('\n\n'));
+  }
   return 0;
 }
 
