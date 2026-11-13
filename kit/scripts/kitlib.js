@@ -592,6 +592,33 @@ export function ruleOverlapsFloor(allowRule, denyRule) {
   return allowLoosens(allowRule, denyRule) || allowLoosens(denyRule, allowRule);
 }
 
+/**
+ * True for a rule Claude Code accepts and then never matches: it checks file permissions against `Edit(path)` and
+ * `Read(path)` only, so a path rule for Write, NotebookEdit, Glob or MultiEdit does nothing
+ * [docs: https://code.claude.com/docs/en/permissions.md @ 2026-11-13]. `Edit` already covers every built-in tool
+ * that edits files and `Read` covers those that read them, so the rule is not merely redundant but misleading: it
+ * reads like a guard and is not one. A bare tool name (no pattern) is a real rule and not inert.
+ */
+const INERT_PATH_TOOLS = new Set(['Write', 'NotebookEdit', 'Glob', 'MultiEdit']);
+export function inertPathRule(rule) {
+  if (typeof rule !== 'string') return false;
+  const parts = splitRule(rule);
+  return parts !== null && INERT_PATH_TOOLS.has(parts[0]) && parts[1] !== '';
+}
+
+/** Domains the spec declares under an optional `## Network` section (one per list item). */
+export function specNetwork(specPath) {
+  if (!isFile(specPath)) return [];
+  const sec = parseSections(stripHtmlComments(readLines(specPath))).get('network');
+  if (!sec) return [];
+  const out = [];
+  for (const [, line] of sec.lines ?? []) {
+    const m = /^\s*[-*]\s+`?([a-z0-9.-]+\.[a-z]{2,}|\*)`?/i.exec(line);
+    if (m) out.push(m[1].toLowerCase());
+  }
+  return out;
+}
+
 /** (read_first, change, create) path lists from a spec, as repo-relative strings. */
 export function specFileLists(specPath) {
   if (!isFile(specPath)) return [[], [], []];

@@ -931,7 +931,10 @@ export class Bootstrap {
     const perms = get(existing, 'permissions', null);
     const permsObj = truthy(perms) ? perms : {};
     // the floor's deny list is the minimum (KIT-SPEC 10.9); the fragment and the project's own entries add to it
-    const deny = new Set([...get(permsObj, 'deny', []), ...req(req(frag, 'permissions'), 'deny'), ...K.loadFloor().deny]);
+    // an inert path rule (Write/Glob/NotebookEdit/MultiEdit with a pattern) is dropped wherever it came from,
+    // including a project's own file, so an upgrade clears the two the kit itself used to write
+    const deny = new Set([...get(permsObj, 'deny', []), ...req(req(frag, 'permissions'), 'deny'), ...K.loadFloor().deny]
+      .filter((d) => typeof d === 'string' && !K.inertPathRule(d)));
     for (const cf of this.det.credential_files) deny.add(`Read(${cf})`);
     const floor = K.loadFloor().deny;
     // deny unions with whatever the project already has, because more deny is always safe. allow is the opposite:

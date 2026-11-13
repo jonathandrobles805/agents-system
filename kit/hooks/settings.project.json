@@ -9,14 +9,14 @@
     ],
     "deny": [
       "Read(.env)", "Read(.env.*)", "Read(**/*.pem)", "Read(**/*.key)", "Read(**/id_rsa*)", "Read(**/secrets/**)", "Read(**/credentials*)", "Read(**/.aws/**)", "Read(**/.ssh/**)",
-      "Edit(.claude/**)", "Write(.claude/**)", "Edit(.github/workflows/**)", "Write(.github/workflows/**)",
+      "Edit(.claude/**)", "Edit(.github/workflows/**)",
       "Bash(git push --force*)", "Bash(git push -f*)", "Bash(git reset --hard*)", "Bash(sudo *)", "Bash(rm -rf /*)"
     ]
   },
   "hooks": {
     "PreToolUse": [
       { "matcher": "Edit|MultiEdit|Write|NotebookEdit", "hooks": [ { "type": "command", "command": "node \"$HOME/.claude/kit/scripts/hook_guard_edit.js\"" } ] },
-      { "matcher": "Read|NotebookRead", "hooks": [ { "type": "command", "command": "node \"$HOME/.claude/kit/scripts/hook_guard_read.js\"" } ] },
+      { "matcher": "Read|NotebookRead|Grep|Glob", "hooks": [ { "type": "command", "command": "node \"$HOME/.claude/kit/scripts/hook_guard_read.js\"" } ] },
       { "matcher": "Bash", "hooks": [ { "type": "command", "command": "node \"$HOME/.claude/kit/scripts/hook_guard_bash.js\"" } ] }
     ],
     "PostToolUse": [

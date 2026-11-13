@@ -69,9 +69,11 @@ test('sandboxConfig: floor domains plus the spec Network section, deny paths fro
   assert.deepEqual(s.filesystem.allowWrite, cfg.allowWrite);
   assert.deepEqual(s.filesystem.denyRead, cfg.denyRead);
   assert.ok(!('sandbox' in s), 'no nested sandbox key: srt would refuse it');
-  // the researcher's wider allowance comes from the floor's per-agent list
+  // a role cannot widen the lane: the sandbox boundary is the lane process and the kit's agents are subagents
+  // inside one lane session, so the floor carries no per-agent list and `agent` is recorded, not enforced
   const r = sandboxConfig({ root, wt: root, slug: 'refund-route', agent: 'researcher', env: envWith('srt') });
-  assert.ok(r.allowedDomains.includes('*'));
+  assert.deepEqual(r.allowedDomains, cfg.allowedDomains);
+  assert.ok(!r.allowedDomains.includes('*'));
   // no runtime: degraded, and the config says so instead of pretending
   const d = sandboxConfig({ root, wt: root, slug: 'refund-route', env: envWith('none') });
   assert.equal(d.runtime, null);
