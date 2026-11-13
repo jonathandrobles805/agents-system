@@ -372,9 +372,16 @@ test('floor: the curl/wget deny the spec requires is absent, and researcher has 
 // G3 — nothing grades the spec's claims against the code.
 // ===========================================================================================================
 
-test('spec claim: --upgrade documents a revert that no code performs [inverts at Step 2]', () => {
+test('spec claim: --upgrade documents a restore that no code performs [inverts at Step 2]', () => {
   const specText = read(REPO, 'docs', 'KIT-SPEC.md');
-  assert.match(specText, /reverts from the backup if any fault is no longer caught/, 'KIT-SPEC 11 promises it');
+  // KIT-SPEC 11 was corrected on 2026-11-12: it used to promise a planted-fault pre/post-check, which cannot be run
+  // against a project (see the planted-faults case below). It now promises the two read-only checks instead. The
+  // defect this case pins is unchanged: whatever the trigger, nothing reads the backup.
+  assert.match(specText, /restores from the backup when a check that passed in the baseline fails afterwards/,
+    'KIT-SPEC 11 promises a restore');
+  assert.match(specText, /ci_guards_present[\s\S]{0,200}ci_security_floor/, 'and names the two checks it uses');
+  assert.doesNotMatch(specText, /runs the planted-fault suite against the project/,
+    'and no longer claims the fault suite can be aimed at a project');
   // the backup is written and read by nothing
   const hits = [];
   for (const f of fs.readdirSync(SCRIPTS).filter((n) => n.endsWith('.js'))) {
