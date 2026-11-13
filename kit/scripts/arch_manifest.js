@@ -648,7 +648,24 @@ export function snapshotOf(m) {
   };
 }
 
-export const snapshotText = (m) => `${K.jsonDumps(snapshotOf(m), { indent: 2, ensureAscii: false, sortKeys: true })}\n`;
+/**
+ * The committed snapshot as text: valid JSON, deterministic, and one line per component, edge, pipeline stage and
+ * violation. Nesting each element over six or eight lines turned a one-edge change into a diff nobody could read in
+ * a 4,700-line file; a line per element makes the diff proportional to the architectural change, which is the whole
+ * point of committing the snapshot. Content is unchanged, so `digest` (computed over snapshotOf, not over this text)
+ * is unaffected: a reformat and a real change are still distinguishable.
+ */
+export function snapshotText(m) {
+  const snap = snapshotOf(m);
+  const one = (v) => K.jsonDumps(v, { ensureAscii: false, sortKeys: true });
+  const entry = (k) => {
+    const v = snap[k];
+    if (!Array.isArray(v)) return `  ${one(k)}: ${one(v)}`;
+    if (!v.length) return `  ${one(k)}: []`;
+    return `  ${one(k)}: [\n${v.map((x) => `    ${one(x)}`).join(',\n')}\n  ]`;
+  };
+  return `{\n${Object.keys(snap).sort(byText).map(entry).join(',\n')}\n}\n`;
+}
 
 function digestOf(m) {
   return crypto.createHash('sha256').update(K.jsonDumps(snapshotOf(m), { sortKeys: true })).digest('hex').slice(0, 16);

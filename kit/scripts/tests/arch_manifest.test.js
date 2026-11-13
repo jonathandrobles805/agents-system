@@ -259,6 +259,35 @@ test('the snapshot has no line numbers or counts, so moving text does not make i
   assert.deepEqual(M.snapshotOf(M.buildManifest(kit)), snap);
 });
 
+test('the snapshot text is valid JSON with one line per element, so a diff is proportional to the change', (t) => {
+  const { kit } = miniKit(t);
+  const m = M.buildManifest(kit);
+  const text = M.snapshotText(m);
+  // nothing is lost by the compact form: the text parses back to exactly the snapshot
+  assert.deepEqual(JSON.parse(text), M.snapshotOf(m));
+  // and the digest is computed over the content, not the text, so reformatting cannot change it
+  assert.equal(M.buildManifest(kit).digest, m.digest);
+  const lines = text.split('\n');
+  for (const key of ['nodes', 'edges', 'problems']) {
+    const at = lines.findIndex((l) => l.startsWith(`  "${key}": [`));
+    assert.ok(at >= 0, `${key} is a multi-line array`);
+    const items = M.snapshotOf(m)[key];
+    // one line per element, each a complete JSON object
+    items.forEach((item, i) => {
+      const line = lines[at + 1 + i].replace(/,$/, '').trim();
+      assert.deepEqual(JSON.parse(line), item, `${key}[${i}] is on its own line`);
+    });
+    // the bracket carries a comma unless this key sorts last
+    assert.equal(lines[at + 1 + items.length].trim().replace(/,$/, ''), ']', `${key} closes after its last element`);
+  }
+  // adding one edge changes one line
+  const before = M.snapshotText(M.buildManifest(kit)).split('\n');
+  put(kit, 'scripts/hook_new.js', "import { a } from './lib.js';\nexport const n = a;\n");
+  const after = M.snapshotText(M.buildManifest(kit)).split('\n');
+  const added = after.filter((l) => !before.includes(l));
+  assert.equal(added.filter((l) => l.includes('"imports"')).length, 1, `one new edge line, got: ${added.join(' | ')}`);
+});
+
 test('--check passes on a fresh snapshot and names what changed on a stale one', (t) => {
   const { repo, kit } = miniKit(t);
   const snap = path.join(repo, 'architecture.json');
