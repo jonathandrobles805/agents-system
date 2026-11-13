@@ -467,8 +467,22 @@ export class Lane {
     return path.join(this.root, this.work, `${this.slug}.progress.md`);
   }
 
-  /** Check output is machine output: it lives with the session files, not in docs/ (field test #44: a project's own
-   * structure check rejects *.log under docs/). References keep the form `<slug>.log#<line>`. */
+  /**
+   * Check output is machine output: it lives with the session files, not in docs/ (field test #44: a project's own
+   * structure check rejects *.log under docs/). References keep the form `<slug>.log#<line>`.
+   *
+   * ADVISORY, NOT ENFORCED, IN EVERY SANDBOX MODE (KIT-SPEC 10.14). done-check reads the exit code on the line a
+   * progress cell names, and this file sits inside the worktree, which is writable in all three modes: degraded has
+   * no boundary at all, and under srt and in a container the worktree is precisely what the lane is given to write.
+   * It has to be: post-edit-check runs the project's checks from inside the lane and appends them here, and that is
+   * the only path by which evidence is produced (kit/agents/implementer.md:50,53 — the agent copies a line number
+   * from this file into the Red run and Green run cells).
+   *
+   * Moving this file outside the worktree would not fix that and would break it: the writer is in-lane, so it would
+   * lose the ability to write, and no host-side process witnesses the run. Signing the lines would not fix it either,
+   * because any key the in-lane writer can read, the agent can read. Real enforcement needs the command to be RUN on
+   * the host — see the note on lane.js check, and KIT-SPEC 10.14 for what that would take.
+   */
   get logPath() {
     return path.join(this.root, '.claude', 'session', `${this.slug}.log`);
   }
@@ -551,6 +565,12 @@ export function specFileLists(specPath) {
   return [pathsIn('files to read first'), pathsIn('files to change'), pathsIn('files to create')];
 }
 
+/**
+ * The read log guard-edit consults. ADVISORY in every sandbox mode: the event it records — this session called Read
+ * on this file — happens inside the lane and has no witness outside it. Relocating the file or signing its lines
+ * would move the forgery, not remove it, because whatever can write a true entry can write a false one. Planted
+ * fault 1 proves the gate fires on the honest path; it does not prove the path cannot be faked (KIT-SPEC 10.14).
+ */
 export function readsLogPath(root, sessionId) {
   const d = path.join(root, SESSION_DIR);
   fs.mkdirSync(d, { recursive: true });

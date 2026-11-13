@@ -38,6 +38,10 @@ export function failureSignature(name, out) {
   return name + ':' + clip(tail.join('|'), 400);
 }
 
+/**
+ * The three-strikes counter. ADVISORY: it is a file inside the worktree, so the lane can reset it, and the thing it
+ * counts — an edit attempt against the same failure — is observed only inside the lane (KIT-SPEC 10.14).
+ */
 function attemptsPath(lane, sid) {
   const dir = path.join(lane.root, K.SESSION_DIR);
   fs.mkdirSync(dir, { recursive: true });

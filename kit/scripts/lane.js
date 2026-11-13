@@ -421,8 +421,16 @@ export function scope(root, slug) {
 
 /**
  * Run a command for a done-criterion in the lane's worktree and append it to the lane log, the same way post-edit-check
- * does; prints the log reference to put in progress.md's Red run or Green run cell (field test #43). The reference is
- * evidence, not a claim: done-check reads the exit code on that log line.
+ * does; prints the log reference to put in progress.md's Red run or Green run cell (field test #43).
+ *
+ * This is the ONE place in the kit where a check is executed by a host-side process rather than from inside the lane,
+ * so it is the only point at which evidence could be made unforgeable — and it is not, today, for two reasons worth
+ * stating rather than discovering later. The log it appends to is inside the worktree, which the lane may write in
+ * every sandbox mode. And nothing routes the agent through here: kit/agents/implementer.md:50,53 has the agent copy
+ * line numbers from post-edit-check's in-lane runs, so this command is a convenience a human runs, not a gate.
+ *
+ * Making evidence real means making this the only producer and moving its log out of the lane's reach, which needs a
+ * way for the lane to ASK the host to run a check. KIT-SPEC 10.14 records that design and why it is not built.
  */
 export function check(root, slug, criterion, cmd) {
   const wt = pjoin(lanesDir(root), slug);

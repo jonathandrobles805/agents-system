@@ -491,6 +491,55 @@ Routing is a version-controlled table: one profile per kind of work in `kit/work
 
 `lane.js stop --by <name> --reason <text>` writes `.claude/STOP` in the project and `STOP` into every lane's session directory, and logs a `stop` event per lane. While set: `next-step` returns `stopped`; `lane.js start` refuses; `guard-edit` and `guard-bash` refuse every mutation in every lane; the host-side launcher refuses to start a session. `lane.js resume-all --by <name>` lifts it and logs who did. The flag alone is not the mechanism: each entry point checks it.
 
+## 10.14 What the gates are worth: evidence integrity
+
+The gates read their truth from files. This section says who can write those files, so that no one has to find out
+the hard way which of the kit's guarantees are enforced and which are conventions that hold while everyone behaves.
+
+**The evidence, and who produces it.**
+
+| File | Produced by | Witnessed outside the lane |
+|---|---|---|
+| `.claude/session/<slug>.log` — the runs done-check accepts | `post-edit-check`, from inside the lane | no |
+| `.claude/session/<sid>.reads` — what guard-edit calls "read" | `read-log` hook, from inside the lane | no |
+| `.claude/session/<sid>.attempts.json` — the three-strikes counter | `post-edit-check`, from inside the lane | no |
+| `<work>/<slug>.events.jsonl` — the lane's history | hooks, from inside the lane | no |
+
+**Every one of them is advisory.** Not because of where the files sit, but because of who produces them. The events
+they record — a command was run, a file was read, an attempt was made — happen inside the lane, and nothing outside
+the lane observes them. A file the lane must be able to write is a file the lane can write untruthfully.
+
+This holds in all three sandbox modes, for different reasons:
+
+- **degraded** (no runtime; the default on a clean install, `sandbox.js detect` → `runtime: null` unless `srt` is on
+  PATH or a container engine answers): the lane is a child process with the host's uid. There is no boundary at all.
+- **srt** and **container**: the worktree is exactly what the lane is given to write, and the evidence is in it. It
+  has to be, because the producer is in there too.
+
+So the planted-fault suite proves these gates fire on the honest path. It does not prove the path cannot be faked,
+and faults 1, 11 and 12 should be read that way.
+
+**What would make them evidence, and why it is not built.** Only one thing: the check must be *run* by a host-side
+process, so that something outside the lane witnesses the exit code, and its log must live where the lane cannot
+write. `lane.js check` already runs commands host-side, but it is a convenience a human invokes — the documented
+path has the agent copy line numbers from `post-edit-check`'s in-lane runs
+(`kit/agents/implementer.md:50,53`). Closing this means a host-side runner per lane that the lane can *ask* to run a
+check, its log kept outside the worktree (outside `allowWrite` under srt, a read-only mount in a container). The lane
+could still ask for a weak command — it cannot fabricate an exit code, and the command text stays in the log for the
+reviewer.
+
+Two things that look like fixes and are not, recorded so they are not proposed again:
+
+- **Signing the lines.** The key would have to be readable by whatever writes a true entry. In degraded mode that is
+  a file under the same uid; under srt the lane inherits the host environment whole (`lane.js` launch). A key the
+  forger can read signs forgeries.
+- **Moving the files out of the worktree.** The writer is inside the lane, so it would lose the ability to write and
+  the gates would stop recording anything. Relocation only helps once the producer has already moved to the host.
+
+Until that runner exists, the dashboard's "every value comes from files, never an agent's claim" is true about the
+*dashboard* — it reports what the files say rather than what an agent said in prose — and is not a claim that the
+files cannot be written by the agent.
+
 ---
 
 ## 11. Versioning and upgrades

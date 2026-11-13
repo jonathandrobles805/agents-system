@@ -120,15 +120,33 @@ test('forge: appending to .reads defeats guard-edit read-before-edit [inverts at
   assert.equal(K.wasRead(wt, 'forge1', rel), true);
 });
 
-test('forge: two log lines make done-check accept an unproven criterion [inverts at Step 3]', (t) => {
+test('the spec states which evidence is advisory, and the code says it where it lives [Step 3 scoped]', () => {
+  // Step 3 did not make evidence unforgeable; it established, in the spec and at each writer, that it is not. The
+  // reason is structural and is pinned here so a later change cannot quietly re-assert enforcement that does not
+  // exist: every producer of gate evidence runs inside the lane, so nothing outside the lane witnesses the event.
+  const specText = read(REPO, 'docs', 'KIT-SPEC.md');
+  assert.match(specText, /## 10\.14 What the gates are worth: evidence integrity/);
+  assert.match(specText, /\*\*Every one of them is advisory\.\*\*/);
+  assert.match(specText, /A key the\n  forger can read signs forgeries/, 'signing is recorded as a non-fix');
+  assert.match(specText, /Relocation only helps once the producer has already moved to the host/);
+
+  // and each writer says it at the point of writing
+  assert.match(read(SCRIPTS, 'kitlib.js'), /ADVISORY, NOT ENFORCED, IN EVERY SANDBOX MODE \(KIT-SPEC 10\.14\)/);
+  assert.match(read(SCRIPTS, 'kitlib.js'), /ADVISORY in every sandbox mode: the event it records/);
+  assert.match(read(SCRIPTS, 'hook_post_edit_check.js'), /The three-strikes counter\. ADVISORY/);
+  assert.match(read(SCRIPTS, 'lane.js'), /the ONE place in the kit where a check is executed by a host-side process/);
+});
+
+test('forge: two log lines still make done-check accept an unproven criterion [open: needs a host-side runner]', (t) => {
   const { wt } = laneProject(t);
   const ev = { cwd: wt, tool: 'Stop', extra: { hook_event_name: 'Stop' } };
 
   const before = hook('hook_done_check.js', ev);
   assert.match(before.out, /no red run reference|no green run reference/, 'a criterion with no runs must refuse the stop');
 
-  // The log is machine output living in .claude/session/, which the lane can write; done-check trusts the exit code
-  // printed on the referenced line and never that a run happened.
+  // The log is machine output living in .claude/session/, which the lane can write in every sandbox mode; done-check
+  // trusts the exit code printed on the referenced line and never that a run happened. This case stays red-side-up
+  // deliberately: KIT-SPEC 10.14 records why it cannot be closed by moving or signing the file, and what would.
   const log = path.join(wt, '.claude', 'session', 'refund-route.log');
   fs.mkdirSync(path.dirname(log), { recursive: true });
   fs.writeFileSync(log,
