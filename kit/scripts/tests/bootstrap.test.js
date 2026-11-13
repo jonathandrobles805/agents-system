@@ -116,6 +116,113 @@ test('upgrade backs up kit files and touches only version stamp', (t) => {
   assert.ok(text.includes('- keep') && text.includes(`agent-kit ${KIT_VERSION}`) && !text.includes('agent-kit 0.0.9'));
 });
 
+// ---------------- upgrade as a transaction (KIT-SPEC 11) ----------------
+
+test('the backup is named for the version being replaced, not the one replacing it', (t) => {
+  const root = nodeApi(path.join(tmpPath(t), 'node-api'));
+  boot(root);
+  const kj = path.join(root, '.claude', 'kit.json');
+  const d = JSON.parse(read(root, '.claude', 'kit.json'));
+  d.kit_version = '0.0.9'; // as an older kit left it
+  fs.writeFileSync(kj, jsonDumps(d, { indent: 2 }));
+  const res = boot(root, '--upgrade');
+  assert.ok(res.backed_up.includes('.claude/kit.json'));
+  assert.ok(isFile(path.join(root, '.claude', 'backup', '0.0.9', '.claude__kit.json')),
+    'the directory names the version it holds');
+  assert.ok(!fs.existsSync(path.join(root, '.claude', 'backup', KIT_VERSION)));
+  // and what it holds is the previous content, not the new one
+  assert.equal(JSON.parse(read(root, '.claude', 'backup', '0.0.9', '.claude__kit.json')).kit_version, '0.0.9');
+  assert.equal(JSON.parse(read(root, '.claude', 'kit.json')).kit_version, KIT_VERSION);
+});
+
+test('an upgrade reports both project checks, before and after', (t) => {
+  const root = nodeApi(path.join(tmpPath(t), 'node-api'));
+  boot(root);
+  const res = boot(root, '--upgrade');
+  assert.deepEqual(res.checks.before.map((c) => c.name), ['guards-present', 'security-floor']);
+  assert.deepEqual(res.checks.after.map((c) => c.name), ['guards-present', 'security-floor']);
+  assert.ok(res.checks.after.every((c) => c.ok), JSON.stringify(res.checks.after));
+  assert.equal(res.checks.regressed.length, 0);
+  assert.equal(res.checks.restored, null, 'nothing to undo when nothing regressed');
+});
+
+test('a check that was already failing is reported, not restored', (t) => {
+  const root = nodeApi(path.join(tmpPath(t), 'node-api'));
+  boot(root);
+  // the state every version bump is in: the project's settings no longer match the kit's fragment
+  const s = JSON.parse(read(root, '.claude', 'settings.json'));
+  delete s.hooks.PreToolUse;
+  fs.writeFileSync(path.join(root, '.claude', 'settings.json'), jsonDumps(s));
+  const before = runScript('ci_guards_present.js', ['--repo', root, '--kit', KIT]);
+  assert.equal(before.returncode, 1, 'guards-present fails before the upgrade');
+
+  const res = boot(root, '--upgrade'); // boot() asserts exit 0: an upgrade that fixes a check is a success
+  assert.equal(res.checks.before.find((c) => c.name === 'guards-present').ok, false);
+  assert.equal(res.checks.after.find((c) => c.name === 'guards-present').ok, true);
+  assert.equal(res.checks.restored, null, 'fail -> ok is the point of upgrading, not a regression');
+  assert.deepEqual(JSON.parse(read(root, '.claude', 'settings.json')).hooks, FRAG.hooks);
+});
+
+test('regressions() only fires on a check that passed before and fails after', async () => {
+  const B = await import('../bootstrap.js');
+  const c = (name, ok) => ({ name, ok, output: '' });
+  const names = (before, after) => B.regressions(before, after).map((x) => x.name);
+  assert.deepEqual(names([c('a', true)], [c('a', false)]), ['a'], 'ok -> fail is a regression');
+  assert.deepEqual(names([c('a', false)], [c('a', false)]), [], 'fail -> fail is not');
+  assert.deepEqual(names([c('a', false)], [c('a', true)]), [], 'fail -> ok is not');
+  assert.deepEqual(names([c('a', true)], [c('a', true)]), [], 'ok -> ok is not');
+  assert.deepEqual(names([c('a', true), c('b', true)], [c('a', true), c('b', false)]), ['b'], 'one of two');
+  assert.deepEqual(names([], [c('a', false)]), [], 'a check with no baseline is not a regression');
+});
+
+test('restoreBackup puts the project back byte for byte and removes what the upgrade created', async (t) => {
+  const B = await import('../bootstrap.js');
+  const root = nodeApi(path.join(tmpPath(t), 'node-api'));
+  boot(root);
+  const kitJson = path.join(root, '.claude', 'kit.json');
+  const d = JSON.parse(read(root, '.claude', 'kit.json'));
+  d.kit_version = '0.0.9';
+  d.wip_limit = 7; // a value the human set, which the upgrade carries forward
+  fs.writeFileSync(kitJson, jsonDumps(d, { indent: 2 }));
+  fs.writeFileSync(path.join(root, 'CLAUDE.md'), read(root, 'CLAUDE.md').replaceAll(`agent-kit ${KIT_VERSION}`, 'agent-kit 0.0.9'));
+  const bytesBefore = { 'CLAUDE.md': read(root, 'CLAUDE.md'), '.claude/kit.json': read(root, '.claude', 'kit.json') };
+  // whatever state the project was in — this one is deliberately inconsistent, since kit.json was edited without
+  // regenerating the manifest — a restore must return it to exactly that, not to a healthy one.
+  const checksBefore = B.projectChecks(root).map((c) => c.ok);
+
+  const res = boot(root, '--upgrade');
+  assert.ok(res.backed_up.includes('CLAUDE.md'), 'a human-owned file whose stamp changed is backed up too');
+  assert.ok(res.backed_up.includes('.claude/kit.json'));
+  assert.notEqual(read(root, 'CLAUDE.md'), bytesBefore['CLAUDE.md'], 'the upgrade changed it');
+
+  // a file this upgrade introduced, which has nothing to restore from
+  const invented = path.join(root, '.claude', 'invented-by-the-new-kit.json');
+  fs.writeFileSync(invented, '{}');
+
+  const dir = path.join(root, '.claude', 'backup', '0.0.9');
+  const done = B.restoreBackup(root, dir, res.backed_up, ['.claude/invented-by-the-new-kit.json']);
+  for (const [rel, text] of Object.entries(bytesBefore)) {
+    assert.equal(read(root, ...rel.split('/')), text, `${rel} is back byte for byte`);
+  }
+  assert.ok(!fs.existsSync(invented), 'the created file is gone');
+  assert.ok(done.includes('.claude/invented-by-the-new-kit.json (removed)'));
+  // the project is back where it was, check for check
+  assert.deepEqual(B.projectChecks(root).map((c) => c.ok), checksBefore);
+});
+
+test('projectChecks runs the two read-only checks and nothing else', async (t) => {
+  const B = await import('../bootstrap.js');
+  assert.deepEqual(B.PROJECT_CHECKS.map((c) => c[1]), ['ci_guards_present.js', 'ci_security_floor.js']);
+  const root = nodeApi(path.join(tmpPath(t), 'node-api'));
+  let checks = B.projectChecks(root);
+  assert.deepEqual(checks.map((c) => c.ok), [false, false], 'an unbootstrapped project fails both');
+  assert.match(checks[0].output, /settings\.json missing/);
+  boot(root);
+  checks = B.projectChecks(root);
+  assert.deepEqual(checks.map((c) => c.ok), [true, true], JSON.stringify(checks));
+  assert.match(checks[1].output, /effective permissions at or above floor/);
+});
+
 test('dry run writes nothing', (t) => {
   const root = pythonService(path.join(tmpPath(t), 'py'));
   const res = boot(root, '--dry-run');

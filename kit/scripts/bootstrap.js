@@ -752,12 +752,34 @@ export class Bootstrap {
     this.written = [];
     this.skipped = [];
     this.backedUp = [];
+    this.created = [];
     this.warnings = [];
+    // The version being replaced, read before anything is written: run() rewrites .claude/kit.json early, so after
+    // that the file names the new version. The backup directory is named for what it holds, not for what replaced it.
+    const was = get(readJson(path.join(root, '.claude', 'kit.json')), 'kit_version', '');
+    this.replaced = typeof was === 'string' && was ? was : 'unknown';
+  }
+
+  /** Where this upgrade's backup of the previous version lives. */
+  backupDir() {
+    return path.join(this.root, '.claude', 'backup', this.replaced);
+  }
+
+  /** Copy a file the upgrade is about to replace into the backup directory, timestamps kept (shutil.copy2). */
+  backupFile(rel, p) {
+    const bdir = this.backupDir();
+    fs.mkdirSync(bdir, { recursive: true });
+    const dst = path.join(bdir, rel.replaceAll('/', '__'));
+    fs.copyFileSync(p, dst);
+    const st = fs.statSync(p);
+    fs.utimesSync(dst, st.atime, st.mtime);
+    this.backedUp.push(rel);
   }
 
   write(rel, content, owned) {
     const p = path.join(this.root, rel);
-    if (fs.existsSync(p)) {
+    const existed = fs.existsSync(p);
+    if (existed) {
       if (owned === 'human' && !this.upgrade) {
         // an existing CLAUDE.md keeps every byte; the kit's marked block is appended once (field test #13)
         if (rel === 'CLAUDE.md') {
@@ -778,6 +800,8 @@ export class Bootstrap {
         let nw = old.replace(/agent-kit \p{Nd}+\.\p{Nd}+\.\p{Nd}+/gu, () => `agent-kit ${KIT_VERSION}`);
         if (rel === 'CLAUDE.md') nw = this.regenerateClaudeMd(nw) ?? this.appendKitBlock(nw);
         if (nw !== old && !this.dry) {
+          // backed up too: a restore must undo the stamp and the regenerated kit block, not only kit-owned files
+          this.backupFile(rel, p);
           fs.writeFileSync(p, nw);
           this.written.push(rel + ' (version stamp)');
         } else {
@@ -789,20 +813,14 @@ export class Bootstrap {
         this.skipped.push(rel + ' (unchanged)');
         return;
       }
-      if (owned === 'kit' && this.upgrade && !this.dry) {
-        const bdir = path.join(this.root, '.claude', 'backup', KIT_VERSION);
-        fs.mkdirSync(bdir, { recursive: true });
-        const dst = path.join(bdir, rel.replaceAll('/', '__'));
-        fs.copyFileSync(p, dst);
-        const st = fs.statSync(p);
-        fs.utimesSync(dst, st.atime, st.mtime); // shutil.copy2 keeps the timestamps
-        this.backedUp.push(rel);
-      }
+      if (owned === 'kit' && this.upgrade && !this.dry) this.backupFile(rel, p);
     }
     if (!this.dry) {
       fs.mkdirSync(path.dirname(p), { recursive: true });
       fs.writeFileSync(p, content);
       if (rel.endsWith('.sh')) fs.chmodSync(p, 0o755);
+      // a kit-owned file this upgrade introduced has nothing to restore from; a rollback removes it
+      if (this.upgrade && owned === 'kit' && !existed) this.created.push(rel);
     }
     this.written.push(rel);
   }
@@ -1213,6 +1231,78 @@ fi
   }
 }
 
+// ----------------------------------------------------------------------------- upgrade as a transaction (KIT-SPEC 11)
+
+/**
+ * The checks an upgrade can evaluate against a project's own files. Both are read-only and take a repository, which
+ * is what makes them usable here; the planted-fault suite is not (it builds and destroys its own fixtures and takes
+ * no --repo), so it stays the kit's release gate.
+ */
+export const PROJECT_CHECKS = [
+  ['guards-present', 'ci_guards_present.js', (root) => ['--repo', root, '--kit', KIT_DIR]],
+  ['security-floor', 'ci_security_floor.js', (root) => ['--repo', root]],
+];
+
+/** Run every project check as its own process (they write to stdout/stderr and must not land in this script's output). */
+export function projectChecks(root) {
+  return PROJECT_CHECKS.map(([name, script, argsOf]) => {
+    const r = spawnSync(process.execPath, [path.join(KIT_DIR, 'scripts', script), ...argsOf(root)], {
+      encoding: 'utf8', timeout: 120000, maxBuffer: 1 << 26,
+    });
+    const text = pyStrip(`${r.stdout ?? ''}${r.stderr ?? ''}`);
+    return { name, ok: r.status === 0, output: Array.from(text).slice(0, 400).join('') };
+  });
+}
+
+/**
+ * Put the project back as it was: every replaced file from the backup, and away with every file the upgrade created.
+ * The shape of lane.js undo(), which removes the worktree and branch when start refuses after creating them.
+ * `.gitignore` is not covered: gitignore() only ever appends the kit's own ignore lines, which are inert after a
+ * rollback, and rewriting a human's ignore file to undo an append would risk more than it repairs.
+ */
+export function restoreBackup(root, dir, replaced, created) {
+  const done = [];
+  for (const rel of replaced) {
+    const src = path.join(dir, rel.replaceAll('/', '__'));
+    if (!K.isFile(src)) continue;
+    const dst = path.join(root, rel);
+    fs.mkdirSync(path.dirname(dst), { recursive: true });
+    fs.copyFileSync(src, dst);
+    done.push(rel);
+  }
+  for (const rel of created) {
+    fs.rmSync(path.join(root, rel), { force: true });
+    done.push(`${rel} (removed)`);
+  }
+  return done;
+}
+
+/**
+ * The checks that passed in the baseline and fail now. A check red both before and after is not a regression: a
+ * project behind the current kit fails guards-present by design, and bringing it up to date is the reason to
+ * upgrade, so a pre-check that had to be green would make every version bump unupgradeable.
+ */
+export function regressions(before, after) {
+  return after.filter((a) => !a.ok && before.some((x) => x.name === a.name && x.ok));
+}
+
+/** `--upgrade`: baseline the project checks, apply, check again, restore on a regression. */
+export function upgradeProject(root, answers, dry) {
+  const b = new Bootstrap(root, answers, dry, true);
+  if (dry) return b.run(); // nothing is written, so there is nothing to verify or undo
+  const before = projectChecks(root);
+  const result = b.run();
+  const after = projectChecks(root);
+  const regressed = regressions(before, after);
+  result.checks = { before, after, regressed: regressed.map((c) => c.name), restored: null };
+  if (regressed.length) {
+    result.checks.restored = restoreBackup(root, b.backupDir(), result.backed_up, b.created);
+    result.checks.after_restore = projectChecks(root);
+    result.checks.backup = path.join('.claude', 'backup', b.replaced);
+  }
+  return result;
+}
+
 /** Python's str(exception) for a failed subprocess, as protect_branch put it into its result. */
 function failText(e, args, timeout) {
   if (e && e.code === 'ETIMEDOUT') return `Command '${pyRepr(args)}' timed out after ${timeout} seconds`;
@@ -1393,12 +1483,14 @@ export function main(argv) {
         results[proj] = { skipped: 'not a git repo' };
         continue;
       }
-      results[proj] = new Bootstrap(proj, {}, a.dry_run, true).run();
+      results[proj] = upgradeProject(proj, {}, a.dry_run);
     }
     print(a.json
       ? K.jsonDumps(results, { indent: 2 })
-      : Object.entries(results).map(([k, v]) => (has(v, 'written') ? `${k}: ${v.written.length} written, ${v.backed_up.length} backed up` : `${k}: ${pyRepr(v)}`)).join('\n'));
-    return 0;
+      : Object.entries(results).map(([k, v]) => (has(v, 'written')
+        ? `${k}: ${v.written.length} written, ${v.backed_up.length} backed up${v.checks?.restored ? `, RESTORED (${v.checks.regressed.join(', ')} regressed)` : ''}`
+        : `${k}: ${pyRepr(v)}`)).join('\n'));
+    return Object.values(results).some((v) => v.checks?.restored) ? 1 : 0;
   }
   const root = K.realResolve(a.repo);
   if (!fs.existsSync(path.join(root, '.git'))) {
@@ -1414,29 +1506,39 @@ export function main(argv) {
       : `stacks: ${pyRepr(det.stacks)}\nframeworks: ${pyRepr(det.frameworks)}\ncommands: ${K.jsonDumps(det.commands, { indent: 2 })}\nmissing tools: ${pyRepr(det.missing_tools)}\nquestions: ${out.questions.length}`);
     return 0;
   }
-  const b = new Bootstrap(root, answers, a.dry_run, a.upgrade);
-  const result = b.run();
+  const b = a.upgrade ? null : new Bootstrap(root, answers, a.dry_run, false);
+  const result = a.upgrade ? upgradeProject(root, answers, a.dry_run) : b.run();
+  const det = a.upgrade ? detect(root) : b.det;
   if (a.protect && !a.dry_run) {
-    result.branch_protection = protectBranch(root, get(b.det, 'default_branch', 'main'), ['tests', 'typecheck', 'lint', 'boundaries', 'scope-diff', 'test-count', 'dep-diff', 'secrets', 'claude-md-cap', 'guards-present', 'validate-docs', 'review-report']);
+    result.branch_protection = protectBranch(root, get(det, 'default_branch', 'main'), ['tests', 'typecheck', 'lint', 'boundaries', 'scope-diff', 'test-count', 'dep-diff', 'secrets', 'claude-md-cap', 'guards-present', 'validate-docs', 'review-report']);
   }
   if (a.json) {
     print(K.jsonDumps(result, { indent: 2 }));
   } else {
     print(`agent-kit ${KIT_VERSION} ${a.upgrade ? 'upgrade' : 'bootstrap'}${a.dry_run ? ' (dry run)' : ''}: ${root}`);
-    print(`stacks: ${b.det.stacks.join(', ') || 'unknown'}  frameworks: ${b.det.frameworks.join(', ') || '-'}  ci: ${b.det.ci || 'none'}`);
+    print(`stacks: ${det.stacks.join(', ') || 'unknown'}  frameworks: ${det.frameworks.join(', ') || '-'}  ci: ${det.ci || 'none'}`);
     for (const w of result.written) print(`  wrote   ${w}`);
     for (const s of result.skipped) print(`  kept    ${s}`);
     for (const s of result.backed_up) print(`  backup  ${s}`);
+    const ch = get(result, 'checks', null);
+    if (ch) {
+      const was = (name) => (ch.before.find((c) => c.name === name)?.ok ? 'ok' : 'fail');
+      for (const c of ch.after) print(`  check   ${c.name}: ${was(c.name)} -> ${c.ok ? 'ok' : 'fail'}`);
+      if (ch.restored) {
+        for (const c of ch.after.filter((x) => ch.regressed.includes(x.name))) eprint(`${c.name} regressed: ${c.output.split('\n')[0]}`);
+        eprint(`RESTORED ${ch.restored.length} file(s) from ${ch.backup}/; the upgrade was not applied`);
+      }
+    }
     if (result.questions.length) {
       print('\nQuestions for the human (bootstrap does not guess these):');
       for (const q of result.questions) print(`  [${q.id}] ${q.question}`);
     }
-    if (Object.keys(b.det.missing_tools).length) {
+    if (Object.keys(det.missing_tools).length) {
       print('\nTools not found (proposed, not installed):');
-      for (const [k, v] of Object.entries(b.det.missing_tools)) print(`  ${k}: ${v}`);
+      for (const [k, v] of Object.entries(det.missing_tools)) print(`  ${k}: ${v}`);
     }
   }
-  return 0;
+  return get(result, 'checks', null)?.restored ? 1 : 0;
 }
 
 if (K.isMain(import.meta.url)) process.exitCode = main(process.argv.slice(2));

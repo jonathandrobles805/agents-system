@@ -368,6 +368,7 @@
     {"file": "kit/scripts/tests/bootstrap_adopt.test.js", "from": "test:bootstrap_adopt", "kind": "tests", "to": "script:bootstrap"},
     {"file": "kit/scripts/tests/bootstrap.test.js", "from": "test:bootstrap", "kind": "tests", "to": "ci:guards_present"},
     {"file": "kit/scripts/tests/bootstrap.test.js", "from": "test:bootstrap", "kind": "tests", "to": "ci:scope_diff"},
+    {"file": "kit/scripts/tests/bootstrap.test.js", "from": "test:bootstrap", "kind": "tests", "to": "ci:security_floor"},
     {"file": "kit/scripts/tests/bootstrap.test.js", "from": "test:bootstrap", "kind": "tests", "to": "script:bootstrap"},
     {"file": "kit/scripts/tests/bootstrap.test.js", "from": "test:bootstrap", "kind": "tests", "to": "script:check_projects"},
     {"file": "kit/scripts/tests/bootstrap.test.js", "from": "test:bootstrap", "kind": "tests", "to": "script:kitlib"},

@@ -372,34 +372,31 @@ test('floor: the curl/wget deny the spec requires is absent, and researcher has 
 // G3 — nothing grades the spec's claims against the code.
 // ===========================================================================================================
 
-test('spec claim: --upgrade documents a restore that no code performs [inverts at Step 2]', () => {
+test('upgrade: the documented restore now has an implementation [Step 2 landed]', () => {
+  // INVERTED at Step 2. Before: KIT-SPEC 11 promised a revert and nothing in the kit read .claude/backup; the only
+  // three mentions were the write, the gitignore entry and the report line. Now the spec promises what the code does.
   const specText = read(REPO, 'docs', 'KIT-SPEC.md');
-  // KIT-SPEC 11 was corrected on 2026-11-12: it used to promise a planted-fault pre/post-check, which cannot be run
-  // against a project (see the planted-faults case below). It now promises the two read-only checks instead. The
-  // defect this case pins is unchanged: whatever the trigger, nothing reads the backup.
-  assert.match(specText, /restores from the backup when a check that passed in the baseline fails afterwards/,
-    'KIT-SPEC 11 promises a restore');
+  assert.match(specText, /restores from the backup when a check that passed in the baseline fails afterwards/);
   assert.match(specText, /ci_guards_present[\s\S]{0,200}ci_security_floor/, 'and names the two checks it uses');
   assert.doesNotMatch(specText, /runs the planted-fault suite against the project/,
     'and no longer claims the fault suite can be aimed at a project');
-  // the backup is written and read by nothing
-  const hits = [];
-  for (const f of fs.readdirSync(SCRIPTS).filter((n) => n.endsWith('.js'))) {
-    for (const [i, line] of read(SCRIPTS, f).split('\n').entries()) {
-      if (/backup/.test(line)) hits.push(`${f}:${i + 1}`);
-    }
-  }
-  assert.deepEqual(hits, ['bootstrap.js:793', 'bootstrap.js:1132', 'bootstrap.js:1429'],
-    'DEFECT: across every kit script the only mentions are the write (793), the gitignore entry (1132) and the ' +
-    'report line (1429). No reader exists, so no revert can happen, and no planted-fault pre- or post-check runs.');
+
+  const src = read(SCRIPTS, 'bootstrap.js');
+  assert.match(src, /export function restoreBackup\(root, dir, replaced, created\)/, 'a reader of the backup exists');
+  assert.match(src, /fs\.copyFileSync\(src, dst\)/, 'and copies each backed-up file back');
+  assert.match(src, /fs\.rmSync\(path\.join\(root, rel\), \{ force: true \}\)/, 'and removes what the upgrade created');
+  assert.match(src, /export function upgradeProject/, 'and an upgrade path that uses it');
+  assert.match(src, /result\.checks\.restored = restoreBackup\(/, 'wired to the regression decision');
 });
 
-test('spec claim: the backup is named for the replacing version, not the replaced one [inverts at Step 2]', () => {
+test('upgrade: the backup is named for the version being replaced [Step 2 landed]', () => {
+  // INVERTED at Step 2. Before: the directory was named KIT_VERSION, the version doing the replacing.
   const src = read(SCRIPTS, 'bootstrap.js');
-  assert.match(src, /path\.join\(this\.root, '\.claude', 'backup', KIT_VERSION\)/);
-  assert.match(src, /export const KIT_VERSION = K\.isFile\(VERSION_FILE\) \? pyStrip\(readText\(VERSION_FILE\)\) : '0\.0\.0'/,
-    'DEFECT: KIT_VERSION is the new kit\'s version, so the directory names the version that overwrote the files');
-  assert.match(src, /'\.claude\/backup\/'/, 'DEFECT: and it is gitignored, so it is local-only');
+  assert.match(src, /return path\.join\(this\.root, '\.claude', 'backup', this\.replaced\);/);
+  assert.match(src, /const was = get\(readJson\(path\.join\(root, '\.claude', 'kit\.json'\)\), 'kit_version', ''\)/,
+    'read in the constructor, before run() rewrites kit.json');
+  assert.doesNotMatch(src, /'backup', KIT_VERSION/, 'no longer named for the replacing version');
+  assert.match(src, /'\.claude\/backup\/'/, 'still gitignored: a restore is local, like the backup');
 });
 
 test('spec claim: citations are never re-checked at the recorded commit [inverts at Step 6]', () => {
@@ -660,42 +657,45 @@ test('paths.work: a lane reads a committed snapshot of kit.json, not the project
 
 test('workRoot: every site that builds the work root itself [inverts at Step 1]', () => {
   // workRoot() is the one function that knows where lane artifacts live. These lines do not call it.
-  // Two lines are legitimate and excluded: kitlib.js:399 is workRoot's own default, and bootstrap.js:857 is the
-  // default value written into a new kit.json. Everything else is a site that silently ignores paths.work.
-  const LEGITIMATE = new Set(['kitlib.js:399', 'bootstrap.js:857']);
+  // Keyed on the source text rather than the line number: a site must not be added quietly, but unrelated edits
+  // above it must not turn this red (bootstrap.js alone moved three of these by 18 lines during Step 2).
+  // Two are legitimate and excluded: workRoot's own default, and the default written into a new kit.json.
+  const LEGITIMATE = [
+    /return typeof p === 'string' && p \? p\.replace/,        // kitlib.js workRoot()
+    /paths: get\(existing, 'paths', null\)/,                  // bootstrap.js kitJson()
+  ];
   const hard = [];
   for (const f of fs.readdirSync(SCRIPTS).filter((n) => n.endsWith('.js'))) {
-    for (const [i, line] of read(SCRIPTS, f).split('\n').entries()) {
-      const at = `${f}:${i + 1}`;
-      // docs\/specs catches the form inside a regex literal (kitlib.js:635)
+    for (const line of read(SCRIPTS, f).split('\n')) {
+      // docs\/specs catches the form inside a regex literal (kitlib.js REVIEW_ONLY_FILE)
       if (!/['"]docs['"],\s*['"]specs['"]|docs\\?\/specs/.test(line)) continue;
       if (/^\s*(\/\/|\/\*|\*)/.test(line)) continue; // a comment, not code
-      if (LEGITIMATE.has(at)) continue;
-      hard.push(at);
+      if (LEGITIMATE.some((re) => re.test(line))) continue;
+      hard.push(`${f}  ${line.trim().slice(0, 64)}`);
     }
   }
   assert.deepEqual(hard, [
-    'bootstrap.js:927',        // the CLAUDE.md kit block's "Lane artifacts:" line
-    'bootstrap.js:1186',       // writes docs/specs/README.md into every project
-    'ci_review_report.js:19',  // where CI looks for the review report
-    'ci_scope_diff.js:13',     // where CI looks for the spec
-    'ci_scope_diff.js:16',     // the progress and review files CI allows in the diff
-    'ci_test_count.js:39',     // the spec a declared test-count drop must carry
-    'kit_status.js:164',       // the spec, for /status and the dashboard
-    'kit_status.js:171',       // the progress file
-    'kit_status.js:173',       // the review report
-    'kit_status.js:174',       // the events log
-    'kit_status.js:212',       // the events log again, for the last check
-    'kitlib.js:456',           // Lane.progressPath
-    'kitlib.js:466',           // Lane.eventsPath
-    'kitlib.js:635',           // REVIEW_ONLY_FILE: which files a review commit may touch
-    'lane.js:234',             // specPath
-    'lane.js:287',             // activeSpecs, which finds overlapping lanes
-    'lane.js:533',             // the spec field written into lane.json
-    'lane.js:556',             // the progress file start() creates
-    'lane.js:559',             // the Spec: line inside it
-    'sandbox.js:98',           // the network allowlist the spec declares
-    'validate_docs.js:156',    // how the validator recognises a lane artifact
+    "bootstrap.js  `Decisions: \\`${get(get(kit, 'paths', {}), 'decisions', 'docs/de",
+    "bootstrap.js  this.write('docs/specs/README.md', '# Specs\\n\\nOne file per feat",
+    "ci_review_report.js  const rep = C.joinPath(root, 'docs', 'specs', `${slug}.review.md",
+    "ci_scope_diff.js  const spec = C.joinPath(root, 'docs', 'specs', `${slug}.md`);",
+    "ci_scope_diff.js  const allowed = [...change, ...create, `docs/specs/${slug}.progr",
+    "ci_test_count.js  const spec = slug ? C.joinPath(root, 'docs', 'specs', `${slug}.m",
+    "kit_status.js  const spec = pjoin(root, 'docs', 'specs', `${slug}.md`);",
+    "kit_status.js  const prog = progressInfo(pjoin(docsRoot, 'docs', 'specs', `${sl",
+    "kit_status.js  const rev = reviewInfo(docsRoot, pjoin(docsRoot, 'docs', 'specs'",
+    "kit_status.js  const ev = eventsSummary(pjoin(docsRoot, 'docs', 'specs', `${slu",
+    "kit_status.js  const lastCheck = lastEvent(pjoin(docsRoot, 'docs', 'specs', `${",
+    "kitlib.js  return path.join(this.root, 'docs', 'specs', `${this.slug}.progr",
+    "kitlib.js  return path.join(this.root, 'docs', 'specs', `${this.slug}.event",
+    "kitlib.js  export const REVIEW_ONLY_FILE = /^docs\\/specs\\/[^/]+\\.(review\\.m",
+    "lane.js  return pjoin(root, 'docs', 'specs', `${slug}.md`);",
+    "lane.js  const dir = pjoin(root, 'docs', 'specs');",
+    "lane.js  feature: slug, spec: `docs/specs/${slug}.md`, stage: reproFirst ",
+    "lane.js  const prog = pjoin(wt, 'docs', 'specs', `${slug}.progress.md`);",
+    "lane.js  `# Progress: ${slug}\\n\\n- Spec: \\`docs/specs/${slug}.md\\`\\n- Wor",
+    "sandbox.js  const domains = [...new Set([...(Array.isArray(net.default_allow",
+    "validate_docs.js  if (s.includes(\"/docs/specs/\") || s.startsWith(\"docs/specs/\")) {",
   ], 'DEFECT: 21 lines in 9 files build the work root themselves. The repair plan counted 7 and named 3 files ' +
      '(kitlib.js, lane.js, ci_test_count.js); kit_status.js, the three CI scripts, validate_docs.js, sandbox.js ' +
      'and bootstrap.js are also affected. Update this list deliberately as Step 1 removes entries, so that a new ' +
