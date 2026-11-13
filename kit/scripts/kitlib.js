@@ -448,12 +448,23 @@ export class Lane {
   }
 
   get specPath() {
-    const spec = typeof this.data.spec === 'string' && this.data.spec ? this.data.spec : `${workRoot(this.root)}/${this.slug}.md`;
+    const spec = typeof this.data.spec === 'string' && this.data.spec ? this.data.spec : `${this.work}/${this.slug}.md`;
     return path.resolve(this.root, spec);
   }
 
+  /**
+   * Where this lane's artifacts live (KIT-SPEC 10.11). The directory of the spec `lane.js start` recorded, so every
+   * reader inside the lane agrees with the writer even if the project's paths.work changed afterwards: .claude/kit.json
+   * is tracked, so a worktree sees the value at its base commit, and ALWAYS_BLOCKED_EDIT means a lane can never
+   * update it. Falls back to the project's current setting for a lane.json written before this field existed.
+   */
+  get work() {
+    const spec = typeof this.data.spec === 'string' && this.data.spec ? this.data.spec : null;
+    return spec ? path.dirname(spec) : workRoot(this.root);
+  }
+
   get progressPath() {
-    return path.join(this.root, 'docs', 'specs', `${this.slug}.progress.md`);
+    return path.join(this.root, this.work, `${this.slug}.progress.md`);
   }
 
   /** Check output is machine output: it lives with the session files, not in docs/ (field test #44: a project's own
@@ -463,11 +474,11 @@ export class Lane {
   }
 
   get eventsPath() {
-    return path.join(this.root, 'docs', 'specs', `${this.slug}.events.jsonl`);
+    return path.join(this.root, this.work, `${this.slug}.events.jsonl`);
   }
 
   alwaysAllowed() {
-    const work = workRoot(this.root);
+    const work = this.work;
     return [
       `${work}/${this.slug}.progress.md`,
       `${work}/${this.slug}.log`,
@@ -632,7 +643,11 @@ export function changedDocs(root) {
   return paths;
 }
 
-export const REVIEW_ONLY_FILE = /^docs\/specs\/[^/]+\.(review\.md|progress\.md|log|events\.jsonl)$|(^|\/)(tests?|__tests__|spec)\/|\.(test|spec)\.[a-z]+$|(^|\/)test_[^/]+\.py$|_test\.(go|py|rb|rs)$/;
+/** Files a review commit may touch without making the review stale: the lane's own artifacts under `work`, and tests. */
+export function reviewOnlyFile(work) {
+  const w = work.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  return new RegExp(`^${w}/[^/]+\\.(review\\.md|progress\\.md|log|events\\.jsonl)$|(^|/)(tests?|__tests__|spec)/|\\.(test|spec)\\.[a-z]+$|(^|/)test_[^/]+\\.py$|_test\\.(go|py|rb|rs)$`);
+}
 
 /**
  * A review names the commit it reviewed. It is current if that is HEAD, or HEAD's parent and the
@@ -655,7 +670,8 @@ export function reviewHeadOk(root, reviewedSha) {
   } catch {
     return false;
   }
-  return parent.startsWith(reviewedSha) && changed.every((f) => REVIEW_ONLY_FILE.test(f));
+  const reviewOnly = reviewOnlyFile(workRoot(root));
+  return parent.startsWith(reviewedSha) && changed.every((f) => reviewOnly.test(f));
 }
 
 /** A settings.json hook entry belongs to the kit when one of its commands runs a script from the installed kit (any version). */

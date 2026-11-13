@@ -36,7 +36,7 @@ export function main(argv) {
   const headN = countAt(root, null);
   if (headN < baseN) {
     const slug = C.laneSlug(root);
-    const spec = slug ? C.joinPath(root, 'docs', 'specs', `${slug}.md`) : null;
+    const spec = slug ? C.joinPath(root, K.workRoot(root), `${slug}.md`) : null;
     if (spec && K.isFile(spec) && new RegExp(String.raw`Test count may drop:${S}*${C.NWS}`).test(C.readText(spec))) {
       return C.ok(`test-count: ${baseN} -> ${headN}, drop declared in spec`);
     }

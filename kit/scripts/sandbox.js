@@ -95,7 +95,7 @@ export function sandboxConfig({ root, wt, slug, agent = 'implementer', env = pro
   const perAgent = Array.isArray(net.per_agent?.[agent]) ? net.per_agent[agent] : [];
   // the kit's telemetry collector on localhost is always reachable (KIT-SPEC 9.4); nothing else on localhost is implied
   const collector = `127.0.0.1:${Number(env.KIT_TELEMETRY_PORT || 4318)}`;
-  const domains = [...new Set([...(Array.isArray(net.default_allow) ? net.default_allow : []), ...specNetwork(path.join(wt, 'docs', 'specs', `${slug}.md`)), ...perAgent, collector])].sort();
+  const domains = [...new Set([...(Array.isArray(net.default_allow) ? net.default_allow : []), ...specNetwork(path.join(wt, K.workRoot(root), `${slug}.md`)), ...perAgent, collector])].sort();
   const scratch = path.join(os.tmpdir(), `kit-lane-${slug}`);
   return {
     runtime,

@@ -1201,7 +1201,8 @@ fi
       this.write('LESSONS.md', this.lessons(), 'human');
       this.write('.github/CODEOWNERS', this.codeowners(), 'human');
       this.write('docs/research/INDEX.md', tmpl('index.md'), 'human');
-      this.write('docs/specs/README.md', '# Specs\n\nOne file per feature, from `~/.claude/kit/templates/spec.md`. Companion files: `<slug>.progress.md`, `<slug>.review.md`, `<slug>.events.jsonl`; check output goes to `.claude/session/<slug>.log`.\n', 'human');
+      const work = get(get(this.kitJson(), 'paths', {}), 'work', 'docs/specs');
+      this.write(`${work}/README.md`, '# Specs\n\nOne file per feature, from `~/.claude/kit/templates/spec.md`. Companion files: `<slug>.progress.md`, `<slug>.review.md`, `<slug>.events.jsonl`; check output goes to `.claude/session/<slug>.log`.\n', 'human');
       this.write(this.decisionPath('adopt-agent-kit'), fill(tmpl('decision.md'), [
         ['NNNN', this.nextDecisionNumber()], ['title', 'Adopt the agent kit'], ['date', TODAY],
         ['what situation forced a decision', 'Agents guessed, branches drifted, and rules lived only in prompts.'],

@@ -64,8 +64,12 @@ A refund route.
 - G1. routes exposes refund
 `;
 
-/** A bootstrapped project with an approved spec, plus a lane, under no sandbox runtime. */
-function laneProject(t, { work = null, goal = false } = {}) {
+/**
+ * A bootstrapped project with an approved spec, plus a lane, under no sandbox runtime.
+ * `work` sets kit.json paths.work; `moveSpec` also moves the spec into it, which is what adopting a work root means
+ * (KIT-SPEC 10.11: there is exactly one root).
+ */
+function laneProject(t, { work = null, moveSpec = false, goal = false } = {}) {
   setEnv(t, 'KIT_SANDBOX_RUNTIME', 'none');
   setEnv(t, 'KIT_STATUS_NO_GH', '1');
   const { root, commit } = project(t, {});
@@ -79,6 +83,7 @@ function laneProject(t, { work = null, goal = false } = {}) {
   if (work) {
     fs.mkdirSync(path.join(root, work), { recursive: true });
     write(root, `${work}/README.md`, '# work\n');
+    if (moveSpec) fs.renameSync(path.join(root, 'docs', 'specs', 'refund-route.md'), path.join(root, work, 'refund-route.md'));
   }
   // next-step needs an agreed goal before it will walk the pipeline at all
   if (goal) write(root, 'docs/goals/refund-route.md', GOAL);
@@ -461,146 +466,120 @@ test('LICENSE and the eval baseline are missing [inverts at Step 7]', () => {
 });
 
 // ===========================================================================================================
-// G5 — lane locations are derived in several places instead of one, and the WIP source is the wrong file.
+// G5 — lane locations. Step 1 centralized them on workRoot() and made the WIP number single. These cases were
+// written to pin the defects and are now rewritten to prove the fix: the point of each is that the configured work
+// root and the default behave identically, so nothing silently keeps its own idea of where lane artifacts live.
 // ===========================================================================================================
 
-test('wip: the limit is inert — two lanes start with max_concurrent_lanes 1 [inverts at Step 1]', (t) => {
+test('wip: the limit holds — a second lane is refused at max_concurrent_lanes 1 [Step 1 landed]', (t) => {
+  // INVERTED at Step 1. Before: two lanes opened under a limit of 1, because wip() counted ROADMAP rows in the main
+  // checkout and lane.js start writes 'building' into the worktree's copy.
   const { root, commit, wt } = laneProject(t);
-  const wipOf = () => JSON.parse(runScript('lane.js', ['wip', '--repo', root]).stdout);
   const kj = path.join(root, '.claude', 'kit.json');
-  const d = JSON.parse(read(kj));
+  const d = JSON.parse(read(root, '.claude', 'kit.json'));
   d.max_concurrent_lanes = 1;
   fs.writeFileSync(kj, K.jsonDumps(d, { indent: 2 }) + '\n');
 
-  assert.deepEqual(wipOf(), { in_flight: 0, limit: 1, lanes: [] },
-    'DEFECT: a lane is live and in flight reads 0');
   assert.ok(fs.existsSync(path.join(wt, '.claude', 'lane.json')));
-  assert.ok('refund-route' in JSON.parse(read(kj)).lanes, 'the registry the main checkout owns does know');
-
-  // the status went into the lane's own ROADMAP.md, which wip() never reads
-  assert.match(read(wt, 'ROADMAP.md'), /\| Refund route \| refund-route \| M1 \| building \|/);
+  assert.deepEqual(wipOf(root), { in_flight: 1, limit: 1, lanes: ['refund-route'] },
+    'the live lane is counted without any ROADMAP edit');
   assert.match(read(root, 'ROADMAP.md'), /\| Refund route \| refund-route \| M1 \| queued \|/,
-    'DEFECT: roadmapSet writes the worktree copy; wip reads the main checkout copy');
+    'and the main checkout ROADMAP still says queued, which is now irrelevant');
 
-  // so a second lane opens past the limit
   let other = spec({ commit: commit.slice(0, 7) }).replaceAll('refund-route', 'other').replaceAll('Refund route', 'Other')
     .replaceAll('src/api/routes.ts', 'src/api/other.ts').replaceAll('tests/routes.test.ts', 'tests/other.test.ts');
   write(root, 'src/api/other.ts', "import { PaymentService } from '../domain/payment';\nexport function other(s: PaymentService) {\n  return { charge: (u: string) => s.charge(u) };\n}\n");
   write(root, 'docs/specs/other.md', other);
   commitAll(root, 'second spec');
   const second = runScript('lane.js', ['start', 'other', '--repo', root]);
-  assert.equal(second.returncode, 0, 'DEFECT: the WIP limit of 1 did not refuse a second lane');
-  assert.deepEqual(Object.keys(JSON.parse(read(kj)).lanes).sort(), ['other', 'refund-route']);
+  assert.equal(second.returncode, 2, 'the second lane is refused');
+  assert.match(second.stderr, /WIP limit reached: 1\/1 in flight \(refund-route\)/);
+  assert.ok(!fs.existsSync(path.join(path.dirname(root), `${path.basename(root)}-lanes`, 'other')), 'and no worktree was left behind');
 });
 
-test('paths.work: a project that adopts it cannot finish a lane [inverts at Step 1]', (t) => {
-  const { wt } = laneProject(t, { work: 'docs/work' });
+test('wip: lane.js and kit_status report the same number, by sharing one derivation [Step 1 landed]', (t) => {
+  // INVERTED at Step 1. Before: lane.js said in_flight 0 while kit_status said 1, for the same live lane.
+  const { root } = laneProject(t);
+  assert.deepEqual(wipOf(root), { in_flight: 1, limit: 2, lanes: ['refund-route'] });
+  assert.deepEqual(statusOf(root).wip, { in_flight: 1, limit: 2 });
+  // they cannot drift: /status calls lane.js wip(), which calls laneWorktree() — the same check laneState makes
+  assert.match(read(SCRIPTS, 'kit_status.js'), /const \[inFlightCount, wipLimit\] = L\.wip\(root\);/);
+  assert.match(read(SCRIPTS, 'lane.js'), /export function laneWorktree\(root, kit, slug\)/);
+  assert.match(read(SCRIPTS, 'lane.js'), /\.filter\(\(slug\) => laneWorktree\(root, kit, slug\)\)/);
+  const st = KS.laneState(root, L.roadmapRows(root).find((r) => r.slug === 'refund-route'), K.loadKitJson(root));
+  assert.equal(st.position, 'building');
+});
+
+test('paths.work: a lane under a configured work root runs to green [Step 1 landed]', (t) => {
+  // INVERTED at Step 1. Before: guard-edit refused the progress file lane.js start had just created, because
+  // alwaysAllowed() used workRoot while progressPath was hardcoded, so the lane could never finish.
+  const { root, wt } = laneProject(t, { work: 'docs/work', moveSpec: true, goal: true });
   const lane = K.findLane(wt);
-  assert.equal(K.workRoot(wt), 'docs/work', 'the lane does read the configured value');
-  // ... but the writers and readers of lane artifacts do not use it
-  assert.equal(lane.progressPath, path.join(wt, 'docs', 'specs', 'refund-route.progress.md'));
-  assert.equal(lane.eventsPath, path.join(wt, 'docs', 'specs', 'refund-route.events.jsonl'));
-  assert.ok(fs.existsSync(lane.progressPath), 'lane.js start wrote it under the hardcoded docs/specs');
+  const rel = (p) => path.relative(wt, p);
+  assert.equal(K.workRoot(wt), 'docs/work');
+  assert.equal(lane.work, 'docs/work');
+  assert.equal(rel(lane.progressPath), 'docs/work/refund-route.progress.md');
+  assert.equal(rel(lane.eventsPath), 'docs/work/refund-route.events.jsonl');
+  assert.equal(rel(lane.specPath), 'docs/work/refund-route.md');
   assert.deepEqual(lane.alwaysAllowed().slice(0, 3), [
     'docs/work/refund-route.progress.md', 'docs/work/refund-route.log', 'docs/work/refund-route.events.jsonl',
-  ], 'while the allow-list is built from workRoot');
+  ]);
+  assert.ok(fs.existsSync(lane.progressPath), 'start created it under the configured root');
 
-  // the deadlock: the file the lane must update is refused, and the message cites the setting it ignored
-  K.recordRead(wt, 's1', 'docs/specs/refund-route.progress.md');
-  const refused = hook('hook_guard_edit.js', { cwd: wt, input: { file_path: 'docs/specs/refund-route.progress.md' } });
-  assert.equal(refused.code, 2, 'DEFECT: the lane may not edit the progress file lane.js start created for it');
-  assert.match(refused.err, /is a lane artifact outside 'docs\/work\/'/);
-  // writing where the guard does allow produces a file done-check never reads
-  assert.equal(hook('hook_guard_edit.js', { cwd: wt, input: { file_path: 'docs/work/refund-route.progress.md' } }).code, 0);
-  const dc = hook('hook_done_check.js', { cwd: wt, tool: 'Stop', extra: { hook_event_name: 'Stop' } });
-  assert.match(dc.out, /no red run reference/, 'DEFECT: done-check reads docs/specs and so never sees the permitted file');
-});
+  // the lane may edit the file every reader reads
+  K.recordRead(wt, 's1', rel(lane.progressPath));
+  assert.equal(hook('hook_guard_edit.js', { cwd: wt, input: { file_path: rel(lane.progressPath) } }).code, 0);
 
-test('wip: lane.js and kit_status give different answers about the same live lane [inverts at Step 1]', (t) => {
-  const { root, wt } = laneProject(t);
-  assert.ok(fs.existsSync(path.join(wt, '.claude', 'lane.json')), 'one lane is live');
-  // Two derivations of the same number, in the same repository, at the same moment.
-  assert.deepEqual(wipOf(root), { in_flight: 0, limit: 2, lanes: [] },
-    'DEFECT: lane.js wip() counts ROADMAP rows in the main checkout, which lane.js start never writes');
-  assert.equal(statusOf(root).wip.in_flight, 1,
-    'kit_status.projectStatus derives it from laneState.position and is right');
-  // and that correct derivation is one function call away: it needs no registry file and no git subcommand
-  const st = KS.laneState(root, L.roadmapRows(root).find((r) => r.slug === 'refund-route'), K.loadKitJson(root));
-  assert.equal(st.position, 'building', 'laneState sees the worktree and its lane.json');
-  assert.ok(L.IN_FLIGHT.has(st.position), 'and building is in flight');
-  // the repair plan proposes reading kit.json `lanes` instead; that file is written by start and deleted by finish
-  // with nothing reconciling it against reality, so it can over-count as easily as ROADMAP under-counts.
-  assert.ok('refund-route' in K.loadKitJson(root).lanes, 'the registry the plan would read does list the lane');
-});
-
-test('paths.work: next-step says "plan" forever on a lane whose spec is approved [inverts at Step 1]', (t) => {
-  const { root, wt } = laneProject(t, { work: 'docs/work', goal: true });
-  // the approved spec is where lane.js start and specPath put it, hardcoded
-  assert.ok(fs.existsSync(path.join(wt, 'docs', 'specs', 'refund-route.md')), 'the spec is under docs/specs');
-  assert.match(read(wt, 'docs', 'specs', 'refund-route.md'), /Approved by: /);
-  assert.ok(!fs.existsSync(path.join(wt, 'docs', 'work', 'refund-route.md')), 'and not under the configured work root');
-  // inLanePlanning (lane.js:923) IS workRoot-aware, so it looks in the empty folder and never finds it
-  assert.equal(K.workRoot(wt), 'docs/work');
-  const ns = nextStepOf(root);
-  assert.equal(ns.stage, 'plan', 'DEFECT: the controller sends the lane back to planning');
-  assert.equal(ns.reason, 'the lane has no spec yet', 'DEFECT: on a spec that exists and is approved');
-  // nothing else reports it: the lane looks healthy everywhere a human would look
-  assert.equal(statusOf(root).lanes.find((l) => l.slug === 'refund-route').position, 'building');
-  assert.equal(runScript('lane.js', ['next-step', 'refund-route', '--repo', root]).returncode, 0, 'exit 0, no warning');
-});
-
-test('paths.work: work done where guard-edit permits is invisible to laneState and done-check [inverts at Step 1]', (t) => {
-  const { root, wt } = laneProject(t, { work: 'docs/work', goal: true });
-  const lane = K.findLane(wt);
-  const fromStart = path.join(wt, 'docs', 'specs', 'refund-route.progress.md');
-  const permitted = path.join(wt, 'docs', 'work', 'refund-route.progress.md');
-  // guard-edit permits only the workRoot path (alwaysAllowed) and refuses the one start() created
-  K.recordRead(wt, 's1', 'docs/specs/refund-route.progress.md');
-  assert.equal(hook('hook_guard_edit.js', { cwd: wt, input: { file_path: 'docs/specs/refund-route.progress.md' } }).code, 2);
-  assert.equal(hook('hook_guard_edit.js', { cwd: wt, input: { file_path: 'docs/work/refund-route.progress.md' } }).code, 0);
-
-  // so the lane fills its criteria in the permitted place, with a real logged red and green run
+  // a real red and green run, and the stop is allowed
   fs.writeFileSync(path.join(wt, '.claude', 'session', 'refund-route.log'),
     '=== 2026-11-12T10:00:00 D1: npx vitest run -> exit 1\n1 failed\n\n' +
     '=== 2026-11-12T10:01:00 D1: npx vitest run -> exit 0\n1 passed\n\n');
-  fs.mkdirSync(path.dirname(permitted), { recursive: true });
-  fs.writeFileSync(permitted, fs.readFileSync(fromStart, 'utf8').replace(/\| — \| — \|/, '| refund-route.log#1 | refund-route.log#4 |'));
+  fs.writeFileSync(lane.progressPath, fs.readFileSync(lane.progressPath, 'utf8').replace(/\| — \| — \|/, '| refund-route.log#1 | refund-route.log#4 |'));
+  const dc = hook('hook_done_check.js', { cwd: wt, tool: 'Stop', extra: { hook_event_name: 'Stop' } });
+  assert.equal(dc.out, '', 'done-check allows the stop');
 
-  // laneState reads the hardcoded docs/specs copy, which still has empty cells
+  // and every reader of lane state sees the work
   const st = KS.laneState(root, L.roadmapRows(root).find((r) => r.slug === 'refund-route'), K.loadKitJson(root));
   assert.equal(st.progress.criteria, 1);
-  assert.equal(st.progress.green, 0, 'DEFECT: a green run exists and /status reports 0 green');
-  assert.equal(st.position, 'building');
-  // and done-check reads lane.progressPath, also hardcoded, so the stop stays refused forever
-  assert.equal(lane.progressPath, fromStart);
-  const dc = hook('hook_done_check.js', { cwd: wt, tool: 'Stop', extra: { hook_event_name: 'Stop' } });
-  assert.match(dc.out, /no red run reference/,
-    'DEFECT: the lane cannot finish; the only file it may write is the only file nothing reads');
+  assert.equal(st.progress.green, 1, 'laneState reads the configured root');
+  const ns = nextStepOf(root);
+  assert.equal(ns.stage, 'review', `next-step walks on: ${JSON.stringify(ns)}`);
 });
 
-test('laneState and lane.js start agree only because both hardcode docs/specs [inverts at Step 1]', () => {
-  // This case exists to fail loudly if Step 1 moves one side without the other. laneState is NOT broken today:
-  // its five reads and the writer in lane.js start are hardcoded to the same path, so they agree by accident.
-  const ks = read(SCRIPTS, 'kit_status.js').split('\n');
-  const reads = ks.map((l, i) => [i + 1, l]).filter(([, l]) => /'docs', 'specs'/.test(l)).map(([n]) => n);
-  assert.deepEqual(reads, [164, 171, 173, 174, 212],
-    'laneState reads the spec, progress, review and events from a hardcoded docs/specs');
-  const ln = read(SCRIPTS, 'lane.js').split('\n');
-  assert.match(ln[555], /const prog = pjoin\(wt, 'docs', 'specs'/, 'lane.js start writes the progress file to the same hardcoded path');
-  assert.match(ln[233], /return pjoin\(root, 'docs', 'specs'/, 'and specPath resolves the spec there');
-  // the consequence: /status and the dashboard read none of this through workRoot()
-  assert.doesNotMatch(read(SCRIPTS, 'kit_status.js'), /workRoot/,
-    'DEFECT: kit_status never calls workRoot, so any relocation blinds /status and the dashboard at once');
+test('paths.work: the work root changes nothing but the directory [Step 1 landed]', (t) => {
+  // The property that makes this structural rather than a patch: the default and a configured root produce the same
+  // shape, so no reader can keep a private idea of where artifacts live.
+  const shape = (work, moveSpec) => {
+    const { root, wt } = laneProject(t, { work, moveSpec, goal: true });
+    const lane = K.findLane(wt);
+    const rel = (p) => path.relative(wt, p).replace(lane.work, '<work>');
+    return {
+      laneJsonSpec: JSON.parse(fs.readFileSync(path.join(wt, '.claude', 'lane.json'), 'utf8')).spec.replace(lane.work, '<work>'),
+      progress: rel(lane.progressPath),
+      events: rel(lane.eventsPath),
+      spec: rel(lane.specPath),
+      allowed: lane.alwaysAllowed().slice(0, 3).map((x) => x.replace(lane.work, '<work>')),
+      progressExists: fs.existsSync(lane.progressPath),
+      laneArtifactsCi: runScript('ci_lane_artifacts.js', ['--repo', wt]).returncode,
+      scopeDiffCi: runScript('ci_scope_diff.js', ['--repo', wt, '--base', 'main']).returncode,
+      specKind: V.detectType(`${lane.work}/x.md`, lane.work),
+      reviewKind: V.detectType(`${lane.work}/x.review.md`, lane.work),
+      nextStage: nextStepOf(root).stage,
+    };
+  };
+  assert.deepEqual(shape('docs/work', true), shape(null, false),
+    'a configured work root and the default differ only in the directory name');
 });
 
-test('validate_docs: a spec under the configured work root is never validated [inverts at Step 1]', (t) => {
-  // detectType decides a document's kind from its path, so the work root decides whether a spec is checked at all.
-  assert.equal(V.detectType('docs/specs/x.md'), 'spec');
-  assert.equal(V.detectType('docs/specs/x.review.md'), 'review');
-  assert.equal(V.detectType('docs/work/x.md'), null, 'DEFECT: a spec under docs/work has no kind');
-  assert.equal(V.detectType('docs/work/x.review.md'), null, 'DEFECT: nor does a review report');
+test('validate_docs: a spec under the configured work root is validated [Step 1 landed]', (t) => {
+  // INVERTED at Step 1. Before: detectType keyed on a literal docs/specs, so the PostToolUse hook and CI's
+  // --changed step skipped specs and reviews under any other root entirely.
+  assert.equal(V.detectType('docs/specs/x.md'), 'spec', 'the default is still the default');
+  assert.equal(V.detectType('docs/work/x.md', 'docs/work'), 'spec');
+  assert.equal(V.detectType('docs/work/x.review.md', 'docs/work'), 'review');
+  assert.equal(V.detectType('docs/specs/x.md', 'docs/work'), null, 'and only the configured root counts');
 
-  const { wt } = laneProject(t, { work: 'docs/work' });
+  const { wt } = laneProject(t, { work: 'docs/work', moveSpec: true });
   const invalid = '# Spec: broken\n\n- Slug: x\n\n## Summary\n\n- nothing [unknown]\n';
   const hookOn = (rel) => {
     write(wt, rel, invalid);
@@ -610,56 +589,40 @@ test('validate_docs: a spec under the configured work root is never validated [i
     });
     return ((r.stdout ?? '') + (r.stderr ?? '')).trim();
   };
-  assert.match(hookOn('docs/specs/broken.md'), /validate-docs failed/, 'under docs/specs the hook blocks');
-  assert.equal(hookOn('docs/work/broken.md'), '',
-    'DEFECT: the identical file under the configured work root passes silently. The PostToolUse hook and the CI ' +
-    '--changed step both route through detectType; only callers that pass the kind explicitly (lane.js:347, :423, ' +
-    'kit_status.js:150) still validate.');
+  assert.match(hookOn('docs/work/broken.md'), /validate-docs failed/, 'the hook now blocks under the configured root');
 });
 
-test('paths.work: CI rejects the files lane.js start itself wrote [inverts at Step 1]', (t) => {
-  const { wt } = laneProject(t, { work: 'docs/work' });
-  const r = runScript('ci_lane_artifacts.js', ['--repo', wt]);
-  assert.equal(r.returncode, 1, 'DEFECT: the project CI fails on the kit\'s own output');
-  const out = r.stdout + r.stderr;
-  // the two files lane.js start always creates in the worktree: the spec it checks out and the progress skeleton
-  assert.match(out, /docs\/specs\/refund-route\.md: lane artifact outside docs\/work\//);
-  assert.match(out, /docs\/specs\/refund-route\.progress\.md: lane artifact outside docs\/work\//);
-  // ci_lane_artifacts is workRoot-aware (ci_lane_artifacts.js:34); the writers are not
-  assert.match(read(SCRIPTS, 'ci_lane_artifacts.js'), /const work = K\.workRoot\(root\);/);
-});
-
-test('planted-faults cannot be aimed at a project, so Step 2 as planned is not implementable [flag]', () => {
-  // KIT-SPEC 11 promises --upgrade "first runs the planted-fault suite against the project's current configuration".
-  // The suite has no --repo: it builds its own fixtures and mutates them destructively.
+test('planted-faults cannot be aimed at a project, so the fault suite stays the release gate [invariant]', () => {
+  // KIT-SPEC 11 was corrected to say so (see the upgrade cases above). This keeps the reason machine-checked.
   const src = read(REPO, 'planted-faults', 'run.js');
   assert.match(src, /ap\.addArgument\('--json'/);
   assert.match(src, /ap\.addArgument\('--keep'/);
-  assert.doesNotMatch(src, /addArgument\('--repo'/, 'DEFECT: no --repo, so it cannot target a project');
+  assert.doesNotMatch(src, /addArgument\('--repo'/, 'no --repo, so it cannot target a project');
   assert.match(src, /const \[root, commit\] = project\(tmp\);/, 'it builds a fixture project of its own');
   assert.match(src, /F\.nodeApi\(path\.join\(tmp, name\)\)/, 'from kit fixtures, in a temp dir');
-  // and the faults mutate destructively, so pointing it at a real project would not be safe either
-  assert.match(src, /F\.git\(\['reset', '-q', '--hard', 'HEAD~1'\], wt\)/);
+  assert.match(src, /F\.git\(\['reset', '-q', '--hard', 'HEAD~1'\], wt\)/, 'and mutates them destructively');
   assert.match(src, /delete s\.hooks\.PreToolUse/);
 });
 
-test('paths.work: a lane reads a committed snapshot of kit.json, not the project setting [inverts at Step 1]', (t) => {
+test('a lane keeps the work root it started with, not the project\'s current one [Step 1 landed]', (t) => {
+  // .claude/kit.json is tracked, so a worktree reads the value at its base commit, and ALWAYS_BLOCKED_EDIT means a
+  // lane can never update it. Lane.work therefore comes from the spec path lane.js start recorded, so a later change
+  // to paths.work cannot split a running lane's readers from its writers.
   const { root, wt } = laneProject(t);
+  const lane = K.findLane(wt);
+  assert.equal(lane.work, 'docs/specs');
   const kj = path.join(root, '.claude', 'kit.json');
-  const d = JSON.parse(read(kj));
+  const d = JSON.parse(read(root, '.claude', 'kit.json'));
   d.paths = { ...d.paths, work: 'docs/work' };
-  fs.writeFileSync(kj, K.jsonDumps(d, { indent: 2 }) + '\n'); // changed, not committed
-  assert.equal(K.workRoot(root), 'docs/work');
-  assert.equal(K.workRoot(wt), 'docs/specs',
-    'DEFECT: .claude/kit.json is tracked, so a lane sees the value at its base commit; ' +
-    'and the file is in ALWAYS_BLOCKED_EDIT, so the lane can never be brought up to date from inside');
+  fs.writeFileSync(kj, K.jsonDumps(d, { indent: 2 }) + '\n'); // changed in the main checkout, not committed
+  assert.equal(K.workRoot(root), 'docs/work', 'the project setting moved');
+  assert.equal(K.workRoot(wt), 'docs/specs', 'the worktree still reads its committed copy');
+  assert.equal(K.findLane(wt).work, 'docs/specs', 'and the lane keeps the root it recorded at start');
+  assert.equal(K.findLane(wt).progressPath, lane.progressPath, 'so its readers do not move under it');
 });
 
-test('workRoot: every site that builds the work root itself [inverts at Step 1]', () => {
-  // workRoot() is the one function that knows where lane artifacts live. These lines do not call it.
-  // Keyed on the source text rather than the line number: a site must not be added quietly, but unrelated edits
-  // above it must not turn this red (bootstrap.js alone moved three of these by 18 lines during Step 2).
-  // Two are legitimate and excluded: workRoot's own default, and the default written into a new kit.json.
+test('workRoot: nothing builds the work root itself any more [Step 1 landed]', () => {
+  // INVERTED at Step 1: this list held 21 lines in 9 files. What remains are three defaults, not hardcodes.
   const LEGITIMATE = [
     /return typeof p === 'string' && p \? p\.replace/,        // kitlib.js workRoot()
     /paths: get\(existing, 'paths', null\)/,                  // bootstrap.js kitJson()
@@ -667,39 +630,24 @@ test('workRoot: every site that builds the work root itself [inverts at Step 1]'
   const hard = [];
   for (const f of fs.readdirSync(SCRIPTS).filter((n) => n.endsWith('.js'))) {
     for (const line of read(SCRIPTS, f).split('\n')) {
-      // docs\/specs catches the form inside a regex literal (kitlib.js REVIEW_ONLY_FILE)
       if (!/['"]docs['"],\s*['"]specs['"]|docs\\?\/specs/.test(line)) continue;
-      if (/^\s*(\/\/|\/\*|\*)/.test(line)) continue; // a comment, not code
+      if (/^\s*(\/\/|\/\*|\*)/.test(line)) continue;
       if (LEGITIMATE.some((re) => re.test(line))) continue;
       hard.push(`${f}  ${line.trim().slice(0, 64)}`);
     }
   }
   assert.deepEqual(hard, [
     "bootstrap.js  `Decisions: \\`${get(get(kit, 'paths', {}), 'decisions', 'docs/de",
-    "bootstrap.js  this.write('docs/specs/README.md', '# Specs\\n\\nOne file per feat",
-    "ci_review_report.js  const rep = C.joinPath(root, 'docs', 'specs', `${slug}.review.md",
-    "ci_scope_diff.js  const spec = C.joinPath(root, 'docs', 'specs', `${slug}.md`);",
-    "ci_scope_diff.js  const allowed = [...change, ...create, `docs/specs/${slug}.progr",
-    "ci_test_count.js  const spec = slug ? C.joinPath(root, 'docs', 'specs', `${slug}.m",
-    "kit_status.js  const spec = pjoin(root, 'docs', 'specs', `${slug}.md`);",
-    "kit_status.js  const prog = progressInfo(pjoin(docsRoot, 'docs', 'specs', `${sl",
-    "kit_status.js  const rev = reviewInfo(docsRoot, pjoin(docsRoot, 'docs', 'specs'",
-    "kit_status.js  const ev = eventsSummary(pjoin(docsRoot, 'docs', 'specs', `${slu",
-    "kit_status.js  const lastCheck = lastEvent(pjoin(docsRoot, 'docs', 'specs', `${",
-    "kitlib.js  return path.join(this.root, 'docs', 'specs', `${this.slug}.progr",
-    "kitlib.js  return path.join(this.root, 'docs', 'specs', `${this.slug}.event",
-    "kitlib.js  export const REVIEW_ONLY_FILE = /^docs\\/specs\\/[^/]+\\.(review\\.m",
-    "lane.js  return pjoin(root, 'docs', 'specs', `${slug}.md`);",
-    "lane.js  const dir = pjoin(root, 'docs', 'specs');",
-    "lane.js  feature: slug, spec: `docs/specs/${slug}.md`, stage: reproFirst ",
-    "lane.js  const prog = pjoin(wt, 'docs', 'specs', `${slug}.progress.md`);",
-    "lane.js  `# Progress: ${slug}\\n\\n- Spec: \\`docs/specs/${slug}.md\\`\\n- Wor",
-    "sandbox.js  const domains = [...new Set([...(Array.isArray(net.default_allow",
-    "validate_docs.js  if (s.includes(\"/docs/specs/\") || s.startsWith(\"docs/specs/\")) {",
-  ], 'DEFECT: 21 lines in 9 files build the work root themselves. The repair plan counted 7 and named 3 files ' +
-     '(kitlib.js, lane.js, ci_test_count.js); kit_status.js, the three CI scripts, validate_docs.js, sandbox.js ' +
-     'and bootstrap.js are also affected. Update this list deliberately as Step 1 removes entries, so that a new ' +
-     'hardcoded site cannot be added without a red test.');
+    "bootstrap.js  const work = get(get(this.kitJson(), 'paths', {}), 'work', 'docs",
+    "validate_docs.js  export function detectType(p, work = 'docs/specs') {",
+  ], 'each remaining line reads the configured value with the historical default as its fallback; a new hardcoded ' +
+     'site would appear here and fail');
+  // the readers that used to hardcode it now take it from one place
+  assert.match(read(SCRIPTS, 'kitlib.js'), /get work\(\) \{/);
+  assert.match(read(SCRIPTS, 'kitlib.js'), /return path\.join\(this\.root, this\.work, `\$\{this\.slug\}\.progress\.md`\)/);
+  assert.match(read(SCRIPTS, 'kitlib.js'), /export function reviewOnlyFile\(work\)/);
+  assert.match(read(SCRIPTS, 'lane.js'), /return pjoin\(root, K\.workRoot\(root\), `\$\{slug\}\.md`\)/);
+  assert.doesNotMatch(read(SCRIPTS, 'kit_status.js'), /'docs', 'specs'/);
 });
 
 test('ci_test_count reports success when it cannot read the base [inverts at Step 5]', (t) => {

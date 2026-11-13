@@ -161,17 +161,19 @@ export function reviewInfo(root, rep, laneHead) {
 export function laneState(root, row, kit) {
   L.asDict(kit);
   const slug = row.slug;
-  const spec = pjoin(root, 'docs', 'specs', `${slug}.md`);
+  const spec = pjoin(root, K.workRoot(root), `${slug}.md`);
   const lanes = kget(kit, 'lanes', {});
   const wt = Object.hasOwn(lanes, slug) ? pjoin(lanes[slug].worktree) : pjoin(L.lanesDir(root), slug);
   const hasWt = K.isFile(pjoin(wt, '.claude', 'lane.json'));
   const base = kget(kit, 'default_branch', 'main');
   const laneJson = hasWt ? L.asDict(JSON.parse(readText(pjoin(wt, '.claude', 'lane.json')))) : {};
   const docsRoot = hasWt ? wt : root;
-  const prog = progressInfo(pjoin(docsRoot, 'docs', 'specs', `${slug}.progress.md`));
+  // inside a lane the artifacts are where that lane recorded them (Lane.work); outside, where the project says now
+  const work = hasWt ? (K.findLane(wt)?.work ?? K.workRoot(root)) : K.workRoot(root);
+  const prog = progressInfo(pjoin(docsRoot, work, `${slug}.progress.md`));
   const head = hasWt ? gitOr(['rev-parse', 'HEAD'], wt) : null;
-  const rev = reviewInfo(docsRoot, pjoin(docsRoot, 'docs', 'specs', `${slug}.review.md`), head);
-  const ev = eventsSummary(pjoin(docsRoot, 'docs', 'specs', `${slug}.events.jsonl`));
+  const rev = reviewInfo(docsRoot, pjoin(docsRoot, work, `${slug}.review.md`), head);
+  const ev = eventsSummary(pjoin(docsRoot, work, `${slug}.events.jsonl`));
   const specHdr = K.isFile(spec) ? L.specHeader(spec) : new Map();
   const approved = Boolean(K.isFile(spec) && APPROVAL_RE.test(readText(spec)));
   let behind = null;
@@ -209,7 +211,7 @@ export function laneState(root, row, kit) {
   else if (['planning', 'researching'].includes(row.status)) pos = row.status;
   else pos = 'queued';
   const needsYou = ['waiting-approval', 'ready-to-merge', 'escalated'].includes(pos);
-  const lastCheck = lastEvent(pjoin(docsRoot, 'docs', 'specs', `${slug}.events.jsonl`), new Set(['test', 'typecheck', 'lint']));
+  const lastCheck = lastEvent(pjoin(docsRoot, work, `${slug}.events.jsonl`), new Set(['test', 'typecheck', 'lint']));
   return {
     feature: row.feature, slug, milestone: row.milestone, roadmap_status: row.status, position: pos, needs_you: needsYou,
     risk: specHdr.get('risk') ?? null, spec: K.isFile(spec) ? relativeTo(root, spec) : null, approved,
@@ -245,7 +247,9 @@ export function projectStatus(root) {
   const kit = L.asDict(K.loadKitJson(root));
   const rows = L.roadmapRows(root);
   const lanes = rows.map((r) => laneState(root, r, kit));
-  const inFlight = lanes.filter((l) => L.IN_FLIGHT.has(l.position) || l.position === 'in-review');
+  // One WIP number for the whole kit: lane.js wip() is what gates lane creation, so /status must not compute its own.
+  // It counts worktrees holding a lane.json, the same derivation as position `building` above.
+  const [inFlightCount, wipLimit] = L.wip(root);
   let ci = null;
   if (process.env.KIT_STATUS_NO_GH === undefined && K.isDir(pjoin(root, '.github'))) {
     try {
@@ -270,7 +274,7 @@ export function projectStatus(root) {
   }
   return {
     project: kget(kit, 'project', path.basename(root)), root, kit_version: kget(kit, 'kit_version', null), generated: K.isoSeconds(),
-    wip: { in_flight: inFlight.length, limit: kget(kit, 'wip_limit', 2) },
+    wip: { in_flight: inFlightCount, limit: wipLimit },
     needs_you: lanes.filter((l) => l.needs_you).map((l) => ({ slug: l.slug, position: l.position, failure: kget(l.progress, 'failure', null) })),
     lanes,
     ci_main: ci,

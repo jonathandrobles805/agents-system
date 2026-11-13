@@ -145,7 +145,7 @@ function kitDir() {
   return K.KIT_DIR;
 }
 
-export function detectType(p) {
+export function detectType(p, work = 'docs/specs') {
   const s = pyNorm(p);
   const name = s === "." || s === "/" ? "" : s.slice(s.lastIndexOf("/") + 1);
   if (name === "LESSONS.md") return "lesson";
@@ -153,7 +153,7 @@ export function detectType(p) {
   if (s.includes("/docs/research/") || s.startsWith("docs/research/")) {
     return name.toUpperCase() === "INDEX.MD" ? null : "research";
   }
-  if (s.includes("/docs/specs/") || s.startsWith("docs/specs/")) {
+  if (s.includes(`/${work}/`) || s.startsWith(`${work}/`)) {
     if (name.endsWith(".review.md")) return "review";
     if (name.endsWith(".progress.md") || name.endsWith(".log") || name.endsWith(".jsonl")) return null;
     return "spec";
@@ -502,7 +502,7 @@ export class Validator {
   }
 
   run(p, kind = null) {
-    kind = kind || detectType(p);
+    kind = kind || detectType(p, K.workRoot(this.root));
     if (kind === null) return;
     if (!K.isFile(p)) {
       this.add(p, 1, "missing-file", "file not found");

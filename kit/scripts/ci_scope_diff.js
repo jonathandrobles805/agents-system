@@ -10,10 +10,11 @@ export function main(argv) {
   const root = K.realResolve(a.repo);
   const slug = C.laneSlug(root);
   if (!slug) return C.ok('scope-diff: not a lane branch (wt/<slug>); skipped');
-  const spec = C.joinPath(root, 'docs', 'specs', `${slug}.md`);
+  const work = K.workRoot(root);
+  const spec = C.joinPath(root, work, `${slug}.md`);
   if (!K.isFile(spec)) return C.fail(`scope-diff: lane branch for '${slug}' but ${C.relativeTo(spec, root)} does not exist`);
   const [, change, create] = K.specFileLists(spec);
-  const allowed = [...change, ...create, `docs/specs/${slug}.progress.md`, `docs/specs/${slug}.review.md`, `docs/specs/${slug}.log`, `docs/specs/${slug}.events.jsonl`, 'docs/decisions/*.md', 'ROADMAP.md'];
+  const allowed = [...change, ...create, `${work}/${slug}.progress.md`, `${work}/${slug}.review.md`, `${work}/${slug}.log`, `${work}/${slug}.events.jsonl`, `${K.decisionsRoot(root)}/*.md`, 'ROADMAP.md'];
   const extras = C.changedFiles(root, a.base).filter((f) => !K.globMatch(f, allowed));
   if (extras.length) {
     return C.fail('scope-diff: files changed outside the spec allow-list:\n  ' + extras.join('\n  ') + `\nAllowed: ${[...change, ...create].join(', ')}\nAmend the spec and re-approve, or revert these files.`);
