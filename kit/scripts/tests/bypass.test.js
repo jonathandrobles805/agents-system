@@ -692,3 +692,76 @@ test('the generated audit names a commit that is not HEAD [inverts at Step 7]', 
   assert.ok(audited, 'GAPS.md names the commit it audited');
   assert.notEqual(audited, head, `DEFECT: GAPS.md audits ${audited}, HEAD is ${head}; nothing asserts they match`);
 });
+
+// ===========================================================================================================
+// permissions.allow: the lane's own ability to work. Claude Code denies — it does not prompt — any call that
+// needs approval in a headless `claude -p --permission-mode default` run with no human present, so a project
+// with no allow list gives its lanes read-only tools and nothing else.
+// ===========================================================================================================
+
+test('permissions: a bootstrapped project grants the lane what it needs to work [Step 5 part 1]', (t) => {
+  setEnv(t, 'KIT_SANDBOX_RUNTIME', 'none');
+  const { root } = project(t, {});
+  const perms = JSON.parse(read(root, '.claude', 'settings.json')).permissions;
+  const allow = perms.allow ?? [];
+  assert.ok(allow.includes('Edit(/**)'), 'edits inside the worktree are pre-approved');
+  assert.ok(allow.includes('Bash(git commit *)'), 'the lane can commit its own work');
+  // derived from this project's own recorded commands, not from a list written per project
+  const cmds = JSON.parse(read(root, '.claude', 'kit.json')).commands;
+  for (const key of ['test', 'typecheck', 'install']) {
+    const want = `Bash(${cmds[key].split('{')[0].trim()} *)`;
+    assert.ok(allow.includes(want), `${key} is runnable: expected ${want}`);
+  }
+});
+
+test('permissions: nothing the generator writes can loosen the floor [invariant]', (t) => {
+  setEnv(t, 'KIT_SANDBOX_RUNTIME', 'none');
+  const { root } = project(t, { dir: tmpPath(t) });
+  const allow = JSON.parse(read(root, '.claude', 'settings.json')).permissions.allow ?? [];
+  const floor = K.loadFloor();
+  for (const a of allow) {
+    for (const d of floor.deny) assert.ok(!K.allowLoosens(a, d), `generated allow "${a}" loosens floor deny "${d}"`);
+  }
+  const r = runScript('ci_security_floor.js', ['--repo', root]);
+  assert.equal(r.returncode, 0, `security-floor must stay green: ${r.stdout}${r.stderr}`);
+});
+
+test('permissions: a project command that would loosen the floor is dropped, not written [invariant]', (t) => {
+  setEnv(t, 'KIT_SANDBOX_RUNTIME', 'none');
+  const { root } = project(t, { dir: tmpPath(t) });
+  const kj = path.join(root, '.claude', 'kit.json');
+  const d = JSON.parse(read(root, '.claude', 'kit.json'));
+  d.commands.install = 'sudo make install';
+  fs.writeFileSync(kj, K.jsonDumps(d, { indent: 2 }));
+  runScript('bootstrap.js', ['--repo', root, '--upgrade']);
+  const allow = JSON.parse(read(root, '.claude', 'settings.json')).permissions.allow ?? [];
+  assert.ok(!allow.some((a) => a.startsWith('Bash(sudo')), `a sudo command must not become an allow rule: ${allow}`);
+});
+
+test('permissions: each grant is written once, and exact rules survive pruning [invariant]', (t) => {
+  setEnv(t, 'KIT_SANDBOX_RUNTIME', 'none');
+  const { root } = project(t, { dir: tmpPath(t) });
+  const allow = JSON.parse(read(root, '.claude', 'settings.json')).permissions.allow;
+  const cmds = JSON.parse(read(root, '.claude', 'kit.json')).commands;
+  const base = cmds.test.split('{')[0].trim();          // 'npx vitest run'
+  const narrower = cmds.test_affected.split('{')[0].trim(); // '<base> --changed HEAD'
+  assert.ok(narrower.startsWith(base), 'the fixture has a narrower variant of the test command');
+  assert.ok(allow.includes(`Bash(${base} *)`), 'the covering wildcard rule is kept');
+  assert.ok(!allow.includes(`Bash(${narrower} *)`), `the covered wildcard rule is not written twice: ${narrower}`);
+  // an exact rule is never pruned by a wildcard: whether Claude Code's trailing `*` matches the empty string is undocumented
+  assert.ok(allow.includes(`Bash(${narrower})`), 'the exact invocation is still granted');
+});
+
+test('permissions: an upgrade can take back a kit grant, and never takes the project\'s [invariant]', (t) => {
+  setEnv(t, 'KIT_SANDBOX_RUNTIME', 'none');
+  const { root } = project(t, { dir: tmpPath(t) });
+  const sp = path.join(root, '.claude', 'settings.json');
+  const s = JSON.parse(read(root, '.claude', 'settings.json'));
+  s.permissions.allow.push('Bash(python3 "$HOME/.claude/kit/scripts/*)'); // a grant an older kit wrote
+  s.permissions.allow.push('Bash(make deploy *)'); // the project's own
+  fs.writeFileSync(sp, K.jsonDumps(s, { indent: 2 }));
+  runScript('bootstrap.js', ['--repo', root, '--upgrade']);
+  const after = JSON.parse(read(root, '.claude', 'settings.json')).permissions.allow;
+  assert.ok(!after.some((a) => a.includes('python3')), `a stale kit grant must not survive an upgrade: ${after}`);
+  assert.ok(after.includes('Bash(make deploy *)'), 'a rule the project added is left alone');
+});

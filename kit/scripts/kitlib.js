@@ -547,6 +547,51 @@ export function globMatch(rel, patterns) {
   return false;
 }
 
+// --- permission rules -------------------------------------------------------------------------------------
+// Claude Code evaluates rules deny -> ask -> allow and the first match wins, so an allow rule can never carve an
+// exception out of a deny rule [docs: https://code.claude.com/docs/en/permissions.md @ 2026-11-13]. The kit relies
+// on that twice: the floor's deny list stays the ceiling whatever a project allows (ci_security_floor), and the
+// generator refuses to WRITE an allow rule that would overlap the floor at all (bootstrap), so the two never
+// disagree. Both call allowLoosens, which is why it lives here and not in either of them.
+
+const WILDCARD_ONLY = new Set(['', '*', '**', '*:*']);
+
+/** Split "Tool(pattern)" into [tool, pattern]; a bare "Tool" is the whole tool. */
+export function splitRule(rule) {
+  const m = /^([A-Za-z_]+)(?:\(([\s\S]*)\))?$/.exec(rule.trim());
+  if (!m) return null;
+  return [m[1], (m[2] ?? '').trim()];
+}
+
+/** True when an allow rule grants something a floor deny rule forbids. */
+export function allowLoosens(allowRule, denyRule) {
+  const a = splitRule(allowRule);
+  const d = splitRule(denyRule);
+  if (!a || !d || a[0] !== d[0]) return false;
+  const [, ap] = a;
+  const [, dp] = d;
+  if (WILDCARD_ONLY.has(ap)) return true; // the whole tool
+  if (ap === dp) return true;
+  // the deny names a concrete path or command prefix and the allow's glob covers it
+  const concrete = !/[*?[]/.test(dp.replace(/\*$/, ''));
+  if (concrete && globMatch(dp.replace(/\*$/, ''), [ap])) return true;
+  return false;
+}
+
+/**
+ * True when an allow rule and a floor deny rule overlap at all, in either direction. The two directions are
+ * different faults and both disqualify a generated rule:
+ *   - the allow is WIDER than the deny (`Bash` vs `Bash(sudo *)`): at runtime deny still wins, but the rule claims
+ *     a grant the floor refuses, which is what ci_security_floor fails a project for.
+ *   - the allow is INSIDE the deny (`Bash(sudo make install *)` vs `Bash(sudo *)`): the rule can never take effect,
+ *     so writing it only tells a reader the lane may do something it may not.
+ * ci_security_floor judges a project's own settings and so asks the first question only; the generator must not
+ * write either, because a rule it writes is the kit speaking.
+ */
+export function ruleOverlapsFloor(allowRule, denyRule) {
+  return allowLoosens(allowRule, denyRule) || allowLoosens(denyRule, allowRule);
+}
+
 /** (read_first, change, create) path lists from a spec, as repo-relative strings. */
 export function specFileLists(specPath) {
   if (!isFile(specPath)) return [[], [], []];

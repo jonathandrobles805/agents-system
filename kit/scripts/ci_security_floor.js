@@ -14,29 +14,10 @@ import path from 'node:path';
 import * as K from './kitlib.js';
 import * as C from './ci_common.js';
 
-const WILDCARD_ONLY = new Set(['', '*', '**', '*:*']);
-
-/** Split "Tool(pattern)" into [tool, pattern]; a bare "Tool" is the whole tool. */
-export function splitRule(rule) {
-  const m = /^([A-Za-z_]+)(?:\(([\s\S]*)\))?$/.exec(rule.trim());
-  if (!m) return null;
-  return [m[1], (m[2] ?? '').trim()];
-}
-
-/** True when an allow rule grants something a floor deny rule forbids. */
-export function allowLoosens(allowRule, denyRule) {
-  const a = splitRule(allowRule);
-  const d = splitRule(denyRule);
-  if (!a || !d || a[0] !== d[0]) return false;
-  const [, ap] = a;
-  const [, dp] = d;
-  if (WILDCARD_ONLY.has(ap)) return true; // the whole tool
-  if (ap === dp) return true;
-  // the deny names a concrete path or command prefix and the allow's glob covers it
-  const concrete = !/[*?[]/.test(dp.replace(/\*$/, ''));
-  if (concrete && K.globMatch(dp.replace(/\*$/, ''), [ap])) return true;
-  return false;
-}
+// The predicate itself lives in kitlib: the generator that writes allow rules (bootstrap) and this check that
+// refuses them must share one definition, or a rule could be written here and rejected there.
+export const splitRule = K.splitRule;
+export const allowLoosens = K.allowLoosens;
 
 /** Default managed-settings locations per platform (Claude Code reads one of these when present). */
 export function managedPaths() {

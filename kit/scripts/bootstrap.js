@@ -28,6 +28,50 @@ export const staleKitCommand = (v) => {
   return m !== null && !K.isFile(path.join(KIT_DIR, 'scripts', m[1]));
 };
 export const CI_COMMANDS = ['test', 'coverage', 'format', 'integration', 'typecheck', 'lint', 'boundaries', 'audit', 'mutation'];
+
+/**
+ * Drop any wildcard rule another wildcard rule already covers, so the generated file carries each grant once and a
+ * human reviewing it sees the real shape of what a lane may run. Only wildcard rules prune wildcard rules: whether
+ * Claude Code's trailing `*` also matches the empty string is not documented, so an exact rule for a command with
+ * no arguments after it is kept even when a wildcard rule looks like it covers the same command.
+ */
+export function pruneSubsumed(rules) {
+  const parse = (r) => {
+    const m = /^([A-Za-z_]+)\(([\s\S]*)\)$/.exec(r);
+    return m && m[2].endsWith('*') ? { tool: m[1], pat: m[2] } : null;
+  };
+  return rules.filter((b) => {
+    const mb = parse(b);
+    if (!mb) return true;
+    return !rules.some((a) => {
+      if (a === b) return false;
+      const ma = parse(a);
+      return ma !== null && ma.tool === mb.tool && K.globMatch(mb.pat, [ma.pat]);
+    });
+  });
+}
+
+/**
+ * permissions.allow rules for the commands this project records in kit.json, so the lane can run its own gates.
+ * Derived, never listed: the project answered these at /bootstrap and they are the only commands the kit tells a
+ * lane to run. A `{file}` placeholder becomes the wildcard, since that is exactly the part that varies. The `*`
+ * always lands after the program and subcommand, which is where Claude Code requires it
+ * [docs: https://code.claude.com/docs/en/permissions.md @ 2026-11-13]; a compound command is matched per
+ * subcommand, so `npx vitest run && rm -rf /` is not covered by the rule for `npx vitest run`.
+ */
+export function commandAllowRules(commands) {
+  const rules = new Set();
+  for (const v of Object.values(commands ?? {})) {
+    if (typeof v !== 'string') continue;
+    const cmd = v.trim();
+    if (!cmd || /^none\b/i.test(cmd)) continue; // "none: <reason>" turns a check off on purpose
+    const prefix = cmd.split('{')[0].trim();
+    if (!prefix) continue;
+    rules.add(`Bash(${prefix} *)`);
+    if (prefix === cmd) rules.add(`Bash(${cmd})`); // the exact invocation, with no arguments after it
+  }
+  return [...rules];
+}
 /** gitleaks pinned by version and the sha256 of its linux_x64 release asset (from the release's checksums file). */
 export const GITLEAKS = { version: '8.24.3', sha256: '9991e0b2903da4c8f6122b5c3186448b927a5da4deef1fe45271c3793f4ee29c' };
 export const DEFAULT_KIT_REPO = 'jonathandrobles805/agents-system';
@@ -889,7 +933,18 @@ export class Bootstrap {
     // the floor's deny list is the minimum (KIT-SPEC 10.9); the fragment and the project's own entries add to it
     const deny = new Set([...get(permsObj, 'deny', []), ...req(req(frag, 'permissions'), 'deny'), ...K.loadFloor().deny]);
     for (const cf of this.det.credential_files) deny.add(`Read(${cf})`);
-    merged.permissions = { ...permsObj, deny: [...deny].sort(cpCompare) };
+    const floor = K.loadFloor().deny;
+    // deny unions with whatever the project already has, because more deny is always safe. allow is the opposite:
+    // a grant left behind by an older kit is a grant nobody decided to keep, and an upgrade that only ever adds
+    // could never take one back. So the kit owns the rules that name its own scripts and rewrites them each time;
+    // every other allow rule belongs to the project and is preserved untouched.
+    const fragAllow = get(req(frag, 'permissions'), 'allow', []);
+    const ours = (a) => /\.claude[/\\]kit[/\\]/.test(a) && !fragAllow.includes(a);
+    const allow = [...new Set([...get(permsObj, 'allow', []).filter((a) => typeof a === 'string' && !ours(a)), ...fragAllow, ...commandAllowRules(this.commands())])]
+      // a rule that overlaps the floor is never written, so the generated file cannot disagree with ci_security_floor
+      .filter((a) => typeof a === 'string' && a && !floor.some((d) => K.ruleOverlapsFloor(a, d)));
+    const kept = pruneSubsumed(allow);
+    merged.permissions = { ...permsObj, allow: kept.sort(cpCompare), deny: [...deny].sort(cpCompare) };
     return K.jsonDumps(merged, { indent: 2 }) + '\n';
   }
 
