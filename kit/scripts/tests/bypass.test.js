@@ -507,9 +507,12 @@ test('upgrade: the backup is named for the version being replaced [Step 2 landed
   assert.match(src, /'\.claude\/backup\/'/, 'still gitignored: a restore is local, like the backup');
 });
 
-test('spec claim: citations are never re-checked at the recorded commit [inverts at Step 6]', () => {
+test('spec claim: citations are never re-checked at the recorded commit [Step 6 landed: the text is honest, the gap is open]', () => {
   const specText = read(REPO, 'docs', 'KIT-SPEC.md');
-  assert.match(specText, /\bcommit\b/, 'the spec requires citations to resolve at the commit they name');
+  // Step 6's grader found this claim and the text was corrected to state the condition rather than hide it. The
+  // BEHAVIOUR is unchanged and still open: nothing passes --commit, so citations resolve against the working tree.
+  assert.match(specText, /Citations resolve against the working tree/, 'the spec says which tree a citation resolves against');
+  assert.match(specText, /no hook or CI job passes it/, 'and that nothing passes --commit');
   const callers = [];
   for (const f of fs.readdirSync(SCRIPTS).filter((n) => n.endsWith('.js'))) {
     if (/--commit\b/.test(read(SCRIPTS, f))) callers.push(f);
@@ -849,4 +852,44 @@ test('permissions: an upgrade can take back a kit grant, and never takes the pro
   const after = JSON.parse(read(root, '.claude', 'settings.json')).permissions.allow;
   assert.ok(!after.some((a) => a.includes('python3')), `a stale kit grant must not survive an upgrade: ${after}`);
   assert.ok(after.includes('Bash(make deploy *)'), 'a rule the project added is left alone');
+});
+
+// ===========================================================================================================
+// The claim grader's own acceptance test. It is pointed at three spec versions whose claims were later found
+// overstated, and must flag them WITHOUT being told what they are: nothing below names a claim to the grader,
+// only the commit whose spec text to read. A grader that needed the claim named would be a checklist.
+// ===========================================================================================================
+
+test('the claim grader flags the three overstated claims it was never told about [Step 6]', async () => {
+  const C = await import('../../../audit/claims.js');
+  const falsified = (at) => C.grade(C.specText({ at })).filter((g) => g.verdict === 'FALSIFIED');
+
+  // §10.1 before 1f62e28: a deny bullet naming rules the kit never shipped
+  const pre101 = falsified('1f62e28~1');
+  const deny101 = pre101.find((g) => /10\.1/.test(g.section) && g.by === 'rule' && /Bash\(curl \*\)/.test(g.evidence));
+  assert.ok(deny101, `10.1's deny list must be falsified; got ${JSON.stringify(pre101.map((g) => [g.section, g.by]))}`);
+  for (const rule of ['Bash(curl *)', 'Bash(wget *)', 'Bash(rm -rf *)']) {
+    assert.ok(deny101.evidence.includes(rule), `the evidence names ${rule}`);
+  }
+
+  // §11 before 8aaf190: --upgrade said to run the fault suite against the project, which cannot take one
+  const pre11 = falsified('8aaf190~1').find((g) => /^11\./.test(g.section) && g.by === 'target');
+  assert.ok(pre11, 'the upgrade claim must be falsified by the target resolver');
+  assert.match(pre11.evidence, /planted-faults\/run\.js cannot be aimed at a project/);
+
+  // §5.2.3, still true of the working tree before this step corrected the text: citations were claimed to resolve
+  // at the recorded commit, and no hook or CI job passes --commit
+  const pre52 = falsified('1f62e28~1').find((g) => /^5\.2/.test(g.section) && g.by === 'invocation');
+  assert.ok(pre52, 'the citation claim must be falsified by the invocation resolver');
+  assert.match(pre52.evidence, /--commit/);
+});
+
+test('the claim grader is clean against the spec it grades today [Step 6]', async () => {
+  const C = await import('../../../audit/claims.js');
+  const graded = C.grade(C.specText());
+  const bad = graded.filter((g) => g.verdict === 'FALSIFIED');
+  assert.deepEqual(bad.map((g) => `§${g.section}: ${g.evidence}`), [], 'a falsified claim in the current spec is either a defect or a correction owed');
+  // and it must still be grading something: a grader that resolves nothing is vacuously clean
+  assert.ok(graded.filter((g) => g.verdict === 'SUPPORTED').length >= 3, 'resolvers still reach the spec');
+  assert.ok(graded.length >= 100, 'normative sentences are still being extracted');
 });
