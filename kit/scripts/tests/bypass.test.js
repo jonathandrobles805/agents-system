@@ -20,6 +20,9 @@ import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import * as K from '../kitlib.js';
+import * as L from '../lane.js';
+import * as KS from '../kit_status.js';
+import * as V from '../validate_docs.js';
 import { commitAll } from './fixtures.js';
 import { runScript, setEnv, tmpPath, SCRIPTS } from './helpers.js';
 import { project, spec, write } from './testdata.js';
@@ -42,8 +45,27 @@ function hook(script, { cwd, tool = 'Edit', input = {}, session = 's1', extra = 
 const bash = (cwd, command) => hook('hook_guard_bash.js', { cwd, tool: 'Bash', input: { command } });
 const blocked = (cwd, command) => bash(cwd, command).code === 2;
 
+const GOAL = `# Goal: refund route
+
+- Slug: refund-route
+- Date: 2026-11-11
+- Agreed by: Jonathan Robles and Claude on 2026-11-11
+- Status: agreed
+- Work type: feature
+- Risk: normal
+- Size: M
+
+## What we want
+
+A refund route.
+
+## Done looks like
+
+- G1. routes exposes refund
+`;
+
 /** A bootstrapped project with an approved spec, plus a lane, under no sandbox runtime. */
-function laneProject(t, { work = null } = {}) {
+function laneProject(t, { work = null, goal = false } = {}) {
   setEnv(t, 'KIT_SANDBOX_RUNTIME', 'none');
   setEnv(t, 'KIT_STATUS_NO_GH', '1');
   const { root, commit } = project(t, {});
@@ -58,11 +80,17 @@ function laneProject(t, { work = null } = {}) {
     fs.mkdirSync(path.join(root, work), { recursive: true });
     write(root, `${work}/README.md`, '# work\n');
   }
+  // next-step needs an agreed goal before it will walk the pipeline at all
+  if (goal) write(root, 'docs/goals/refund-route.md', GOAL);
   commitAll(root, 'configure');
   const r = runScript('lane.js', ['start', 'refund-route', '--repo', root]);
   assert.equal(r.returncode, 0, `lane start failed: ${r.stderr}`);
   return { root, commit, wt: JSON.parse(r.stdout).worktree };
 }
+
+const nextStepOf = (root) => JSON.parse(runScript('lane.js', ['next-step', 'refund-route', '--repo', root]).stdout);
+const wipOf = (root) => JSON.parse(runScript('lane.js', ['wip', '--repo', root]).stdout);
+const statusOf = (root) => JSON.parse(runScript('kit_status.js', ['--repo', root, '--json']).stdout);
 
 // ===========================================================================================================
 // G1a — the gate evidence a lane can write is the gate's only source of truth.
@@ -482,6 +510,133 @@ test('paths.work: a project that adopts it cannot finish a lane [inverts at Step
   assert.equal(hook('hook_guard_edit.js', { cwd: wt, input: { file_path: 'docs/work/refund-route.progress.md' } }).code, 0);
   const dc = hook('hook_done_check.js', { cwd: wt, tool: 'Stop', extra: { hook_event_name: 'Stop' } });
   assert.match(dc.out, /no red run reference/, 'DEFECT: done-check reads docs/specs and so never sees the permitted file');
+});
+
+test('wip: lane.js and kit_status give different answers about the same live lane [inverts at Step 1]', (t) => {
+  const { root, wt } = laneProject(t);
+  assert.ok(fs.existsSync(path.join(wt, '.claude', 'lane.json')), 'one lane is live');
+  // Two derivations of the same number, in the same repository, at the same moment.
+  assert.deepEqual(wipOf(root), { in_flight: 0, limit: 2, lanes: [] },
+    'DEFECT: lane.js wip() counts ROADMAP rows in the main checkout, which lane.js start never writes');
+  assert.equal(statusOf(root).wip.in_flight, 1,
+    'kit_status.projectStatus derives it from laneState.position and is right');
+  // and that correct derivation is one function call away: it needs no registry file and no git subcommand
+  const st = KS.laneState(root, L.roadmapRows(root).find((r) => r.slug === 'refund-route'), K.loadKitJson(root));
+  assert.equal(st.position, 'building', 'laneState sees the worktree and its lane.json');
+  assert.ok(L.IN_FLIGHT.has(st.position), 'and building is in flight');
+  // the repair plan proposes reading kit.json `lanes` instead; that file is written by start and deleted by finish
+  // with nothing reconciling it against reality, so it can over-count as easily as ROADMAP under-counts.
+  assert.ok('refund-route' in K.loadKitJson(root).lanes, 'the registry the plan would read does list the lane');
+});
+
+test('paths.work: next-step says "plan" forever on a lane whose spec is approved [inverts at Step 1]', (t) => {
+  const { root, wt } = laneProject(t, { work: 'docs/work', goal: true });
+  // the approved spec is where lane.js start and specPath put it, hardcoded
+  assert.ok(fs.existsSync(path.join(wt, 'docs', 'specs', 'refund-route.md')), 'the spec is under docs/specs');
+  assert.match(read(wt, 'docs', 'specs', 'refund-route.md'), /Approved by: /);
+  assert.ok(!fs.existsSync(path.join(wt, 'docs', 'work', 'refund-route.md')), 'and not under the configured work root');
+  // inLanePlanning (lane.js:923) IS workRoot-aware, so it looks in the empty folder and never finds it
+  assert.equal(K.workRoot(wt), 'docs/work');
+  const ns = nextStepOf(root);
+  assert.equal(ns.stage, 'plan', 'DEFECT: the controller sends the lane back to planning');
+  assert.equal(ns.reason, 'the lane has no spec yet', 'DEFECT: on a spec that exists and is approved');
+  // nothing else reports it: the lane looks healthy everywhere a human would look
+  assert.equal(statusOf(root).lanes.find((l) => l.slug === 'refund-route').position, 'building');
+  assert.equal(runScript('lane.js', ['next-step', 'refund-route', '--repo', root]).returncode, 0, 'exit 0, no warning');
+});
+
+test('paths.work: work done where guard-edit permits is invisible to laneState and done-check [inverts at Step 1]', (t) => {
+  const { root, wt } = laneProject(t, { work: 'docs/work', goal: true });
+  const lane = K.findLane(wt);
+  const fromStart = path.join(wt, 'docs', 'specs', 'refund-route.progress.md');
+  const permitted = path.join(wt, 'docs', 'work', 'refund-route.progress.md');
+  // guard-edit permits only the workRoot path (alwaysAllowed) and refuses the one start() created
+  K.recordRead(wt, 's1', 'docs/specs/refund-route.progress.md');
+  assert.equal(hook('hook_guard_edit.js', { cwd: wt, input: { file_path: 'docs/specs/refund-route.progress.md' } }).code, 2);
+  assert.equal(hook('hook_guard_edit.js', { cwd: wt, input: { file_path: 'docs/work/refund-route.progress.md' } }).code, 0);
+
+  // so the lane fills its criteria in the permitted place, with a real logged red and green run
+  fs.writeFileSync(path.join(wt, '.claude', 'session', 'refund-route.log'),
+    '=== 2026-11-12T10:00:00 D1: npx vitest run -> exit 1\n1 failed\n\n' +
+    '=== 2026-11-12T10:01:00 D1: npx vitest run -> exit 0\n1 passed\n\n');
+  fs.mkdirSync(path.dirname(permitted), { recursive: true });
+  fs.writeFileSync(permitted, fs.readFileSync(fromStart, 'utf8').replace(/\| — \| — \|/, '| refund-route.log#1 | refund-route.log#4 |'));
+
+  // laneState reads the hardcoded docs/specs copy, which still has empty cells
+  const st = KS.laneState(root, L.roadmapRows(root).find((r) => r.slug === 'refund-route'), K.loadKitJson(root));
+  assert.equal(st.progress.criteria, 1);
+  assert.equal(st.progress.green, 0, 'DEFECT: a green run exists and /status reports 0 green');
+  assert.equal(st.position, 'building');
+  // and done-check reads lane.progressPath, also hardcoded, so the stop stays refused forever
+  assert.equal(lane.progressPath, fromStart);
+  const dc = hook('hook_done_check.js', { cwd: wt, tool: 'Stop', extra: { hook_event_name: 'Stop' } });
+  assert.match(dc.out, /no red run reference/,
+    'DEFECT: the lane cannot finish; the only file it may write is the only file nothing reads');
+});
+
+test('laneState and lane.js start agree only because both hardcode docs/specs [inverts at Step 1]', () => {
+  // This case exists to fail loudly if Step 1 moves one side without the other. laneState is NOT broken today:
+  // its five reads and the writer in lane.js start are hardcoded to the same path, so they agree by accident.
+  const ks = read(SCRIPTS, 'kit_status.js').split('\n');
+  const reads = ks.map((l, i) => [i + 1, l]).filter(([, l]) => /'docs', 'specs'/.test(l)).map(([n]) => n);
+  assert.deepEqual(reads, [164, 171, 173, 174, 212],
+    'laneState reads the spec, progress, review and events from a hardcoded docs/specs');
+  const ln = read(SCRIPTS, 'lane.js').split('\n');
+  assert.match(ln[555], /const prog = pjoin\(wt, 'docs', 'specs'/, 'lane.js start writes the progress file to the same hardcoded path');
+  assert.match(ln[233], /return pjoin\(root, 'docs', 'specs'/, 'and specPath resolves the spec there');
+  // the consequence: /status and the dashboard read none of this through workRoot()
+  assert.doesNotMatch(read(SCRIPTS, 'kit_status.js'), /workRoot/,
+    'DEFECT: kit_status never calls workRoot, so any relocation blinds /status and the dashboard at once');
+});
+
+test('validate_docs: a spec under the configured work root is never validated [inverts at Step 1]', (t) => {
+  // detectType decides a document's kind from its path, so the work root decides whether a spec is checked at all.
+  assert.equal(V.detectType('docs/specs/x.md'), 'spec');
+  assert.equal(V.detectType('docs/specs/x.review.md'), 'review');
+  assert.equal(V.detectType('docs/work/x.md'), null, 'DEFECT: a spec under docs/work has no kind');
+  assert.equal(V.detectType('docs/work/x.review.md'), null, 'DEFECT: nor does a review report');
+
+  const { wt } = laneProject(t, { work: 'docs/work' });
+  const invalid = '# Spec: broken\n\n- Slug: x\n\n## Summary\n\n- nothing [unknown]\n';
+  const hookOn = (rel) => {
+    write(wt, rel, invalid);
+    const r = spawnSync(process.execPath, [path.join(SCRIPTS, 'validate_docs.js'), '--hook'], {
+      encoding: 'utf8', env: process.env,
+      input: JSON.stringify({ hook_event_name: 'PostToolUse', cwd: wt, tool_input: { file_path: path.join(wt, rel) } }),
+    });
+    return ((r.stdout ?? '') + (r.stderr ?? '')).trim();
+  };
+  assert.match(hookOn('docs/specs/broken.md'), /validate-docs failed/, 'under docs/specs the hook blocks');
+  assert.equal(hookOn('docs/work/broken.md'), '',
+    'DEFECT: the identical file under the configured work root passes silently. The PostToolUse hook and the CI ' +
+    '--changed step both route through detectType; only callers that pass the kind explicitly (lane.js:347, :423, ' +
+    'kit_status.js:150) still validate.');
+});
+
+test('paths.work: CI rejects the files lane.js start itself wrote [inverts at Step 1]', (t) => {
+  const { wt } = laneProject(t, { work: 'docs/work' });
+  const r = runScript('ci_lane_artifacts.js', ['--repo', wt]);
+  assert.equal(r.returncode, 1, 'DEFECT: the project CI fails on the kit\'s own output');
+  const out = r.stdout + r.stderr;
+  // the two files lane.js start always creates in the worktree: the spec it checks out and the progress skeleton
+  assert.match(out, /docs\/specs\/refund-route\.md: lane artifact outside docs\/work\//);
+  assert.match(out, /docs\/specs\/refund-route\.progress\.md: lane artifact outside docs\/work\//);
+  // ci_lane_artifacts is workRoot-aware (ci_lane_artifacts.js:34); the writers are not
+  assert.match(read(SCRIPTS, 'ci_lane_artifacts.js'), /const work = K\.workRoot\(root\);/);
+});
+
+test('planted-faults cannot be aimed at a project, so Step 2 as planned is not implementable [flag]', () => {
+  // KIT-SPEC 11 promises --upgrade "first runs the planted-fault suite against the project's current configuration".
+  // The suite has no --repo: it builds its own fixtures and mutates them destructively.
+  const src = read(REPO, 'planted-faults', 'run.js');
+  assert.match(src, /ap\.addArgument\('--json'/);
+  assert.match(src, /ap\.addArgument\('--keep'/);
+  assert.doesNotMatch(src, /addArgument\('--repo'/, 'DEFECT: no --repo, so it cannot target a project');
+  assert.match(src, /const \[root, commit\] = project\(tmp\);/, 'it builds a fixture project of its own');
+  assert.match(src, /F\.nodeApi\(path\.join\(tmp, name\)\)/, 'from kit fixtures, in a temp dir');
+  // and the faults mutate destructively, so pointing it at a real project would not be safe either
+  assert.match(src, /F\.git\(\['reset', '-q', '--hard', 'HEAD~1'\], wt\)/);
+  assert.match(src, /delete s\.hooks\.PreToolUse/);
 });
 
 test('paths.work: a lane reads a committed snapshot of kit.json, not the project setting [inverts at Step 1]', (t) => {
