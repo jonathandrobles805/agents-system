@@ -627,9 +627,12 @@ test('paths.work: a lane under a configured work root runs to green [Step 1 land
   assert.equal(rel(lane.progressPath), 'docs/work/refund-route.progress.md');
   assert.equal(rel(lane.eventsPath), 'docs/work/refund-route.events.jsonl');
   assert.equal(rel(lane.specPath), 'docs/work/refund-route.md');
-  assert.deepEqual(lane.alwaysAllowed().slice(0, 3), [
-    'docs/work/refund-route.progress.md', 'docs/work/refund-route.log', 'docs/work/refund-route.events.jsonl',
-  ]);
+  // the property Step 1 is about is that every lane-owned path follows the configured root -- asserted against the
+  // derivation rather than against a copy of the list, which is what let the stale `.log` entry sit here unnoticed
+  assert.deepEqual(lane.alwaysAllowed(), K.laneArtifacts('docs/work', 'refund-route', wt));
+  for (const p of lane.alwaysAllowed().filter((x) => !x.includes('decisions'))) {
+    assert.ok(p.startsWith('docs/work/'), `${p} follows the configured work root`);
+  }
   assert.ok(fs.existsSync(lane.progressPath), 'start created it under the configured root');
 
   // the lane may edit the file every reader reads
@@ -664,7 +667,7 @@ test('paths.work: the work root changes nothing but the directory [Step 1 landed
       progress: rel(lane.progressPath),
       events: rel(lane.eventsPath),
       spec: rel(lane.specPath),
-      allowed: lane.alwaysAllowed().slice(0, 3).map((x) => x.replace(lane.work, '<work>')),
+      allowed: lane.alwaysAllowed().map((x) => x.replace(lane.work, '<work>')),
       progressExists: fs.existsSync(lane.progressPath),
       laneArtifactsCi: runScript('ci_lane_artifacts.js', ['--repo', wt]).returncode,
       scopeDiffCi: runScript('ci_scope_diff.js', ['--repo', wt, '--base', 'main']).returncode,
@@ -968,4 +971,34 @@ test('a project that pins its own node version keeps it [finding 2]', (t) => {
   runScript('bootstrap.js', ['--repo', root, '--upgrade']);
   const yml = read(root, '.github', 'workflows', 'kit.yml');
   assert.match(yml, /node-version-file: "\.nvmrc"/, 'the project\'s pin is honoured, not overwritten with 22');
+});
+
+// ===========================================================================================================
+// One list of lane artifacts. The edit guard (Lane.alwaysAllowed) and CI (ci_scope_diff) each kept their own
+// copy and they drifted: CI allowed <slug>.review.md in a lane's diff, the guard did not, so /review wrote the
+// file CI was waiting for and the hook refused the write.
+// ===========================================================================================================
+
+test('a lane can write the review report CI asks it for [finding 3]', (t) => {
+  const { wt, root } = laneProject(t, {});
+  const rel = `${K.workRoot(root)}/refund-route.review.md`;
+  const r = hook('hook_guard_edit.js', { cwd: wt, tool: 'Write', input: { file_path: path.join(wt, rel), content: '# review' } });
+  assert.equal(r.code, 0, `the review report must be writable in its own lane: ${r.err}`);
+});
+
+test('the edit guard and CI allow exactly the same lane artifacts [finding 3]', (t) => {
+  const { wt, root } = laneProject(t, {});
+  const lane = K.findLane(wt);
+  const scopeDiff = read(SCRIPTS, 'ci_scope_diff.js');
+  // both sides must come from one derivation, not two hand-kept lists
+  assert.match(scopeDiff, /K\.laneArtifacts\(/, 'ci_scope_diff derives its allowlist');
+  assert.deepEqual(
+    lane.alwaysAllowed(),
+    K.laneArtifacts(lane.work, lane.slug, lane.root),
+    'the guard derives the same list',
+  );
+  assert.ok(lane.alwaysAllowed().includes(`${lane.work}/${lane.slug}.review.md`), 'the review report is on it');
+  // and the check log is NOT: it lives in .claude/session/, which is gitignored and which the floor denies editing
+  assert.ok(!lane.alwaysAllowed().some((p) => p.endsWith('.log')), 'no entry for a log the agent must never write');
+  assert.match(lane.logPath, /\.claude[/\\]session[/\\]refund-route\.log$/);
 });

@@ -492,13 +492,7 @@ export class Lane {
   }
 
   alwaysAllowed() {
-    const work = this.work;
-    return [
-      `${work}/${this.slug}.progress.md`,
-      `${work}/${this.slug}.log`,
-      `${work}/${this.slug}.events.jsonl`,
-      `${decisionsRoot(this.root)}/*.md`,
-    ];
+    return laneArtifacts(this.work, this.slug, this.root);
   }
 }
 
@@ -733,6 +727,31 @@ export function changedDocs(root) {
     if ((rel.startsWith('docs/') && rel.endsWith('.md')) || rel === 'LESSONS.md') paths.push(path.join(root, rel));
   }
   return paths;
+}
+
+/**
+ * The files a lane may write that its own spec does not list: its progress file, its review report, its event log,
+ * and the decision records a lane is allowed to add.
+ *
+ * ONE list, because two consumers need it and the two hand-kept copies had already drifted. ci_scope_diff allowed
+ * `<slug>.review.md` in a lane's diff and Lane.alwaysAllowed did not, so `/review` wrote the file CI was waiting
+ * for and the edit guard refused the write. A lane could not produce the report its own merge gate required.
+ *
+ * The check log is deliberately NOT here. It lives at Lane.logPath -- `.claude/session/<slug>.log`, where field
+ * test #44 moved it because a project's structure check rejects *.log under docs/ -- and every writer and reader
+ * agrees on that path (lane.js check, hook_post_edit_check, hook_done_check). `.claude/session/` is gitignored, so
+ * it never reaches a diff for CI to allow; the hooks write it directly, so no agent edit needs permitting; and the
+ * floor denies `Edit(.claude/**)` regardless. Both copies carried a `<work>/<slug>.log` entry left over from before
+ * the move, naming a path nothing has written since. Pointing it at the real log instead of dropping it would hand
+ * the agent write access to the evidence done-check reads (KIT-SPEC 10.14), which is the opposite of the fix.
+ */
+export function laneArtifacts(work, slug, root) {
+  return [
+    `${work}/${slug}.progress.md`,
+    `${work}/${slug}.review.md`,
+    `${work}/${slug}.events.jsonl`,
+    `${decisionsRoot(root)}/*.md`,
+  ];
 }
 
 /** Files a review commit may touch without making the review stale: the lane's own artifacts under `work`, and tests. */
