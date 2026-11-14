@@ -1,7 +1,7 @@
 # Roadmap
 
 - Kit version: {{version}}
-- WIP limit: {{n}}
+- WIP limit: set in `.claude/kit.json` (`wip_limit`, or `max_concurrent_lanes` when present) and enforced from there. Run `lane.js wip` for the live count. Deliberately not repeated here: this file is human-owned, so a number written at bootstrap is never refreshed and would drift from the one that actually stops a lane opening.
 - Updated: {{date}}
 
 ## Milestones

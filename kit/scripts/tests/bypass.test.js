@@ -893,3 +893,28 @@ test('the claim grader is clean against the spec it grades today [Step 6]', asyn
   assert.ok(graded.filter((g) => g.verdict === 'SUPPORTED').length >= 3, 'resolvers still reach the spec');
   assert.ok(graded.length >= 100, 'normative sentences are still being extracted');
 });
+
+// ===========================================================================================================
+// One WIP limit. cbfaeb5 unified the two the CODE read; a real run then found a third the AGENT reads -- the
+// number frozen into ROADMAP.md at bootstrap, which no upgrade ever refreshes because the file is human-owned.
+// ===========================================================================================================
+
+test('the WIP limit is written in one place only [finding 1]', (t) => {
+  setEnv(t, 'KIT_SANDBOX_RUNTIME', 'none');
+  const { root } = project(t, { wipLimit: 1 });
+  const roadmap = read(root, 'ROADMAP.md');
+  assert.doesNotMatch(roadmap, /WIP limit:\s*\d/, `ROADMAP.md must not carry its own copy of the limit: ${/WIP limit:.*/.exec(roadmap)?.[0]}`);
+  assert.match(roadmap, /WIP limit:.*kit\.json/, 'it names where the limit actually lives');
+  // and the template it comes from has no number to fill
+  assert.doesNotMatch(read(KIT, 'templates', 'roadmap.md'), /WIP limit:\s*\{\{n\}\}/);
+});
+
+test('the planner is told to read the limit from the derivation, not from prose [finding 1]', () => {
+  const planner = read(KIT, 'agents', 'planner.md');
+  const step = /^1\. .*$/m.exec(planner)[0];
+  assert.match(step, /lane\.js" wip|\/status/, `the first read step derives the limit: ${step}`);
+  // it must say where NOT to get it: the roadmap is still the file this step opens, so "mentions ROADMAP.md" is
+  // not the property -- "tells the agent the number there is not the enforced one" is
+  assert.match(step, /[Dd]o not take the limit from prose/, 'it tells the planner the roadmap number is not authoritative');
+  assert.match(step, /kit\.json/, 'and names where the enforced number lives');
+});

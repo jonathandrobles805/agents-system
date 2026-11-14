@@ -1028,7 +1028,10 @@ export class Bootstrap {
     const fs_ = get(this.answers, 'features', null);
     const msList = truthy(ms) ? ms : [];
     const fsList = truthy(fs_) ? fs_ : [];
-    let text = fill(tmpl('roadmap.md'), [['version', KIT_VERSION], ['n', get(this.answers, 'wip_limit', 2)], ['date', TODAY]]);
+    // No WIP number is filled in. ROADMAP.md is human-owned, so an upgrade only refreshes its version stamp and a
+    // number written here would be frozen at bootstrap while kit.json's moved on -- which is how a real run ended
+    // up with 1 in the roadmap and 2 in kit.json, and the planner reading the stale one.
+    let text = fill(tmpl('roadmap.md'), [['version', KIT_VERSION], ['date', TODAY]]);
     if (msList.length) {
       const rows = msList.map((m, i) => `| M${i + 1} | ${pyStr(req(m, 'name'))} | ${pyStr(get(m, 'target', '—'))} | ${pyStr(get(m, 'status', 'planned'))} |`).join('\n');
       text = reSub(/\| M1 \| \{\{milestone\}\} \|.*\|/g, rows, text);
