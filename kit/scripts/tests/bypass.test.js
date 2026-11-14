@@ -1186,3 +1186,50 @@ test('#38 editing the lane\'s own artifacts runs no checks and counts no attempt
   const attemptsAfterArtifacts = events.filter((e) => e.event === 'attempt').length;
   assert.equal(attemptsAfterArtifacts, 1, `only the source edit may count as an attempt, got ${attemptsAfterArtifacts}`);
 });
+
+// ===========================================================================================================
+// #32: the three-strikes counter could not fire. FAILED_TEST did not match TAP, so the signature fell back to the
+// output's last lines -- which carry durations and timestamped paths -- and every repeat of the SAME failure got a
+// new signature. All 13 attempt events in the field run read "attempt 1/3", seven of them identical npm failures.
+// ===========================================================================================================
+
+test('#32 the same failing tests give one signature, whatever the run took', async () => {
+  const P = await import('../hook_post_edit_check.js');
+  const a = P.failureSignature('test', 'TAP version 13\nnot ok 1 - returns 200\n  duration_ms: 12.4481\n1..1\nfailed 1 of 1 in 834ms\n/tmp/run-a1b2/report.json written');
+  const b = P.failureSignature('test', 'TAP version 13\nnot ok 1 - returns 200\n  duration_ms: 907.2213\n1..1\nfailed 1 of 1 in 1204ms\n/tmp/run-c9d8/report.json written');
+  assert.equal(a, b, 'the same failure twice must be one signature, or three strikes can never add up');
+  const other = P.failureSignature('test', 'TAP version 13\nnot ok 1 - calls refund once\n1..1');
+  assert.notEqual(a, other, 'and a different failure must still be a different signature');
+});
+
+test('#32 three identical failures escalate instead of recounting from one', (t) => {
+  const { wt } = laneProject(t, {});
+  const kj = path.join(wt, '.claude', 'kit.json');
+  const kd = JSON.parse(read(wt, '.claude', 'kit.json'));
+  // a runner whose output differs every time in the ways real runners do: duration and a temp path
+  // dash has no $RANDOM, and with identical output the old signature would have matched by accident
+  const fake = `sh -c 'N=$(date +%s%N); echo "TAP version 13"; echo "not ok 1 - returns 200"; echo "  duration_ms: $N"; echo "1..1"; echo "/tmp/run-$N/report.json"; exit 1'`;
+  kd.commands = { ...(kd.commands ?? {}), test: fake, test_affected: fake, typecheck: 'none: not here', lint: 'none: not here' };
+  fs.writeFileSync(kj, K.jsonDumps(kd, { indent: 2 }));
+  const lj = path.join(wt, '.claude', 'lane.json');
+  fs.writeFileSync(lj, K.jsonDumps({ ...JSON.parse(read(wt, '.claude', 'lane.json')), stage: 'build' }, { indent: 2 }));
+  fs.writeFileSync(path.join(wt, 'src', 'api', 'routes.ts'), 'export const x = 1;\n');
+  const edit = () => hook('hook_post_edit_check.js', { cwd: wt, tool: 'Edit', input: { file_path: path.join(wt, 'src', 'api', 'routes.ts') } });
+  const outs = [edit(), edit(), edit()];
+  const lane = K.findLane(wt);
+  const attempts = K.readLines(lane.eventsPath).map((l) => JSON.parse(l)).filter((e) => e.event === 'attempt').map((e) => e.summary.slice(0, 11));
+  assert.deepEqual(attempts, ['attempt 1/3', 'attempt 2/3', 'attempt 3/3'], `the counter must add up: ${JSON.stringify(attempts)}`);
+  assert.match(outs[2].out, /failed 3 times in a row/, 'and the third escalates');
+});
+
+test('#32 the tester\'s red runs are not fix attempts', () => {
+  // the lane is in the `test` stage while the tester writes failing tests, so /implement must set that stage
+  // before spawning the tester and only move to build afterwards
+  const md = read(KIT, 'commands', 'implement.md');
+  const testerAt = md.indexOf('Spawn the `tester`');
+  const stageTest = md.indexOf('stage <slug> test');
+  const stageBuild = md.indexOf('stage <slug> build');
+  assert.ok(stageTest > 0, 'implement.md sets the test stage');
+  assert.ok(stageTest < testerAt, 'before the tester runs');
+  assert.ok(stageBuild > testerAt, `and only reaches build after it: test@${stageTest} tester@${testerAt} build@${stageBuild}`);
+});

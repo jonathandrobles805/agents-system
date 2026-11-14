@@ -30,11 +30,39 @@ const text = (v) => (typeof v === 'string' ? v : '');
 const clip = (s, n) => Array.from(s.slice(0, 2 * n)).slice(0, n).join('');
 const readText = (p) => fs.readFileSync(p, 'utf8').replace(/\r\n?/g, '\n');
 
-/** Stable id for 'the same failure': the failing test names when parseable, else the last meaningful lines. */
-export function failureSignature(name, out) {
-  const names = [...new Set([...out.matchAll(FAILED_TEST)].map((m) => clip(m[1].trim(), 120)))].sort();
+/**
+ * Everything in a run's output that changes between two runs of the same failing tests: how long it took, where
+ * the temp files went, when it happened. Without this the signature of an unchanged failure is new every time.
+ * Not a list of things to ignore -- these are the shapes of a measurement, and a measurement cannot identify a
+ * failure. What identifies it is which tests failed, which is why that is tried first.
+ */
+export function normalizeRun(out) {
+  return out
+    .replace(/\b\d{4}-\d\d-\d\dT[\d:.]+Z?\b/g, '<t>')
+    .replace(/\b\d+(?:\.\d+)?\s*(?:ms|s|sec|secs|seconds|us|ns)\b/gi, '<d>')
+    .replace(/\b(?:duration(?:_ms)?|elapsed|time|took)\b\s*[:=]?\s*[\d.]+/gi, '<d>')
+    .replace(/(?:\/[\w.@+-]+){2,}/g, '<p>')
+    .replace(/\b[0-9a-f]{7,40}\b/gi, '<h>')
+    .replace(/\b\d{4,}\b/g, '<n>');
+}
+
+/**
+ * Stable id for 'the same failure': which tests failed, and only if nothing can be parsed, the normalized tail.
+ *
+ * The counter this feeds could not reach three. FAILED_TEST matches jest-style "FAIL name" lines and never TAP's
+ * `not ok 1 - name`, so for a TAP runner the signature fell through to the raw last five lines -- which carry a
+ * duration and a timestamped temp path -- and the same failure got a fresh signature on every run. All 13 attempt
+ * events in the field run read "attempt 1/3", seven of them the same npm failure.
+ *
+ * The failing names now come from the same parser done-check uses (#30), so "which tests failed" is answered one
+ * way in the kit rather than two.
+ */
+export function failureSignature(name, out, root = null) {
+  const parsed = K.resultLines(K.splitlines(out), K.resultPatterns(root)).filter((r) => !r.ok).map((r) => clip(r.name, 120));
+  const matched = [...out.matchAll(FAILED_TEST)].map((m) => clip(m[1].trim(), 120));
+  const names = [...new Set([...parsed, ...matched])].sort();
   if (names.length) return name + ':' + names.slice(0, 8).join('|');
-  const tail = K.splitlines(out).map((l) => l.trim()).filter(Boolean).slice(-5);
+  const tail = K.splitlines(normalizeRun(out)).map((l) => l.trim()).filter(Boolean).slice(-5);
   return name + ':' + clip(tail.join('|'), 400);
 }
 
@@ -187,7 +215,7 @@ export function main() {
     K.appendEvent(events, { event: name, tool: 'hook', command: cmd, result: code === 0 ? 'ok' : 'fail', summary, ref: `${path.basename(log)}#${line}`, path: rel });
     if (code !== 0) {
       failures.push(`[${name}] ${cmd} -> exit ${code} (log ${path.basename(log)}#${line})\n${K.splitlines(out).slice(-40).join('\n')}`);
-      if (name === 'test' || name === 'typecheck') redSigs.push([failureSignature(name, out), `${path.basename(log)}#${line}`]);
+      if (name === 'test' || name === 'typecheck') redSigs.push([failureSignature(name, out, root), `${path.basename(log)}#${line}`]);
     } else if (name === 'test') {
       testGreen = true;
     }
