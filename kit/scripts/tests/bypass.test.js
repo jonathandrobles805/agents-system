@@ -1233,3 +1233,39 @@ test('#32 the tester\'s red runs are not fix attempts', () => {
   assert.ok(stageTest < testerAt, 'before the tester runs');
   assert.ok(stageBuild > testerAt, `and only reaches build after it: test@${stageTest} tester@${testerAt} build@${stageBuild}`);
 });
+
+// ===========================================================================================================
+// #37: the edit guard blocked two Edits of test/layout.test.js seconds after the tester created it with Write.
+// hook_read_log ran on Read|NotebookRead|Bash, so writing a file did not count as having seen it, and the
+// read-before-edit rule then refused to let its author touch it again.
+// ===========================================================================================================
+
+test('#37 a file the agent just wrote counts as read', (t) => {
+  const { wt, root } = laneProject(t, {});
+  const target = `${K.workRoot(root)}/refund-route.review.md`; // in the lane's allow-list, so only the read rule is in play
+  const abs = path.join(wt, target);
+  const sess = 'tester-1';
+  const call = (script, payload) => hook(script, { cwd: wt, session: sess, ...payload });
+
+  // the tester creates it
+  fs.mkdirSync(path.dirname(abs), { recursive: true });
+  assert.equal(call('hook_guard_edit.js', { tool: 'Write', input: { file_path: abs, content: '# review\n' } }).code, 0, 'creating it is allowed');
+  fs.writeFileSync(abs, '# review\n');
+  assert.equal(call('hook_read_log.js', { tool: 'Write', input: { file_path: abs, content: '# review\n' } }).code, 0);
+
+  // ...and then edits what it just wrote
+  const r = call('hook_guard_edit.js', { tool: 'Edit', input: { file_path: abs } });
+  assert.equal(r.code, 0, `its author must be allowed to edit it: ${r.err}`);
+});
+
+test('#37 Write is routed to the read log everywhere it is registered', () => {
+  const frag = JSON.parse(read(KIT, 'hooks', 'settings.project.json'));
+  const entry = frag.hooks.PostToolUse.find((e) => (e.hooks ?? []).some((h) => h.command.includes('hook_read_log')));
+  assert.match(entry.matcher, /Write/, `the project hook must see Write: ${entry.matcher}`);
+  // every agent that carries its own copy needs the same matcher, or the rule holds only outside subagents
+  for (const n of fs.readdirSync(path.join(KIT, 'agents')).filter((x) => x.endsWith('.md'))) {
+    const md = read(KIT, 'agents', n);
+    const m = /- matcher: (\S+)\n\s+hooks:\n\s+- type: command\n\s+command: [^\n]*hook_read_log\.js/.exec(md);
+    if (m) assert.match(m[1], /Write/, `${n} routes Write to the read log: ${m[1]}`);
+  }
+});

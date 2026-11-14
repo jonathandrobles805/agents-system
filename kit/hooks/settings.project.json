@@ -20,7 +20,7 @@
       { "matcher": "Bash", "hooks": [ { "type": "command", "command": "node \"$HOME/.claude/kit/scripts/hook_guard_bash.js\"" } ] }
     ],
     "PostToolUse": [
-      { "matcher": "Read|NotebookRead|Bash", "hooks": [ { "type": "command", "command": "node \"$HOME/.claude/kit/scripts/hook_read_log.js\"" } ] },
+      { "matcher": "Read|NotebookRead|Write|Bash", "hooks": [ { "type": "command", "command": "node \"$HOME/.claude/kit/scripts/hook_read_log.js\"" } ] },
       { "matcher": "Edit|MultiEdit|Write|Bash", "hooks": [ { "type": "command", "command": "node \"$HOME/.claude/kit/scripts/hook_post_edit_check.js\"", "timeout": 300 } ] },
       { "matcher": "Write", "hooks": [ { "type": "command", "command": "node \"$HOME/.claude/kit/scripts/validate_docs.js\" --hook" } ] },
       { "hooks": [
