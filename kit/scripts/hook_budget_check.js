@@ -37,7 +37,14 @@ export function ensureEscalation(progress, reason) {
 export function main() {
   const d = K.readHookInput();
   if (!d || Object.keys(d).length === 0) return 0;
-  const lane = K.findLane((typeof d.cwd === 'string' && d.cwd) || '.');
+  // The budget is the lane's, not the session's: elapsed hours come from lane.json `started`, so any session
+  // working on the lane is over budget once the lane is. A subagent reports the main repo as cwd, which is how
+  // 6h43m ran against a 1-hour budget with no event.
+  const r = K.laneForHook(d);
+  if (r.via === 'ambiguous') {
+    return K.feedbackBlock(`budget check: ${r.slugs.length} lanes are open (${r.slugs.join(', ')}) and this call reports no worktree, so no budget can be attributed to it. Work from the lane's worktree, or finish the other lanes first.`);
+  }
+  const lane = r.lane;
   if (!lane) return 0;
   const stage = lane.data.stage ?? 'build';
   const budget = { ...(Object.hasOwn(DEFAULT_BUDGET, stage) ? DEFAULT_BUDGET[stage] : DEFAULT_BUDGET.build), ...lane.data.budget };

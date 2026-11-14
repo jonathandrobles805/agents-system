@@ -14,7 +14,8 @@ function section(file, title, maxLines = 40) {
 export function main() {
   const d = K.readHookInput();
   const cwd = (typeof d?.cwd === 'string' && d.cwd) || '.';
-  const lane = K.findLane(cwd);
+  // one resolver for every lane-scoped hook (#29); this only injects context, so it never blocks
+  const lane = K.laneForHook(d).lane;
   const root = lane ? lane.root : K.repoRoot(cwd);
   const out = [];
   const debt = section(path.join(root, 'LESSONS.md'), 'Debt', 20);

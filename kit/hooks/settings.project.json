@@ -37,6 +37,7 @@
     "SubagentStop": [
       { "hooks": [
           { "type": "command", "command": "node \"$HOME/.claude/kit/scripts/hook_event_log.js\"" },
+          { "type": "command", "command": "node \"$HOME/.claude/kit/scripts/hook_done_check.js\"" },
           { "type": "command", "command": "node \"$HOME/.claude/kit/scripts/validate_docs.js\" --hook" }
       ] }
     ],

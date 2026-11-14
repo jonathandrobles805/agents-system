@@ -35,13 +35,18 @@ export function main() {
   const d = K.readHookInput();
   if (!d || Object.keys(d).length === 0) return 0;
   const cwd = text(d.cwd) || '.';
-  const lane = K.findLane(cwd);
+  // The log never blocks, so ambiguity is recorded rather than resolved: an event filed against a guessed lane is
+  // worse than one that says it could not tell. A subagent reports the main repo as cwd, which is why the field
+  // run has 373 events with lane:null and the lane's own events file has no stop events at all.
+  const r = K.laneForHook(d);
+  const lane = r.lane;
   const root = lane ? lane.root : K.repoRoot(cwd);
   const file = lane ? lane.eventsPath : path.join(root, '.claude', 'session', 'events.jsonl');
   const ev = text(d.hook_event_name);
   const tool = text(d.tool_name);
   const ti = d.tool_input && typeof d.tool_input === 'object' ? d.tool_input : {};
   const e = { session_id: d.session_id ?? null, lane: lane ? lane.slug : null, hook: ev, tool };
+  if (r.via === 'ambiguous') e.lane_ambiguous = r.slugs;
   if (ev === 'SubagentStart' || ev === 'SubagentStop') {
     e.event = ev === 'SubagentStart' ? 'subagent_start' : 'subagent_stop';
     e.agent = (d.agent_type || d.agent_name) ?? null;

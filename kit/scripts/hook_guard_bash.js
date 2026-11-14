@@ -133,8 +133,21 @@ export function main() {
     process.stderr.write(`guard-bash: the kill switch is set; no mutations until lane.js resume-all --by <name>\n`);
     return 2;
   }
-  const lane = K.findLane(cwd);
+  // A Bash call carries no file path, so a subagent -- which reports the main repo as cwd -- resolves only by
+  // tier 3. Until it did, every lane rule below (the branch rules and the spec's network declaration) was off for
+  // the tester, implementer and reviewer.
+  //
+  // Ambiguity is the one place here that does NOT fail closed, and the reason is in the rules themselves: they
+  // only ADD restrictions, so with two open lanes and no worktree there is no lane whose rules apply, and blocking
+  // every Bash call in a repository that is allowed two concurrent lanes by default would stop all work. The
+  // residue is real and is recorded as an event: with 2+ open lanes a subagent's Bash runs under the project rules
+  // alone. Closing it needs a session-to-lane record, which the kit does not keep.
+  const r = K.laneForHook(d);
+  const lane = r.lane;
   const events = lane ? lane.eventsPath : path.join(root, '.claude', 'session', 'events.jsonl');
+  if (r.via === 'ambiguous') {
+    K.appendEvent(events, { event: 'lane_unresolved', tool: 'Bash', result: 'ok', summary: `${r.slugs.length} lanes open (${r.slugs.join(', ')}); lane rules not applied` });
+  }
 
   const deny = (reason) => {
     K.appendEvent(events, { event: 'blocked', tool: 'Bash', command: [...cmd].slice(0, 200).join(''), result: 'blocked', summary: reason });

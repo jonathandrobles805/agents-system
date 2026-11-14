@@ -11,7 +11,15 @@ export const FAILURE = /^- Failure:\s*(\S.*)$/m;
 export function main() {
   const d = K.readHookInput();
   if (!d || Object.keys(d).length === 0 || d.stop_hook_active) return 0;
-  const lane = K.findLane((typeof d.cwd === 'string' && d.cwd) || '.');
+  // A subagent stopping is the lane's worker finishing, and it reports the main repo as cwd, so it needs tier 3.
+  // The top-level Stop is the orchestrator, which is not the worker: gating it on the lane's criteria would leave
+  // nobody able to end a turn and report to the human, so it keeps to the tiers that prove where the session is.
+  const ev = typeof d.hook_event_name === 'string' ? d.hook_event_name : '';
+  const r = K.laneForHook(d);
+  if (ev === 'SubagentStop' && r.via === 'ambiguous') {
+    return K.feedbackBlock(`done-check: ${r.slugs.length} lanes are open (${r.slugs.join(', ')}) and this subagent reports no worktree, so its evidence cannot be checked. Run the subagent with its worktree as cwd, or finish the other lanes first.`);
+  }
+  const lane = r.via === 'single-active' && ev !== 'SubagentStop' ? null : r.lane;
   const stage = lane ? lane.data.stage ?? 'build' : null;
   if (!lane || !['build', 'test'].includes(stage)) return 0;
   const prog = lane.progressPath;

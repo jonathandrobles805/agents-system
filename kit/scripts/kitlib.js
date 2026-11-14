@@ -796,3 +796,48 @@ export const isKitHookEntry = (entry) =>
 export function laneFor(cwd, absPath) {
   return (absPath ? findLane(absPath) : null) ?? (cwd ? findLane(cwd) : null);
 }
+
+/** Lanes kit.json records as open whose recorded worktree still holds a lane.json. */
+export function activeLanes(root) {
+  const lanes = plainObject(loadKitJson(root)?.lanes ?? {});
+  const out = [];
+  for (const v of Object.values(lanes)) {
+    const wt = typeof plainObject(v).worktree === 'string' ? plainObject(v).worktree : '';
+    const lane = wt && isFile(path.join(wt, LANE_FILE)) ? findLane(wt) : null;
+    if (lane) out.push(lane);
+  }
+  return out;
+}
+
+/**
+ * The lane a hook is acting on, in three tiers, with the reason it was chosen.
+ *
+ * A subagent started by the main session reports the MAIN repo as `cwd`, not the worktree. Every hook that asked
+ * `findLane(d.cwd)` therefore found nothing and returned 0 for the tester, implementer and reviewer: the field run
+ * logged 373 events with `lane: null`, a 1-hour budget reached 6h43m with no `budget_exceeded`, the lane's own
+ * network declaration did not bind a subagent's Bash, and the gate protecting `.claude/settings.json` was blind in
+ * the one directory that file lives in. Five gates, one wrong derivation, repeated five times.
+ *
+ *   tool-path     the file the tool is touching is inside a worktree -- the strongest signal, and the only one
+ *                 hook_guard_edit ever used, which is why scope checking kept working when nothing else did
+ *   cwd           the session really is in the worktree (an attended lane session)
+ *   single-active kit.json records exactly one open lane: the subagent case, where no path and no cwd can help
+ *
+ * `ambiguous` (two or more open lanes) is NOT resolved by guessing. Each caller decides: the gates block, because a
+ * gate that cannot tell which lane it is protecting must not wave work through; the event log records the ambiguity
+ * instead of inventing an owner. `laneFor` stays the two-tier form, for hooks that always have the tool's path and
+ * where tier 3 would start gating edits made outside any lane.
+ */
+export function laneForHook(d) {
+  const data = plainObject(d);
+  const cwd = typeof data.cwd === 'string' && data.cwd ? data.cwd : '.';
+  const ti = plainObject(data.tool_input);
+  const p = ['file_path', 'notebook_path', 'path'].map((k) => ti[k]).find((v) => typeof v === 'string' && v);
+  const byPath = p ? findLane(path.isAbsolute(p) ? p : path.join(cwd, p)) : null;
+  if (byPath) return { lane: byPath, via: 'tool-path', slugs: [byPath.slug] };
+  const byCwd = findLane(cwd);
+  if (byCwd) return { lane: byCwd, via: 'cwd', slugs: [byCwd.slug] };
+  const active = activeLanes(repoRoot(cwd));
+  if (active.length === 1) return { lane: active[0], via: 'single-active', slugs: [active[0].slug] };
+  return { lane: null, via: active.length ? 'ambiguous' : 'none', slugs: active.map((l) => l.slug) };
+}
