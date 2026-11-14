@@ -1378,3 +1378,84 @@ test('#31 a spec naming a red-run command the hook never runs is refused', (t) =
   const ok = runScript('validate_docs.js', [path.join(root, rel), '--repo', root]);
   assert.doesNotMatch(ok.stdout + ok.stderr, /red-run-command/, `the project's own command is fine: ${ok.stdout}`);
 });
+
+// ===========================================================================================================
+// #34: the field spec's Approach prescribed `new URL(req.url, 'http://localhost')`; a raw `GET //` threw
+// ERR_INVALID_URL uncaught and killed the server (review round 1, R11). Planning covered bad PORT values and
+// said nothing about bad request input, because nothing required it to.
+// ===========================================================================================================
+
+/** A minimal valid spec, with the Done-criteria rows and one extra section's text substituted in. */
+function specDoc(base, { criteria, summary }) {
+  // the pristine text is passed in, never re-read from disk: these cases overwrite the spec in turn, and reading
+  // it back made each scenario inherit the previous one's summary
+  const dc = base.indexOf('## Done-criteria');
+  const end = base.indexOf('## Assumptions');
+  const head = base.slice(0, dc).replace(/(## Summary\n\n)/, `$1- ${summary}\n`);
+  return head + '## Done-criteria\n\n| # | Criterion | Test |\n|---|---|---|\n' + criteria.map((c, i) => `| D${i + 1} | ${c} | \`t::t${i + 1}\` |`).join('\n') + '\n\n' + base.slice(end);
+}
+
+test('#34 a spec that declares a route needs a malformed-input criterion', (t) => {
+  const { root } = project(t, {});
+  const rel = `${K.workRoot(root)}/refund-route.md`;
+  const run = () => runScript('validate_docs.js', [path.join(root, rel), '--repo', root]);
+  const runOut = () => { const r = run(); return r.stdout + r.stderr; }; // violations print on stderr
+  const base0 = read(root, K.workRoot(root), 'refund-route.md');
+
+  // the field case: a declared route, criteria that cover only the happy path and a config value
+  write(root, rel, specDoc(base0, {
+    summary: 'Goal: add a GET /hello route that returns a greeting',
+    criteria: ['GET /hello returns 200', 'an invalid PORT value is rejected'],
+  }));
+  const bad = run();
+  assert.match(bad.stdout + bad.stderr, /unhandled-parse/, `the gap must be reported: ${bad.stdout}${bad.stderr}`);
+  assert.match(bad.stdout + bad.stderr, /GET \/hello/, 'and quote the declaration it found');
+
+  // ...satisfied by a criterion about the request, not by one about configuration
+  write(root, rel, specDoc(base0, {
+    summary: 'Goal: add a GET /hello route that returns a greeting',
+    criteria: ['GET /hello returns 200', 'a malformed request target returns 400 and the server stays up'],
+  }));
+  assert.doesNotMatch(runOut(), /unhandled-parse/, 'a criterion that covers it satisfies the rule');
+
+  // a spec that declares no route is left alone: this is not a rule about every spec
+  write(root, rel, specDoc(base0, {
+    summary: 'Goal: rename the internal refund helper',
+    criteria: ['the helper is renamed and callers updated'],
+  }));
+  assert.doesNotMatch(runOut(), /unhandled-parse/, 'no declared interface, no requirement');
+});
+
+test('#34 the recogniser keys on the declared interface, not on parser names', (t) => {
+  const { root } = project(t, {});
+  const rel = `${K.workRoot(root)}/refund-route.md`;
+  const run = () => runScript('validate_docs.js', [path.join(root, rel), '--repo', root]);
+  const runOut = () => { const r = run(); return r.stdout + r.stderr; }; // violations print on stderr
+  // the shape #34 proposed matching: a throwing parser named in the Approach, with no route declared anywhere.
+  // It is deliberately NOT flagged -- an internal JSON.parse is not an external interface -- which is the whole
+  // difference between a property of the spec and a list of risky functions.
+  const base = read(root, K.workRoot(root), 'refund-route.md');
+  write(root, rel, base.replace('## Approach', '## Approach\n\nParse the config with `JSON.parse(raw)` at startup.\n'));
+  assert.doesNotMatch(runOut(), /unhandled-parse/, 'a parser call is not by itself a reason to demand the criterion');
+});
+
+test('#34 "invalid PORT" does not stand in for malformed-request coverage', (t) => {
+  const { root } = project(t, {});
+  const rel = `${K.workRoot(root)}/refund-route.md`;
+  const run = () => runScript('validate_docs.js', [path.join(root, rel), '--repo', root]);
+  const runOut = () => { const r = run(); return r.stdout + r.stderr; }; // violations print on stderr
+  const base0 = read(root, K.workRoot(root), 'refund-route.md');
+  // The regex #34 specifies -- /malformed|invalid|unparseable/i -- matches this row, so as written the rule would
+  // have PASSED the field spec: it already carried an invalid-PORT criterion and `GET //` still killed the server.
+  write(root, rel, specDoc(base0, {
+    summary: 'Goal: add a GET /hello route that returns a greeting',
+    criteria: ['GET /hello returns 200', 'an invalid PORT value is rejected at startup'],
+  }));
+  assert.match(runOut(), /unhandled-parse/, 'config validation is not request validation');
+  // the same word does carry the claim once the row names where the request arrives
+  write(root, rel, specDoc(base0, {
+    summary: 'Goal: add a GET /hello route that returns a greeting',
+    criteria: ['GET /hello returns 200', 'an invalid request target returns 400'],
+  }));
+  assert.doesNotMatch(runOut(), /unhandled-parse/, '"invalid request target" is coverage');
+});

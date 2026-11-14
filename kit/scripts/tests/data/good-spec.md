@@ -62,6 +62,7 @@ Register the route; delegate to the existing method; return its result.
 |---|---|---|
 | D1 | POST /refunds with a valid id returns 200 | `src/__tests__/refund.test.ts::returns 200` |
 | D2 | refund is called exactly once | `src/__tests__/refund.test.ts::calls refund once` |
+| D3 | a malformed request body returns 400 and the route keeps serving | `src/__tests__/refund.test.ts::rejects a malformed body` |
 
 ## Assumptions
 

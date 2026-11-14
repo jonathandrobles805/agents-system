@@ -329,6 +329,58 @@ export class Validator {
   }
 
   /**
+   * A spec that declares a route must say what the route does with input it cannot parse.
+   *
+   * In the field run the Approach prescribed `new URL(req.url, 'http://localhost')` and a raw `GET //` threw
+   * ERR_INVALID_URL uncaught, killing the server (review round 1, R11). Planning had covered bad PORT values and
+   * nothing about bad request input, because nothing required it to.
+   *
+   * WHY THIS IS NOT A LIST OF RISKY FUNCTIONS. The issue proposed matching `new URL(`, `JSON.parse(` and
+   * `decodeURIComponent(` in the Approach. Two things are wrong with that. It is open-ended -- the next entry
+   * (`querystring.parse`, a hand-rolled regex, `Buffer.from`) is always the one that was missing -- and it keys on
+   * how the work is implemented, which is not what receives malformed input. This keys on what the spec PROMISES:
+   * a method-and-path pair is a declared HTTP interface, and anything reachable from outside gets input its author
+   * did not choose. The vocabulary is closed -- the HTTP methods are a fixed set defined by the protocol, not by
+   * which libraries exist -- so it does not grow.
+   *
+   * What it is NOT: a proof. "Declares a route" has to be recognised somehow, and this recognises it from a method
+   * and a path appearing together. A spec that serves requests without ever writing one down is not detected, and
+   * a spec that writes `GET /foo` in prose about something else is. Both are judgement calls a reviewer still has
+   * to make; this only makes the common case impossible to forget.
+   */
+  checkMalformedInput(p, sections) {
+    const ROUTE = /\b(GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS)\s+\/\S*/;
+    let declared = null;
+    for (const name of ["summary", "goal", "done-criteria", "files to change", "files to create", "approach"]) {
+      const sec = sections.get(name);
+      for (const [n, line] of sec?.lines ?? []) {
+        const m = ROUTE.exec(line);
+        if (m) { declared = { n, what: m[0], where: name }; break; }
+      }
+      if (declared) break;
+    }
+    if (!declared) return;
+    const dc = sections.get("done-criteria");
+    // #34 specifies /malformed|invalid|unparseable/i. Applied to the run that produced the issue, that regex PASSES:
+    // the spec's criteria already said "an invalid PORT value is rejected", and the server still died on `GET //`.
+    // So "invalid" on its own proves nothing -- a config check satisfies it -- and it counts only when the row also
+    // names the surface the request arrives on. "malformed" and "unparseable" describe input that cannot be read and
+    // need no qualifier. The vocabulary is #34's; what is added is which of its words carry the claim.
+    const SURFACE = /\b(request|input|url|uri|path|target|body|payload|header|query|querystring|method|json|utf-?8)\b/i;
+    const covered = (dc?.tableRows() ?? []).some(([, cells]) => {
+      const row = cells.join(" ");
+      if (/malformed|unparseable/i.test(row)) return true;
+      return /\binvalid\b/i.test(row) && SURFACE.test(row);
+    });
+    if (!covered) {
+      this.add(p, dc ? dc.start : declared.n, "unhandled-parse",
+        `this spec declares a route ('${declared.what}' in ${declared.where}) but no done-criterion covers input it cannot parse; ` +
+        "add one naming what the route returns for a request it cannot parse. This looks for 'malformed' or " +
+        "'unparseable' in a criterion, or 'invalid' together with what it is invalid about (request, url, path, body, header, query, json)");
+    }
+  }
+
+  /**
    * A test command a spec names must be one the kit will actually run. The field run's spec told the tester to run
    * `node --test` before package.json existed; the hook runs `commands.test`, which was `npm test`, so seven
    * exit-254 entries were logged and the real red results never were. Review round 1 failed on it.
@@ -377,6 +429,7 @@ export class Validator {
     }
     this.checkCmdBlocks(p, sections.get("impact analysis"));
     this.checkRedRunCommand(p, sections);
+    this.checkMalformedInput(p, sections);
     this.checkTaggedBullets(p, sections.get("assumptions"), new Set(["verified", "docs", "inferred"]));
     // Files to change must be non-empty
     const ftc = sections.get("files to change");

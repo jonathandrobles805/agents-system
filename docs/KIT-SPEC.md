@@ -194,7 +194,9 @@ Every finding, assumption, or claim in a research file, spec, or review report c
 6. Spec: each done-criterion has a test name; Open questions is empty before approval; file list is non-empty; Assumptions section present; Non-goals present.
 7. Spec risk flag: `high-risk` is set when any listed file matches the project's high-risk paths (`.claude/kit.json`) or the spec mentions auth, payment, delete, migration, public API, secrets.
 8. Research: date, commit hash, Confidence, and "What I could not verify" present; INDEX entry exists.
-9. Review report: every checklist item is PASS or FAIL with evidence; every FAIL has file, line, rule, and what passing looks like.
+9. Review report: every checklist item is PASS or FAIL with evidence; every FAIL has file, line, rule, and what passing looks like. Every bare `path:N` or `path:N-M` in checklist evidence or a Fail-list entry is range-checked the same way a `[verified: ...]` citation is.
+10. A test command a spec names as a run must be one the project records in `.claude/kit.json` `commands`; a spec that names a runner the hook will never invoke is refused, because a run of it would never reach the log.
+11. A spec that declares a route -- an HTTP method and a path together -- carries a done-criterion covering a request it cannot parse. The check looks for `malformed` or `unparseable` in a criterion, or `invalid` together with what it is invalid about; `invalid` alone does not count, because a configuration check satisfies that word while the route still crashes on a malformed target.
 
 Exit code 2 with the list of violations on stderr. Runs as a `SubagentStop` hook for the three writing agents, as a `PostToolUse` hook on writes under `docs/`, and in CI.
 
