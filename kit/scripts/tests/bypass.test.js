@@ -591,8 +591,10 @@ test('wip: the limit holds — a second lane is refused at max_concurrent_lanes 
   assert.ok(fs.existsSync(path.join(wt, '.claude', 'lane.json')));
   assert.deepEqual(wipOf(root), { in_flight: 1, limit: 1, lanes: ['refund-route'] },
     'the live lane is counted without any ROADMAP edit');
-  assert.match(read(root, 'ROADMAP.md'), /\| Refund route \| refund-route \| M1 \| queued \|/,
-    'and the main checkout ROADMAP still says queued, which is now irrelevant');
+  // #36: and main's own board now agrees. The count is still derived from kit.json rather than read off the
+  // board -- that is what makes the two checkable against each other instead of one standing in for the other.
+  assert.match(read(root, 'ROADMAP.md'), /\| Refund route \| refund-route \| M1 \| building \|/,
+    "main's board shows the lane in flight");
 
   let other = spec({ commit: commit.slice(0, 7) }).replaceAll('refund-route', 'other').replaceAll('Refund route', 'Other')
     .replaceAll('src/api/routes.ts', 'src/api/other.ts').replaceAll('tests/routes.test.ts', 'tests/other.test.ts');
@@ -1268,4 +1270,30 @@ test('#37 Write is routed to the read log everywhere it is registered', () => {
     const m = /- matcher: (\S+)\n\s+hooks:\n\s+- type: command\n\s+command: [^\n]*hook_read_log\.js/.exec(md);
     if (m) assert.match(m[1], /Write/, `${n} routes Write to the read log: ${m[1]}`);
   }
+});
+
+// ===========================================================================================================
+// #36: lane.js start wrote the `building` status into the WORKTREE's ROADMAP.md, so the main checkout -- the
+// only copy anyone reads to see what is in flight -- stayed at waiting-approval through build and both reviews.
+// cbfaeb5 fixed the WIP count by deriving it from kit.json instead; this fixes the writer it was working around.
+// ===========================================================================================================
+
+test('#36 start marks the lane in flight on main, and leaves the worktree clean', (t) => {
+  const { root, wt } = laneProject(t, {});
+  const rowOf = (repo) => K.splitlines(read(repo, 'ROADMAP.md')).find((l) => l.includes('refund-route')) ?? '';
+  assert.match(rowOf(root), /\bbuilding\b/, `main's row must show the lane in flight: ${rowOf(root)}`);
+  const st = spawnSync('git', ['status', '--porcelain', 'ROADMAP.md'], { cwd: wt, encoding: 'utf8' });
+  assert.equal(st.stdout.trim(), '', `the worktree's ROADMAP must be untouched: ${st.stdout}`);
+});
+
+test('#36 precheck notices a recorded lane that main does not show in flight', (t) => {
+  const { root } = laneProject(t, {});
+  // put main's row back to a not-in-flight status while kit.json still records the lane
+  const rm = path.join(root, 'ROADMAP.md');
+  // only the row: the template's status legend also contains the word "building"
+  fs.writeFileSync(rm, K.splitlines(read(root, 'ROADMAP.md'))
+    .map((l) => (l.includes('| refund-route |') ? l.replace('building', 'queued') : l)).join('\n') + '\n');
+  const problems = runScript('lane.js', ['precheck', 'refund-route', '--repo', root]);
+  assert.match(problems.stdout + problems.stderr, /refund-route/, 'the lane is named');
+  assert.match(problems.stdout + problems.stderr, /in flight|queued/i, `the disagreement is reported: ${problems.stdout}${problems.stderr}`);
 });

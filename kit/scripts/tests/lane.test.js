@@ -65,7 +65,10 @@ test('start creates worktree lane and progress', (t) => {
   assert.ok(lj.feature === 'refund-route' && lj.stage === 'build' && lj.branch === 'wt/refund-route');
   const prog = read(wt, 'docs', 'specs', 'refund-route.progress.md');
   assert.ok(prog.includes('| D1 | routes exposes refund | `tests/routes.test.ts::exposes refund` | — | — |'));
-  assert.ok(read(wt, 'ROADMAP.md').includes('| Refund route | refund-route | M1 | building |'));
+  // #36: the status belongs on main, the only copy anyone reads to see what is in flight, and the lane's own
+  // ROADMAP is left exactly as the branch had it
+  assert.ok(read(root, 'ROADMAP.md').includes('| Refund route | refund-route | M1 | building |'));
+  assert.ok(!read(wt, 'ROADMAP.md').includes('| Refund route | refund-route | M1 | building |'));
   assert.equal(git(['branch', '--show-current'], wt).trim(), 'wt/refund-route');
   const kit = JSON.parse(read(root, '.claude', 'kit.json'));
   assert.ok('refund-route' in kit.lanes);
@@ -96,7 +99,7 @@ test('wip count comes from the lane worktrees, not from ROADMAP', (t) => {
   assert.ok(r.returncode === 0 && JSON.parse(r.stdout).in_flight === 0);
   assert.equal(lane('start', 'refund-route', '--repo', root).returncode, 0);
   // no ROADMAP edit: lane.js start writes 'building' into the worktree's copy, which the main checkout never sees
-  assert.match(read(path.join(root, 'ROADMAP.md')), /\| refund-route \| M1 \| queued \|/);
+  assert.match(read(path.join(root, 'ROADMAP.md')), /\| refund-route \| M1 \| building \|/); // #36
   r = lane('wip', '--repo', root);
   assert.ok(r.returncode === 2 && JSON.parse(r.stdout).in_flight === 1, r.stdout);
   assert.deepEqual(JSON.parse(r.stdout).lanes, ['refund-route']);

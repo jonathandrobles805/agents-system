@@ -465,6 +465,15 @@ export function precheck(root, slug) {
   if (status === 'approved' && n >= limit) {
     problems.push(`WIP limit reached: ${n}/${limit} in flight (${lanes.join(', ')}). Merge or escalate one first.`);
   }
+  // Derived state and the board must agree: a lane kit.json records as open is one main should show in flight.
+  // When they disagree the board is the stale one, and nobody reading it can tell (#36).
+  const byStatus = new Map(roadmapRows(root).map((r) => [r.slug, r.status]));
+  for (const s of Object.keys(asDict(kget(asDict(K.loadKitJson(root)), 'lanes', {})))) {
+    const st = byStatus.get(s);
+    if (st !== undefined && !IN_FLIGHT.has(st)) {
+      problems.push(`kit.json records lane '${s}' as open but main's ROADMAP row reads '${st}', which is not in flight; run lane.js roadmap-set ${s} building --repo <main repo>`);
+    }
+  }
   const [, change, create] = K.specFileLists(sp);
   const mine = new Set([...change, ...create]);
   for (const [other, files] of activeSpecs(root, slug)) {
@@ -596,7 +605,12 @@ export function start(root, slug, base) {
       (reproFirst ? '\n## Current step\n\nreproducing' : "\n\n## Current step\n\nreading the spec's files") +
       '\n\n## Uncertainties\n\n- none\n\n## Escalation\n\n- Attempts: {{n}} of 3\n- Failure: {{what fails}}\n- Tried: {{what each attempt changed}}\n- Needs: {{decision or information}}\n',
   );
-  roadmapSet(wt, slug, 'building', { lane: relativeTo(path.dirname(root), wt) });
+  // The status goes on MAIN, which is the only copy anyone reads to see what is in flight. Writing it into the
+  // worktree left the main checkout at waiting-approval through build and both reviews of the field run, and
+  // waiting-approval is not in IN_FLIGHT, so a WIP check there counted nothing. cbfaeb5 worked around that by
+  // deriving the count from kit.json; this fixes the writer. Uncommitted on main, exactly as the kit.json
+  // registration below is: the lane does not own main's history.
+  roadmapSet(root, slug, 'building', { lane: relativeTo(path.dirname(root), wt) });
   // register the lane in the main checkout's kit.json (not committed by the lane)
   const kj = pjoin(root, '.claude', 'kit.json');
   if (K.isFile(kj)) {
