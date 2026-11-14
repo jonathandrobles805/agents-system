@@ -1339,3 +1339,42 @@ test('#35 merged refuses while the lane\'s evidence is not committed', async (t)
   commitAll(wt, 'evidence');
   assert.deepEqual(L.evidenceGaps(root, 'refund-route'), [], 'once committed there is nothing left to lose');
 });
+
+// ===========================================================================================================
+// #33: review round 1 of the field run cited `docs/specs/hello-endpoint.md:306-308` and `:92`. The spec had 289
+// lines and Risk was on line 7. Only citations wrapped in [verified: path:N-M] were range-checked; a bare
+// path:N in an Evidence cell was not looked at.
+// #31: the same spec told the tester to run `node --test` before package.json existed, while the hook runs
+// `npm test`; seven exit-254 entries were logged and the real red results never were.
+// ===========================================================================================================
+
+test('#33 a bare path:line citation in review evidence is range-checked', (t) => {
+  const { root } = project(t, {});
+  const rel = `${K.workRoot(root)}/refund-route.review.md`;
+  const real = K.splitlines(read(root, K.workRoot(root), 'refund-route.md')).length;
+  write(root, rel, [
+    '# Review: refund-route', '', '- Head: HEAD', '- Reviewer: r', `- Date: 2026-11-14`, '',
+    '## Checklist', '',
+    '| # | Check | Result | Evidence |', '|---|---|---|---|',
+    `| R1 | scope holds | PASS | docs/specs/refund-route.md:${real + 400}-${real + 402} |`,
+    '', '## Fail list', '', '- none', '', '## Verdict', '', 'approve', '',
+  ].join('\n'));
+  const r = runScript('validate_docs.js', [path.join(root, rel), '--repo', root]);
+  assert.notEqual(r.returncode, 0, `a citation past the end of the file must be caught: ${r.stdout}${r.stderr}`);
+  assert.match(r.stdout + r.stderr, /refund-route\.md/, 'and name the file');
+});
+
+test('#31 a spec naming a red-run command the hook never runs is refused', (t) => {
+  const { root } = project(t, {});
+  const rel = `${K.workRoot(root)}/refund-route.md`;
+  const spec = read(root, K.workRoot(root), 'refund-route.md');
+  const cmds = JSON.parse(read(root, '.claude', 'kit.json')).commands;
+  assert.ok(!/node --test/.test(cmds.test ?? ''), 'the fixture does not run node --test');
+  write(root, rel, spec.replace('## Approach', '## Red run\n\nRun `node --test test/routes.test.ts` to see them fail.\n\n## Approach'));
+  const r = runScript('validate_docs.js', [path.join(root, rel), '--repo', root]);
+  assert.match(r.stdout + r.stderr, /red-run-command|node --test/, `the mismatch must be reported: ${r.stdout}${r.stderr}`);
+  // the command the project actually runs is accepted
+  write(root, rel, spec.replace('## Approach', `## Red run\n\nRun \`${cmds.test}\` to see them fail.\n\n## Approach`));
+  const ok = runScript('validate_docs.js', [path.join(root, rel), '--repo', root]);
+  assert.doesNotMatch(ok.stdout + ok.stderr, /red-run-command/, `the project's own command is fine: ${ok.stdout}`);
+});
