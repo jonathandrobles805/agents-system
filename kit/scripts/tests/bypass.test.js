@@ -1148,3 +1148,41 @@ test('#30 real red and green runs of the row\'s test are accepted', (t) => {
   const r = doneCheck(wt);
   assert.equal(r.out, '', `honest evidence must still pass: ${r.out}`);
 });
+
+// ===========================================================================================================
+// #38: post-edit-check ran the project's whole suite for every edit, including edits to the lane's own progress
+// and review files. In the field run three full `npm test` runs started that way and each recorded an `attempt`
+// event, as if writing up the work were a failed attempt to fix it.
+// ===========================================================================================================
+
+test('#38 editing the lane\'s own artifacts runs no checks and counts no attempt', (t) => {
+  const { wt, root } = laneProject(t, {});
+  const lane = K.findLane(wt);
+  // a test command that records every invocation, so "did the suite run" is an observation rather than a guess
+  const kj = path.join(wt, '.claude', 'kit.json');
+  const kd = JSON.parse(read(wt, '.claude', 'kit.json'));
+  const marker = path.join(wt, 'ran.txt');
+  const fake = `sh -c 'echo ran >> ${marker}; echo "TAP version 13"; echo "not ok 1 - x"; exit 1'`;
+  // both, because with a file in hand post-edit-check prefers test_affected over test
+  kd.commands = { ...(kd.commands ?? {}), test: fake, test_affected: fake, typecheck: 'none: not in this probe', lint: 'none: not in this probe' };
+  fs.writeFileSync(kj, K.jsonDumps(kd, { indent: 2 }));
+  const edit = (rel) => hook('hook_post_edit_check.js', { cwd: wt, tool: 'Edit', input: { file_path: path.join(wt, rel) } });
+
+  // a source edit still runs the suite: that is the hook's job
+  fs.writeFileSync(path.join(wt, 'src', 'api', 'routes.ts'), 'export const x = 1;\n');
+  edit('src/api/routes.ts');
+  const afterSource = K.isFile(marker) ? K.readLines(marker).length : 0;
+  assert.ok(afterSource >= 1, 'a source edit must still trigger the checks');
+
+  // ...and an edit to the lane's own write-up does not
+  for (const rel of [`${lane.work}/refund-route.progress.md`, `${lane.work}/refund-route.review.md`]) {
+    fs.mkdirSync(path.dirname(path.join(wt, rel)), { recursive: true });
+    fs.appendFileSync(path.join(wt, rel), '\nnotes\n');
+    const r = edit(rel);
+    assert.equal(r.code, 0, `${rel}: ${r.err}${r.out}`);
+  }
+  assert.equal(K.isFile(marker) ? K.readLines(marker).length : 0, afterSource, 'writing up the work must not re-run the suite');
+  const events = K.isFile(lane.eventsPath) ? K.readLines(lane.eventsPath).map((l) => JSON.parse(l)) : [];
+  const attemptsAfterArtifacts = events.filter((e) => e.event === 'attempt').length;
+  assert.equal(attemptsAfterArtifacts, 1, `only the source edit may count as an attempt, got ${attemptsAfterArtifacts}`);
+});

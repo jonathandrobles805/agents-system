@@ -159,6 +159,16 @@ export function main() {
   const events = lane ? lane.eventsPath : path.join(root, '.claude', 'session', 'events.jsonl');
   const failures = [];
   const sid = text(d.session_id) || 's';
+
+  // Writing up the work is not working on the code. An edit to one of the lane's own artifacts -- its progress
+  // file, its review report, its event log -- used to run the project's whole suite and, because the suite was red
+  // at the time, record an `attempt` against the three-strikes counter: in the field run three full `npm test`
+  // runs started that way, each counted as a failed attempt to fix something nobody had touched. The counter is
+  // for edits to the code under test, so these return before any step runs. A Bash call is not covered: it has no
+  // single path to judge, and shell writes are exactly what the scope check below exists to catch.
+  if (lane && rel && d.tool_name !== 'Bash' && K.globMatch(rel, K.laneArtifacts(lane.work, lane.slug, lane.root))) {
+    return 0;
+  }
   const redSigs = []; // [signature, log ref] for failing test/typecheck steps this call
   let testGreen = false;
 

@@ -232,8 +232,11 @@ test('field test #36–#38: a fix lane driven from the main checkout — reads a
   k.commands = { ...(k.commands ?? {}), typecheck: 'node -e "process.exit(1)"', test: 'node -e "process.exit(0)"', lint: 'none: no linter adopted' };
   delete k.commands.test_affected;
   fs.writeFileSync(kj, JSON.stringify(k, null, 2));
+  // the checks run on edits to the code under test, not on the lane's write-up: since #38 an edit to the progress
+  // file returns before any step, so the attempt counter is exercised where it actually counts
+  const wTest = { tool_name: 'Write', tool_input: { file_path: path.join(wt, 'tests', 'payment.test.ts'), content: 'x' } };
   for (let i = 0; i < 4; i++) {
-    const pe = call('hook_post_edit_check.js', w);
+    const pe = call('hook_post_edit_check.js', wTest);
     // #40: red while reproducing is recorded, not fed back as "fix it"; #39: "none: <reason>" is never run as a command
     assert.equal(pe.returncode, 0, pe.stdout + pe.stderr);
     assert.ok(!pe.stdout.includes('"block"'), pe.stdout);
@@ -243,7 +246,7 @@ test('field test #36–#38: a fix lane driven from the main checkout — reads a
   // in build, the same red result is counted and escalates on the third
   const lj = path.join(wt, '.claude', 'lane.json');
   fs.writeFileSync(lj, JSON.stringify({ ...JSON.parse(read(lj)), stage: 'build' }, null, 2));
-  for (let i = 0; i < 3; i++) call('hook_post_edit_check.js', w);
+  for (let i = 0; i < 3; i++) call('hook_post_edit_check.js', wTest);
   assert.ok(/Attempts: 3 of 3/.test(read(prog)), read(prog).slice(-400));
   // #38: next-step gives the same answer from the worktree as from the main checkout
   const fromWt = JSON.parse(runScript('lane.js', ['next-step', 'refund-route', '--repo', wt]).stdout);
