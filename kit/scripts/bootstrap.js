@@ -1174,10 +1174,13 @@ fi
     const has = (f) => K.isFile(path.join(this.root, f));
     const lines = [];
     const stacks = this.det.stacks;
-    if (stacks.includes('node')) {
-      const ver = has('.nvmrc') ? 'node-version-file: ".nvmrc"' : has('.node-version') ? 'node-version-file: ".node-version"' : 'node-version: "22"';
-      lines.push('      - uses: actions/setup-node@v4', `        with: { ${ver} }`);
-    }
+    // Node is set up whatever the project's stack is, because the KIT is Node: commands.boundaries defaults to a
+    // kit script and audit usually is one, so these jobs run node even in a Python-only repository. Detection used
+    // to gate this, which left a repository whose package.json does not exist yet -- the state every project is in
+    // before its first code lands -- running kit scripts on whatever node the runner happens to ship, while the
+    // kit's own jobs pinned 22 two screens further down the same file. A pin the project made is still the pin.
+    const ver = has('.nvmrc') ? 'node-version-file: ".nvmrc"' : has('.node-version') ? 'node-version-file: ".node-version"' : 'node-version: "22"';
+    lines.push('      - uses: actions/setup-node@v4', `        with: { ${ver} }`);
     if (stacks.includes('python')) {
       const ver = has('.python-version') ? 'python-version-file: ".python-version"' : 'python-version: "3.12"';
       lines.push('      - uses: actions/setup-python@v5', `        with: { ${ver} }`);

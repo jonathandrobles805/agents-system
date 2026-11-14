@@ -918,3 +918,54 @@ test('the planner is told to read the limit from the derivation, not from prose 
   assert.match(step, /[Dd]o not take the limit from prose/, 'it tells the planner the roadmap number is not authoritative');
   assert.match(step, /kit\.json/, 'and names where the enforced number lives');
 });
+
+// ===========================================================================================================
+// Generated CI: a job that runs Node must have a Node. The kit's OWN jobs pin 22; the jobs that run the kit's
+// scripts on the project's behalf were pinned only when stack detection happened to find Node, so a repository
+// whose package.json does not exist yet got a CI that runs kit scripts on whatever the runner ships.
+// ===========================================================================================================
+
+/** A git repository with no detectable stack and GitHub CI -- the state a project is in before its first code. */
+function stacklessRepo(t) {
+  const root = path.join(tmpPath(t), 'bare');
+  fs.mkdirSync(path.join(root, '.github', 'workflows'), { recursive: true });
+  fs.writeFileSync(path.join(root, 'README.md'), '# bare\n');
+  spawnSync('git', ['init', '-q'], { cwd: root });
+  spawnSync('git', ['config', 'user.email', 't@t'], { cwd: root });
+  spawnSync('git', ['config', 'user.name', 't'], { cwd: root });
+  commitAll(root, 'init');
+  runScript('bootstrap.js', ['--repo', root]);
+  return root;
+}
+
+/** Jobs of a generated workflow, as { name, text }. */
+function ciJobs(yml) {
+  const out = [];
+  const lines = K.splitlines(yml);
+  let cur = null;
+  for (const line of lines) {
+    const m = /^ {2}([a-z][\w-]*):\s*$/.exec(line);
+    if (m && /^ {2}\S/.test(line)) {
+      if (cur) out.push(cur);
+      cur = { name: m[1], text: '' };
+    } else if (cur) cur.text += line + '\n';
+  }
+  if (cur) out.push(cur);
+  return out.filter((j) => /runs-on:/.test(j.text));
+}
+
+test('every generated CI job that runs node sets one up [finding 2]', (t) => {
+  setEnv(t, 'KIT_SANDBOX_RUNTIME', 'none');
+  const yml = read(stacklessRepo(t), '.github', 'workflows', 'kit.yml');
+  const offenders = ciJobs(yml).filter((j) => /(^|\s)node\s/m.test(j.text) && !/setup-node/.test(j.text));
+  assert.deepEqual(offenders.map((j) => j.name), [], 'a job running node with no setup-node uses whatever the runner ships');
+});
+
+test('a project that pins its own node version keeps it [finding 2]', (t) => {
+  setEnv(t, 'KIT_SANDBOX_RUNTIME', 'none');
+  const { root } = project(t, { dir: tmpPath(t) });
+  fs.writeFileSync(path.join(root, '.nvmrc'), '20\n');
+  runScript('bootstrap.js', ['--repo', root, '--upgrade']);
+  const yml = read(root, '.github', 'workflows', 'kit.yml');
+  assert.match(yml, /node-version-file: "\.nvmrc"/, 'the project\'s pin is honoured, not overwritten with 22');
+});
