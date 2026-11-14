@@ -93,6 +93,23 @@ test('stage and finish', (t) => {
   assert.ok(!('refund-route' in JSON.parse(read(root, '.claude', 'kit.json')).lanes));
 });
 
+test('#41 a raised review budget survives lane.js stage review', (t) => {
+  // A human raised the review budget to 400/4h; the next lane.js stage review put it back to the default and the
+  // budget hook stopped the lane again at 250 calls. A raise recorded in budget_override.<stage> outlives the stage change.
+  const { root } = project(t);
+  const wt = JSON.parse(lane('start', 'refund-route', '--repo', root).stdout).worktree;
+  const lf = path.join(wt, '.claude', 'lane.json');
+  const d = JSON.parse(fs.readFileSync(lf, 'utf8'));
+  d.budget_override = { review: { tool_calls: 400, hours: 4 } };
+  fs.writeFileSync(lf, JSON.stringify(d, null, 2));
+  assert.equal(lane('stage', 'refund-route', 'review', '--repo', root).returncode, 0);
+  const after = JSON.parse(fs.readFileSync(lf, 'utf8'));
+  assert.equal(after.stage, 'review');
+  assert.equal(after.budget.tool_calls, 400, JSON.stringify(after.budget));
+  assert.equal(after.budget.hours, 4, JSON.stringify(after.budget));
+  assert.deepEqual(after.budget_override, { review: { tool_calls: 400, hours: 4 } }, 'the override itself is kept');
+});
+
 test('wip count comes from the lane worktrees, not from ROADMAP', (t) => {
   const { root } = project(t, { wipLimit: 1 });
   let r = lane('wip', '--repo', root);

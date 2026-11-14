@@ -721,7 +721,8 @@ export function setStage(root, slug, stage) {
   const data = asDict(JSON.parse(readText(lf)));
   data.stage = stage;
   data.started = K.isoSeconds();
-  data.budget = kget(kget(asDict(K.loadKitJson(root)), 'budgets', {}), stage, {});
+  // #41: a human's raise (budget_override.<stage>) outlives the stage change; it used to be overwritten by the default.
+  data.budget = { ...asDict(kget(kget(asDict(K.loadKitJson(root)), 'budgets', {}), stage, {})), ...asDict(kget(asDict(kget(data, 'budget_override', {})), stage, {})) };
   writeText(lf, K.jsonDumps(data, { indent: 2 }) + '\n');
   process.stdout.write(`lane ${slug}: stage ${stage}\n`);
   return 0;

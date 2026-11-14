@@ -281,6 +281,39 @@ test('budget check time limit', (t) => {
   assert.equal(JSON.parse(r.stdout).decision, 'block');
 });
 
+// #41: a stage's budget is measured from that stage's own start. The counter used to be one file per session
+// that nothing ever reset, so review began wherever build left off (206 calls at its first call in the run that
+// filed #41). Scaled from that run's 300-then-1 so the suite does not spawn 300 hooks: build spends more calls than
+// review's whole budget, then review makes one call.
+function moveStage(repo, stage, budget) {
+  const lf = path.join(repo, '.claude', 'lane.json');
+  const d = JSON.parse(fs.readFileSync(lf, 'utf8'));
+  Object.assign(d, { stage, started: isoSeconds(new Date()), budget });
+  fs.writeFileSync(lf, JSON.stringify(d)); // what lane.js stage writes: the new stage, its start, its budget
+}
+
+test('#41 a stage is measured by its own calls, not the lane lifetime', (t) => {
+  const repo = makeRepo(t);
+  makeLane(repo, GOOD_SPEC, 'build', { budget: { tool_calls: 800, hours: 100 } });
+  for (let i = 0; i < 5; i++) assert.equal(run('hook_budget_check.js', post(repo, 'Read', { file_path: 'x' })).stdout.trim(), '', `build call ${i}`);
+  moveStage(repo, 'review', { tool_calls: 3, hours: 100 });
+  const r = run('hook_budget_check.js', post(repo, 'Read', { file_path: 'x' }));
+  assert.equal(r.stdout.trim(), '', `the first review call is 1 of 3, not 6 of 3: ${r.stdout}`);
+});
+
+test('#41 the over-budget message names lane.json, where a raised budget is read', (t) => {
+  const repo = makeRepo(t);
+  makeLane(repo, GOOD_SPEC, 'review', { budget: { tool_calls: 0, hours: 100 } });
+  const r = run('hook_budget_check.js', post(repo, 'Read', { file_path: 'x' }));
+  const out = JSON.parse(r.stdout);
+  assert.equal(out.decision, 'block');
+  assert.match(out.reason, /lane\.json/, out.reason);
+  assert.doesNotMatch(out.reason, /in the spec/, 'nothing reads a budget from the spec');
+  const prog = read(repo, 'docs/specs/refund-endpoint.progress.md');
+  assert.match(prog, /- Needs: .*lane\.json/, prog);
+  assert.doesNotMatch(prog, /in the spec/, prog);
+});
+
 // ---------------- done-check ----------------
 
 const PROGRESS_TMPL = `# Progress: Refund endpoint
