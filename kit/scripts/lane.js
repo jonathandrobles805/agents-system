@@ -14,6 +14,7 @@
 //   lane.js agent-for <work_type> <stage>      the one agent allowed for a stage; refuses unknown types and unlisted stages
 //   lane.js wip --repo R                      active lanes vs WIP limit
 //   lane.js unknowns <draft spec> --repo R    exit 0 none / 3 resolve (1..3, one researcher each) / 2 research insufficient (>3)
+//   lane.js evidence <slug> --repo R          copy the check log to <work>/<slug>.checks.txt
 //   lane.js roadmap-set <slug> <status> --repo R
 //   lane.js index lookup "<question>" --repo R [--json]   reuse | stale | new, from docs/research/INDEX.md
 //   lane.js index add "<question>" --repo R --slug S --keywords K --files F --commit C
@@ -445,6 +446,48 @@ export function check(root, slug, criterion, cmd) {
   K.appendEvent(lane.eventsPath, { event: 'check', criterion, command: cmd, result: code === 0 ? 'ok' : 'fail', ref, summary: `${criterion}: exit ${code}` });
   process.stdout.write(K.jsonDumps({ criterion, exit: code, ref, tail: K.splitlines(out).slice(-8) }) + '\n');
   return 0;
+}
+
+/**
+ * What a lane would lose on merge. The check log lives in the gitignored `.claude/session/`, so every `log#N`
+ * citation in the merged progress and review files resolves against nothing once the worktree is removed, and the
+ * retro has no evidence to read. The events file is in the work root but nothing required it to be committed.
+ *
+ * Returns the problems, so `merged` can refuse and say which, and `evidence` can fix them.
+ */
+export function evidenceGaps(root, slug) {
+  const kit = asDict(K.loadKitJson(root));
+  const wt = laneWorktree(root, kit, slug);
+  const repo = wt ?? root;
+  const work = K.workRoot(repo);
+  const out = [];
+  const tracked = (rel) => pyStrip(K.git(['ls-files', '--', rel], repo)) !== '';
+  // The gate protects evidence that exists; it does not demand that evidence exist. A lane that ran no checks has
+  // nothing to lose, and whether a criterion needed a run is done-check's question, asked long before this one.
+  const lane = K.findLane(repo);
+  const liveLog = lane && K.isFile(lane.logPath);
+  for (const rel of [`${work}/${slug}.events.jsonl`, `${work}/${slug}.checks.txt`]) {
+    const exists = K.isFile(pjoin(repo, rel));
+    if (exists && !tracked(rel)) out.push(`${rel} exists but is not committed`);
+    else if (!exists && rel.endsWith('.checks.txt') && liveLog) {
+      out.push(`${rel} does not exist, but ${relativeTo(repo, lane.logPath)} does and is gitignored, so its log#N citations die with the worktree`);
+    }
+  }
+  return out;
+}
+
+/** Copy the live check log to the committed copy, line for line, so `log#N` citations keep resolving after merge. */
+export function evidence(root, slug) {
+  const kit = asDict(K.loadKitJson(root));
+  const wt = laneWorktree(root, kit, slug) ?? root;
+  const lane = K.findLane(wt);
+  if (!lane) return [`no lane.json for '${slug}'`];
+  const dest = pjoin(wt, lane.work, `${slug}.checks.txt`);
+  if (!K.isFile(lane.logPath)) return [`no check log at ${relativeTo(wt, lane.logPath)}; nothing has run yet`];
+  fs.mkdirSync(path.dirname(dest), { recursive: true });
+  fs.copyFileSync(lane.logPath, dest);
+  process.stdout.write(K.jsonDumps({ copied: relativeTo(wt, dest), from: relativeTo(wt, lane.logPath), lines: K.readLines(dest).length }) + '\n');
+  return [];
 }
 
 export function precheck(root, slug) {
@@ -1166,6 +1209,8 @@ export async function main(argv = process.argv.slice(2)) {
   s.addArgument('--repo', { default: '.' });
   s = sub.addParser('unknowns');
   s.addArgument('spec'); s.addArgument('--repo', { default: '.' }); s.addArgument('--json', { action: 'store_true' });
+  s = sub.addParser('evidence');
+  s.addArgument('slug'); s.addArgument('--repo', { default: '.' });
   s = sub.addParser('roadmap-set');
   s.addArgument('slug'); s.addArgument('status'); s.addArgument('--repo', { default: '.' }); s.addArgument('--pr'); s.addArgument('--spec');
   s = sub.addParser('index');
@@ -1222,6 +1267,10 @@ export async function main(argv = process.argv.slice(2)) {
     process.stdout.write(relativeTo(root, p) + '\n');
     return 0;
   }
+  if (a.cmd === 'evidence') {
+    const problems = evidence(root, a.slug);
+    return problems.length ? refuse(problems) : 0;
+  }
   if (a.cmd === 'merged') {
     // Verify in git before writing the word: refuse to mark a lane merged that is not an ancestor of base.
     const kit = asDict(K.loadKitJson(root));
@@ -1235,6 +1284,12 @@ export async function main(argv = process.argv.slice(2)) {
     const startC = kget(kget(kget(kit, 'lanes', {}), a.slug, null) || {}, 'start_commit', null);
     if (tip && (tip === startC || spawnSync('git', ['merge-base', '--is-ancestor', tip, base], { cwd: root }).status !== 0)) {
       return refuse([`wt/${a.slug} is not merged into ${base} yet (no lane commits in ${base})`]);
+    }
+    // The worktree is about to go, and with it the gitignored check log every log#N citation points at (#35).
+    const gaps = evidenceGaps(root, a.slug);
+    if (gaps.length) {
+      return refuse([...gaps.map((g) => `evidence: ${g}`),
+        `Run: node "$HOME/.claude/kit/scripts/lane.js" evidence ${a.slug} --repo <main repo>, then commit the result on the lane branch before merging. Without it the merged progress and review files cite a log nobody can open.`]);
     }
     const cols = a.pr ? { pr: a.pr } : {};
     const ok = roadmapSet(root, a.slug, 'merged', { lane: '—', ...cols });

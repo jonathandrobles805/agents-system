@@ -1297,3 +1297,45 @@ test('#36 precheck notices a recorded lane that main does not show in flight', (
   assert.match(problems.stdout + problems.stderr, /refund-route/, 'the lane is named');
   assert.match(problems.stdout + problems.stderr, /in flight|queued/i, `the disagreement is reported: ${problems.stdout}${problems.stderr}`);
 });
+
+// ===========================================================================================================
+// #35: four prompts told agents to read `docs/specs/<slug>.log`, which nothing writes -- the log is the
+// gitignored `.claude/session/<slug>.log` since field test #44 -- and the lane's events file was never
+// committed, so every `log#N` citation in the merged progress and review files broke when the worktree went.
+// 3e2fe83 fixed the two code copies of the artifact list and never looked at the prompts.
+// ===========================================================================================================
+
+test('#35 no kit prompt names a lane log path other than the real one', () => {
+  const bad = [];
+  for (const dir of ['commands', 'agents']) {
+    for (const n of fs.readdirSync(path.join(KIT, dir)).filter((x) => x.endsWith('.md'))) {
+      for (const [i, line] of K.splitlines(read(KIT, dir, n)).entries()) {
+        // any <slug>.log reference that is not under .claude/session/ and not the committed copy
+        for (const m of line.matchAll(/([\w./<>{}-]*[<{]?slug[}>]?[\w./-]*\.log)\b/g)) {
+          const p = m[1];
+          if (p.includes('.claude/session/') || p.endsWith('.checks.txt')) continue;
+          bad.push(`${dir}/${n}:${i + 1}: ${p}`);
+        }
+      }
+    }
+  }
+  assert.deepEqual(bad, [], `these point at a path nothing writes:\n${bad.join('\n')}`);
+});
+
+test('#35 merged refuses while the lane\'s evidence is not committed', async (t) => {
+  const { root, wt } = laneProject(t, {});
+  const lane = K.findLane(wt);
+  // a lane with evidence that exists only in the gitignored session dir and an untracked events file
+  K.appendLog(lane.logPath, 'test: npm test -> exit 0', 'TAP version 13\nok 1 - exposes refund\n1..1');
+  K.appendEvent(lane.eventsPath, { event: 'test', tool: 'hook', result: 'ok', summary: 'green' });
+  const L = await import('../lane.js');
+  const before = L.evidenceGaps(root, 'refund-route');
+  assert.ok(before.some((g) => g.includes('checks.txt')), `the missing copy is named: ${JSON.stringify(before)}`);
+
+  // lane.js evidence makes the copy, line for line, so log#N citations keep resolving
+  assert.equal(runScript('lane.js', ['evidence', 'refund-route', '--repo', root]).returncode, 0);
+  const copy = path.join(wt, lane.work, 'refund-route.checks.txt');
+  assert.equal(read(copy), fs.readFileSync(lane.logPath, 'utf8'), 'line for line');
+  commitAll(wt, 'evidence');
+  assert.deepEqual(L.evidenceGaps(root, 'refund-route'), [], 'once committed there is nothing left to lose');
+});

@@ -804,6 +804,10 @@ export function laneArtifacts(work, slug, root) {
     `${work}/${slug}.progress.md`,
     `${work}/${slug}.review.md`,
     `${work}/${slug}.events.jsonl`,
+    // the committed copy of the check log. The live log is gitignored (see above), so once the worktree is removed
+    // it is the only thing a `log#N` citation in the merged progress and review files can still resolve against,
+    // and the retro has nothing to read without it (#35). Line numbers are preserved, so the refs keep pointing.
+    `${work}/${slug}.checks.txt`,
     `${decisionsRoot(root)}/*.md`,
   ];
 }
