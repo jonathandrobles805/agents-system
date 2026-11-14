@@ -661,6 +661,60 @@ export function appendEvent(p, event) {
 }
 
 /** Append a titled block to the lane log. Returns the 1-based line number where the block starts. */
+/**
+ * Result lines a test run printed, as `{ok, name}`, from the patterns the stacks declare plus any the project adds
+ * in kit.json `results`.
+ *
+ * This is what makes a cited run evidence rather than an exit code. In the field run 33 of 36 "red" runs failed on
+ * MODULE_NOT_FOUND before a single assertion ran, and one was npm failing to find package.json (exit 254), yet all
+ * of them satisfied done-check because it read only the `-> exit N` header.
+ *
+ * Note what is deliberately NOT here: a list of infrastructure failures to exclude. "MODULE_NOT_FOUND", "Could not
+ * read package.json" and whatever comes next are all covered by one property -- a run that crashed before testing
+ * emits no result line for the row's test -- so requiring that line rejects the whole class without naming any
+ * member of it. A pattern list would have to be extended for every new way a runner can fail to start.
+ */
+export function resultLines(lines, patterns) {
+  const out = [];
+  for (const raw of lines) {
+    for (const p of patterns) {
+      const fail = new RegExp(p.fail).exec(raw);
+      if (fail) { out.push({ ok: false, name: (fail[1] ?? '').trim() }); break; }
+      const pass = new RegExp(p.pass).exec(raw);
+      if (pass) { out.push({ ok: true, name: (pass[1] ?? '').trim() }); break; }
+    }
+  }
+  return out;
+}
+
+/** Result-line patterns from every stack config, plus the project's own kit.json `results` additions. */
+export function resultPatterns(root) {
+  const out = [];
+  const dir = path.join(KIT_DIR, 'stacks');
+  if (isDir(dir)) {
+    for (const n of fs.readdirSync(dir).filter((x) => x.endsWith('.json')).sort()) {
+      try {
+        for (const p of JSON.parse(fs.readFileSync(path.join(dir, n), 'utf8')).results ?? []) {
+          if (typeof p?.fail === 'string' && typeof p?.pass === 'string') out.push(p);
+        }
+      } catch { /* a stack file that will not parse is bootstrap's problem to report, not this gate's */ }
+    }
+  }
+  // A project whose runner none of the stacks describe declares its own pair here rather than being unable to
+  // finish a lane. The gate stays on; what changes is that it can read that runner's output.
+  for (const p of (root ? plainObject(loadKitJson(root)).results : null) ?? []) {
+    if (typeof p?.fail === 'string' && typeof p?.pass === 'string') out.push(p);
+  }
+  return out;
+}
+
+/** A test name from a progress-row cell or a result line, comparable across the two. */
+export function testKey(s) {
+  const t = String(s ?? '').trim().replace(/^[`'"]+|[`'"]+$/g, '').trim();
+  const quoted = /["']([^"']{3,})["']\s*$/.exec(t);
+  return (quoted ? quoted[1] : t).toLowerCase().replace(/\s+/g, ' ').trim();
+}
+
 export function appendLog(p, title, body) {
   fs.mkdirSync(path.dirname(p), { recursive: true });
   const existing = isFile(p) ? (fs.readFileSync(p, 'utf8').match(/\n/g) || []).length : 0;

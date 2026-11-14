@@ -144,18 +144,20 @@ test('forge: two log lines still make done-check accept an unproven criterion [o
   const before = hook('hook_done_check.js', ev);
   assert.match(before.out, /no red run reference|no green run reference/, 'a criterion with no runs must refuse the stop');
 
-  // The log is machine output living in .claude/session/, which the lane can write in every sandbox mode; done-check
-  // trusts the exit code printed on the referenced line and never that a run happened. This case stays red-side-up
-  // deliberately: KIT-SPEC 10.14 records why it cannot be closed by moving or signing the file, and what would.
+  // The log is machine output living in .claude/session/, which the lane can write in every sandbox mode. #30 raised
+  // the bar -- an exit code alone no longer satisfies done-check, so the forgery now has to fabricate result lines
+  // naming this row's own test as well -- but raising a bar is not closing a hole: the forger writes the file, so it
+  // can write whatever the reader requires. This case stays red-side-up deliberately. KIT-SPEC 10.14 records why it
+  // cannot be closed by moving or signing the file, and what would.
   const log = path.join(wt, '.claude', 'session', 'refund-route.log');
   fs.mkdirSync(path.dirname(log), { recursive: true });
   fs.writeFileSync(log,
-    '=== 2026-11-12T10:00:00 D1: npx vitest run -> exit 1\n1 failed\n\n' +
-    '=== 2026-11-12T10:01:00 D1: npx vitest run -> exit 0\n1 passed\n\n');
+    '=== 2026-11-12T10:00:00 D1: npx vitest run -> exit 1\nTAP version 13\nnot ok 1 - exposes refund\n1..1\n\n' +
+    '=== 2026-11-12T10:01:00 D1: npx vitest run -> exit 0\nTAP version 13\nok 1 - exposes refund\n1..1\n\n');
   const prog = path.join(wt, 'docs', 'specs', 'refund-route.progress.md');
   fs.writeFileSync(prog, read(prog).replace(
     /\| D1 \|([^|]*)\|([^|]*)\| — \| — \|/,
-    '| D1 |$1|$2| refund-route.log#1 | refund-route.log#4 |'));
+    '| D1 |$1|$2| refund-route.log#1 | refund-route.log#6 |'));
 
   const after = hook('hook_done_check.js', ev);
   assert.equal(after.out, '', 'DEFECT: the stop is allowed; no test was ever run');
@@ -641,9 +643,9 @@ test('paths.work: a lane under a configured work root runs to green [Step 1 land
 
   // a real red and green run, and the stop is allowed
   fs.writeFileSync(path.join(wt, '.claude', 'session', 'refund-route.log'),
-    '=== 2026-11-12T10:00:00 D1: npx vitest run -> exit 1\n1 failed\n\n' +
-    '=== 2026-11-12T10:01:00 D1: npx vitest run -> exit 0\n1 passed\n\n');
-  fs.writeFileSync(lane.progressPath, fs.readFileSync(lane.progressPath, 'utf8').replace(/\| — \| — \|/, '| refund-route.log#1 | refund-route.log#4 |'));
+    '=== 2026-11-12T10:00:00 D1: npx vitest run -> exit 1\nTAP version 13\nnot ok 1 - exposes refund\n1..1\n\n' +
+    '=== 2026-11-12T10:01:00 D1: npx vitest run -> exit 0\nTAP version 13\nok 1 - exposes refund\n1..1\n\n');
+  fs.writeFileSync(lane.progressPath, fs.readFileSync(lane.progressPath, 'utf8').replace(/\| — \| — \|/, '| refund-route.log#1 | refund-route.log#6 |'));
   const dc = hook('hook_done_check.js', { cwd: wt, tool: 'Stop', extra: { hook_event_name: 'Stop' } });
   assert.equal(dc.out, '', 'done-check allows the stop');
 
@@ -1085,4 +1087,64 @@ test('#29 two open lanes: the gates fail closed rather than guess', (t) => {
   assert.match(done.out, /other-lane/, 'and names the lanes it cannot choose between');
   const bud = hook('hook_budget_check.js', { ...asSubagent(root, 'PostToolUse'), tool: 'Edit' });
   assert.match(bud.out, /"decision": "block"/, 'the budget blocks instead of going unenforced');
+});
+
+// ===========================================================================================================
+// #30: done-check read only the `-> exit N` header of a cited run, so ANY non-zero exit counted as a red run.
+// In the field run 33 of 36 red runs failed on MODULE_NOT_FOUND before a single assertion ran, D8's red run was
+// npm failing to find package.json (exit 254), and an `exit 1` entry was cited as the GREEN run for 11 criteria.
+// ===========================================================================================================
+
+/** A log entry as appendLog writes it: `=== <iso> <title>` then the body. Returns the header's line number. */
+function logRun(lane, title, body) {
+  return K.appendLog(lane.logPath, title, body);
+}
+
+function progressWith(lane, rows) {
+  const head = '# Progress\n\n## Done-criteria\n\n| # | Criterion | Test | Red run | Green run |\n|---|---|---|---|---|\n';
+  fs.writeFileSync(lane.progressPath, head + rows.map((r) => `| ${r.join(' | ')} |`).join('\n') + '\n');
+}
+
+const doneCheck = (root) => hook('hook_done_check.js', { cwd: root, extra: { hook_event_name: 'Stop' } });
+
+test('#30 a crashed runner is not a red run', (t) => {
+  const { wt } = laneProject(t, {});
+  const lane = K.findLane(wt);
+  // exactly the field run's D8: npm could not find package.json, so no test ever ran
+  const at = logRun(lane, 'npm test -> exit 254', 'npm error code ENOENT\nnpm error path /x/package.json\nnpm error enoent Could not read package.json');
+  progressWith(lane, [['D1', 'returns 200', '`returns 200`', `refund-route.log#${at}`, '—']]);
+  const r = doneCheck(wt);
+  assert.match(r.out, /"decision": "block"/, `exit 254 with no test result must not pass as red: ${JSON.stringify(r)}`);
+  assert.match(r.out, /no test result/i, `the reason must name what is missing: ${r.out}`);
+});
+
+test('#30 a red run must name the row\'s own test', (t) => {
+  const { wt } = laneProject(t, {});
+  const lane = K.findLane(wt);
+  // a real failing run, but of a DIFFERENT test than the row claims
+  const at = logRun(lane, 'npm test -> exit 1', 'TAP version 13\nnot ok 1 - some other test\n1..1');
+  const green = logRun(lane, 'npm test -> exit 0', 'TAP version 13\nok 1 - returns 200\n1..1');
+  progressWith(lane, [['D1', 'returns 200', '`returns 200`', `refund-route.log#${at}`, `refund-route.log#${green}`]]);
+  const r = doneCheck(wt);
+  assert.match(r.out, /"decision": "block"/, 'another test failing is not evidence for this row');
+  assert.match(r.out, /returns 200/, 'and the reason names the test that is missing');
+});
+
+test('#30 a failing run is not a green run, whatever the row says', (t) => {
+  const { wt } = laneProject(t, {});
+  const lane = K.findLane(wt);
+  const red = logRun(lane, 'npm test -> exit 1', 'TAP version 13\nnot ok 1 - returns 200\n1..1');
+  progressWith(lane, [['D1', 'returns 200', '`returns 200`', `refund-route.log#${red}`, `refund-route.log#${red}`]]);
+  const r = doneCheck(wt);
+  assert.match(r.out, /"decision": "block"/, 'the field run cited an exit 1 entry as green for 11 criteria');
+});
+
+test('#30 real red and green runs of the row\'s test are accepted', (t) => {
+  const { wt } = laneProject(t, {});
+  const lane = K.findLane(wt);
+  const red = logRun(lane, 'npm test -> exit 1', 'TAP version 13\nnot ok 1 - returns 200\n  error: expected 200\n1..1');
+  const green = logRun(lane, 'npm test -> exit 0', 'TAP version 13\nok 1 - returns 200\n1..1');
+  progressWith(lane, [['D1', 'returns 200', '`returns 200`', `refund-route.log#${red}`, `refund-route.log#${green}`]]);
+  const r = doneCheck(wt);
+  assert.equal(r.out, '', `honest evidence must still pass: ${r.out}`);
 });

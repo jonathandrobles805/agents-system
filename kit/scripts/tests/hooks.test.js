@@ -340,19 +340,19 @@ test('done check refuses ref past log end', (t) => {
 test('done check allows when all green', (t) => {
   const repo = makeRepo(t);
   makeLane(repo);
-  write(repo, '.claude/session/refund-endpoint.log', '=== 2026-11-11T10:00:00 test: npm test -> exit 1\n2 failed\n\n=== 2026-11-11T10:05:00 test: npm test -> exit 0\n2 passed\n');
-  write(repo, 'docs/specs/refund-endpoint.progress.md', progress({ g1: 'refund-endpoint.log#4', g2: 'refund-endpoint.log#4', att: '{{n}} of 3', fail: '{{what fails}}' }));
+  write(repo, '.claude/session/refund-endpoint.log', '=== 2026-11-11T10:00:00 test: npm test -> exit 1\nTAP version 13\nnot ok 1 - returns 200\nnot ok 2 - calls refund once\n1..2\n\n=== 2026-11-11T10:05:00 test: npm test -> exit 0\nTAP version 13\nok 1 - returns 200\nok 2 - calls refund once\n1..2\n');
+  write(repo, 'docs/specs/refund-endpoint.progress.md', progress({ g1: 'refund-endpoint.log#7', g2: 'refund-endpoint.log#7', att: '{{n}} of 3', fail: '{{what fails}}' }));
   let r = run('hook_done_check.js', stop(repo));
   assert.ok(r.returncode === 0 && r.stdout.trim() === '', r.stdout);
   // field test #42: a "green" reference that points at a failing run, or a "red" one at a passing run, is refused
-  write(repo, 'docs/specs/refund-endpoint.progress.md', progress({ g1: 'refund-endpoint.log#1', g2: 'refund-endpoint.log#4', att: '{{n}} of 3', fail: '{{what fails}}' }));
+  write(repo, 'docs/specs/refund-endpoint.progress.md', progress({ g1: 'refund-endpoint.log#1', g2: 'refund-endpoint.log#7', att: '{{n}} of 3', fail: '{{what fails}}' }));
   r = run('hook_done_check.js', stop(repo));
   assert.ok(JSON.parse(r.stdout).reason.includes('failed (exit 1); a green run must pass'), r.stdout);
-  write(repo, 'docs/specs/refund-endpoint.progress.md', progress({ g1: 'refund-endpoint.log#4', g2: 'refund-endpoint.log#4', att: '{{n}} of 3', fail: '{{what fails}}' }).replaceAll('refund-endpoint.log#1 |', 'refund-endpoint.log#4 |'));
+  write(repo, 'docs/specs/refund-endpoint.progress.md', progress({ g1: 'refund-endpoint.log#7', g2: 'refund-endpoint.log#7', att: '{{n}} of 3', fail: '{{what fails}}' }).replaceAll('refund-endpoint.log#1 |', 'refund-endpoint.log#7 |'));
   r = run('hook_done_check.js', stop(repo));
   assert.ok(JSON.parse(r.stdout).reason.includes('passed (exit 0); a red run must fail'), r.stdout);
   // a P-criterion (preserved behaviour) needs a green run only
-  write(repo, 'docs/specs/refund-endpoint.progress.md', progress({ g1: 'refund-endpoint.log#4', g2: 'refund-endpoint.log#4', att: '{{n}} of 3', fail: '{{what fails}}' }).replace('| D1 |', '| P1 |').replace('refund-endpoint.log#1 | refund-endpoint.log#4', '— | refund-endpoint.log#4'));
+  write(repo, 'docs/specs/refund-endpoint.progress.md', progress({ g1: 'refund-endpoint.log#7', g2: 'refund-endpoint.log#7', att: '{{n}} of 3', fail: '{{what fails}}' }).replace('| D1 |', '| P1 |').replace('refund-endpoint.log#1 | refund-endpoint.log#7', '— | refund-endpoint.log#7'));
   r = run('hook_done_check.js', stop(repo));
   assert.ok(r.returncode === 0 && r.stdout.trim() === '', r.stdout);
 });
@@ -466,7 +466,7 @@ test('guard tests only', (t) => {
 test('done check in test stage needs red only', (t) => {
   const repo = makeRepo(t);
   makeLane(repo, GOOD_SPEC, 'test');
-  write(repo, '.claude/session/refund-endpoint.log', '=== 2026-11-11T10:00:00 test: npm test -> exit 1\n2 failed\n');
+  write(repo, '.claude/session/refund-endpoint.log', '=== 2026-11-11T10:00:00 test: npm test -> exit 1\nTAP version 13\nnot ok 1 - returns 200\nnot ok 2 - calls refund once\n1..2\n');
   write(repo, 'docs/specs/refund-endpoint.progress.md', progress({ g1: '—', g2: '—', att: '{{n}} of 3', fail: '{{what fails}}' }));
   let r = run('hook_done_check.js', stop(repo));
   assert.ok(r.returncode === 0 && r.stdout.trim() === ''); // red runs present (log#1), no green needed in test stage

@@ -61,7 +61,9 @@ test('pipeline mechanics end to end', (t) => {
   // the fixture has no node_modules; give the lane a fake test command that reads a marker file so we can flip red/green
   const kj = path.join(root, '.claude', 'kit.json');
   const kit = JSON.parse(read(kj));
-  kit.commands = { test: `sh -c 'if [ -f ${root}/.green ]; then echo "3 passed"; else echo "1 failed, 2 passed"; exit 1; fi'` };
+  // TAP, because that is what a real runner prints and what done-check reads since #30: an exit code alone says
+  // only that a process ended, so the fake runner has to report per-test results like the real one does
+  kit.commands = { test: `sh -c 'if [ -f ${root}/.green ]; then echo "TAP version 13"; echo "ok 1 - exposes refund"; echo "1..1"; else echo "TAP version 13"; echo "not ok 1 - exposes refund"; echo "1..1"; exit 1; fi'` };
   fs.writeFileSync(kj, jsonDumps(kit));
   const commit = F.commitAll(root, 'bootstrap');
   const short = commit.slice(0, 7);
@@ -106,7 +108,7 @@ test('pipeline mechanics end to end', (t) => {
   assert.equal(JSON.parse(r.stdout).decision, 'block');
   const log = path.join(wt, '.claude/session/refund-route.log');
   const events = path.join(wt, 'docs/specs/refund-route.events.jsonl');
-  assert.ok(read(log).includes('1 failed, 2 passed'));
+  assert.ok(read(log).includes('not ok 1 - exposes refund'));
   const redLine = lines(log).findIndex((l) => l.startsWith('=== ')) + 1;
   // stop now: refused (no green run)
   const prog = path.join(wt, 'docs/specs/refund-route.progress.md');

@@ -1,21 +1,84 @@
 {
   "name": "python",
-  "detect": ["pyproject.toml", "setup.py", "requirements.txt", "Pipfile"],
-  "lockfiles": ["poetry.lock", "uv.lock", "Pipfile.lock", "requirements.txt", "requirements.lock"],
-  "frameworks": {"django": "Django", "fastapi": "FastAPI", "flask": "Flask", "starlette": "Starlette", "sqlalchemy": "SQLAlchemy", "celery": "Celery", "pydantic": "Pydantic"},
+  "detect": [
+    "pyproject.toml",
+    "setup.py",
+    "requirements.txt",
+    "Pipfile"
+  ],
+  "lockfiles": [
+    "poetry.lock",
+    "uv.lock",
+    "Pipfile.lock",
+    "requirements.txt",
+    "requirements.lock"
+  ],
+  "frameworks": {
+    "django": "Django",
+    "fastapi": "FastAPI",
+    "flask": "Flask",
+    "starlette": "Starlette",
+    "sqlalchemy": "SQLAlchemy",
+    "celery": "Celery",
+    "pydantic": "Pydantic"
+  },
   "tools": {
-    "pytest":  {"test": "python -m pytest -q", "test_affected": "python -m pytest -q {file}"},
-    "pytest-cov": {"coverage": "python -m pytest -q --cov --cov-report=json:coverage/coverage.json"},
-    "black":   {"format": "black --check ."},
-    "mypy":    {"typecheck": "python -m mypy ."},
-    "pyright": {"typecheck": "pyright"},
-    "ruff":    {"lint": "ruff check {file}", "lint_all": "ruff check .", "format": "ruff format --check ."},
-    "flake8":  {"lint": "flake8 {file}", "lint_all": "flake8"},
-    "import-linter": {"boundaries": "lint-imports"},
-    "mutmut":  {"mutation": "mutmut run"}
+    "pytest": {
+      "test": "python -m pytest -q",
+      "test_affected": "python -m pytest -q {file}"
+    },
+    "pytest-cov": {
+      "coverage": "python -m pytest -q --cov --cov-report=json:coverage/coverage.json"
+    },
+    "black": {
+      "format": "black --check ."
+    },
+    "mypy": {
+      "typecheck": "python -m mypy ."
+    },
+    "pyright": {
+      "typecheck": "pyright"
+    },
+    "ruff": {
+      "lint": "ruff check {file}",
+      "lint_all": "ruff check .",
+      "format": "ruff format --check ."
+    },
+    "flake8": {
+      "lint": "flake8 {file}",
+      "lint_all": "flake8"
+    },
+    "import-linter": {
+      "boundaries": "lint-imports"
+    },
+    "mutmut": {
+      "mutation": "mutmut run"
+    }
   },
   "audit": "pip-audit",
-  "test_dirs": ["tests", "test"],
-  "source_dirs": ["src", "app"],
-  "install_hint": {"boundaries": "pip install import-linter", "mutation": "pip install mutmut", "typecheck": "pip install mypy"}
+  "test_dirs": [
+    "tests",
+    "test"
+  ],
+  "source_dirs": [
+    "src",
+    "app"
+  ],
+  "install_hint": {
+    "boundaries": "pip install import-linter",
+    "mutation": "pip install mutmut",
+    "typecheck": "pip install mypy"
+  },
+  "results": [
+    {
+      "name": "pytest",
+      "fail": "^(?:FAILED|ERROR)\\s+(\\S+)",
+      "pass": "^PASSED\\s+(\\S+)"
+    },
+    {
+      "name": "unittest",
+      "fail": "^(\\S+) \\(\\S+\\) \\.\\.\\. (?:FAIL|ERROR)$",
+      "pass": "^(\\S+) \\(\\S+\\) \\.\\.\\. ok$"
+    }
+  ]
 }
