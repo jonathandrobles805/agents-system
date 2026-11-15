@@ -18,8 +18,11 @@ Claims are tagged. `[verified: file:line]` was read in this repository at `5f6cd
 | 2+ lanes | With two lanes open and no worktree in the payload, no lane's rules apply, and the code says why: "Closing it needs a session-to-lane record, which the kit does not keep" | `kit/scripts/hook_guard_bash.js:144` [verified] |
 | §10.14 | All gate evidence is advisory, because the lane writes it | `docs/KIT-SPEC.md` §10.14 |
 | #43 | The lane registry lives in git-tracked `kit.json`, so lane records are committed by unrelated commits and come back after `finish` | issue #43 |
+| **budget stop is advice** | The budget gate is a **PostToolUse** hook, so the call it objects to has already run, and it "blocks" with `feedbackBlock` — a JSON decision on **stdout** with **exit 0** — which is feedback the agent is asked to honour, not a refusal | `kit/scripts/kitlib.js:763-766` [verified] |
 
-They are one fault seen from six directions. Every gate in the kit asks two questions — *whose call is this* and *what is this lane's state* — and today the first is a guess and the second is a file the subject of the gate can write.
+**Two corrections to the first draft of this document, both verified by re-reading and re-running.** It said `hook_budget_check` never reads the `budget` field `setStage` writes. **It reads it** — `...lane.data.budget` is merged between `DEFAULT_BUDGET[stage]` and `budget_override[stage]` [verified: kit/scripts/hook_budget_check.js:61-64]. The probe that appeared to show it ignored was wrong in its instrument, not its subject: the helper captured only stderr, and a block is written to stdout with exit 0 [verified: kit/scripts/kitlib.js:763-766], so the block was invisible. Re-run with stdout captured, a `budget` of `{hours: 1, tool_calls: 5}` on the lane file produces `budget exceeded for stage 'build': 7 tool calls > budget 5; 3.5h elapsed > budget 1h` with no override set. The same wrong claim is in the body of issue #53 and needs correcting there.
+
+They are one fault seen from seven directions. Every gate in the kit asks two questions — *whose call is this* and *what is this lane's state* — and today the first is a guess and the second is a file the subject of the gate can write.
 
 ### What a hook can know about who is calling
 
@@ -80,17 +83,48 @@ The third rule is the one that matters: `Bash(node "$HOME/.claude/kit/scripts/*)
 **Option B — host-side runner.** The lane requests a named operation; a host process outside the lane executes it and writes the state.
 *Prevention:* real under srt and container; none under `none`. *Cost:* a long-lived process, a request protocol, a lifecycle, three runtime variants. Unchanged from §10.14, where it was deferred for exactly this reason.
 
-**Option C — derive what cannot be forged.** Replace file-based counters with facts the lane does not author: elapsed time from the worktree's git log rather than a `started` field it can rewrite; call counts from the collector's store, which is a separate host process writing outside the worktree [verified: kit/scripts/lane.js:670, 701; kit/telemetry/collector.js:5].
-*Prevention:* the lane cannot *lower* a collector count by writing a file. *Residue:* it can under-report by not emitting, and absence is not zero — a lane with commits and no spans is anomalous and detectable, which is option D's job. *Cost:* the budget gate gains a dependency on telemetry being up, and `metrics.js` already reads that store, so the shape exists.
+**Option C — derive from a clock and a counter the lane does not keep.** Replace the file-based counter and the `started` field with values recorded by a process outside the lane: the collector, which `lane.js launch` spawns before the sandboxed `claude` starts [verified: kit/scripts/lane.js:670, 701] and which appends to `$CLAUDE_HOME/kit-telemetry/` outside the worktree [verified: kit/telemetry/collector.js:5]. Both the count and the time come from the collector's own receipt of each record, not from anything the lane writes.
+*Not git time.* An earlier draft of this document proposed elapsed time from the worktree's git log. That is wrong: the lane makes the commits, and a committer date is an environment variable (`GIT_COMMITTER_DATE`, `git commit --date`), so git time is agent-authored like any other field. The claim is withdrawn; the only time source in this design the lane cannot write is a host process's own clock.
+*Prevention:* the lane cannot *lower* a collector count or move a collector timestamp by writing a file. *Residue:* it can under-report by not emitting, and absence is not zero — a lane with commits and no spans is anomalous and detectable, which is option D's job. *Cost:* the budget gate gains a dependency on telemetry being up, and `metrics.js` already reads that store, so the shape exists.
 
 **Option D — shadow and detect.** The host keeps a copy of gate state outside the lane and compares at every host-side moment (`precheck`, `roadmap-set`, `merged`, CI). Divergence is a refusal with both values shown.
-*Prevention:* none. *Detection:* complete for any field the host has seen, in every mode including `none`. *Cost:* small. *Honest limit:* it catches a rewrite before a merge, not before the lane acts on it.
+*Prevention:* none. *Detection, stated per mode:* under `srt` or `container` the shadow is outside `allowWrite` [verified: kit/scripts/sandbox.js:102, 119], so a divergence means the live file was changed and the shadow was not — that is detection worth the name. **Under `KIT_SANDBOX_RUNTIME=none` the agent runs as the same uid and can rewrite the shadow too**, so what D catches there is an accident, a crash, or tampering that did not think to look for a second copy. It is not a defence against an agent that knows the design, and this document is in the repository the agent reads. *Cost:* small. *Honest limit in every mode:* it catches a rewrite at the next host-side moment, not before the lane acts on it.
 
 **Option E — stop granting the tools.** Narrow `Bash(node "$HOME/.claude/kit/scripts/*)` to the specific read-only subcommands a lane needs, and make the bash guard refuse gate-state mutation when the caller has an `agent_id`.
 *Why this is the enforcement point:* `lane.js stage` is a separate process with no hook payload — **the CLI cannot authenticate its caller**, and a caller check inside `setStage` has nothing to check. The PreToolUse hook does see `agent_id` [observed: payloads.jsonl:13, 16]. So the only layer where "a lane agent may not change the stage" is enforceable rather than requested is the hook plus the allow list. *Cost:* the allow list must enumerate the subcommands a lane legitimately runs; get it wrong and lanes stall. Not a denylist — the allow rule is the narrowing, and the guard rule keys on the *caller*, not on command text.
 
-**Recommendation: E + D now, C next, B only when a machine with `srt` exists to exercise it.** E removes the grant and puts the refusal where identity is observable; D makes a successful write visible before it can be merged; C removes the forgeable input from the budget specifically. A is subsumed by B and should not be attempted alone — the §10.14 revert is the evidence.
+**Recommendation: E + D now (with §1b for where a stop is enforced and §1c for whose change it is), C next, B only when a machine with `srt` exists to exercise it.** E removes the grant and puts the refusal where identity is observable; D makes a successful write visible before it can be merged; C removes the forgeable input from the budget specifically. A is subsumed by B and should not be attempted alone — the §10.14 revert is the evidence.
 State moves as follows: `stage`, `started` and the counters stay readable in `lane.json` (hooks need them without a boundary crossing) and become **shadowed** (D) and **unmutable-by-agent** (E); the worker list is new and lives in the shadow from the start; evidence stays as §10.14 describes it, with that section rewritten per mode rather than as one blanket "advisory".
+
+### 1b. Where a budget stop is actually enforced
+
+A budget that stops nothing is not a gate. Today the check runs on **PostToolUse** — after the call — and returns `feedbackBlock`: a decision on stdout, exit 0 [verified: kit/scripts/kitlib.js:763-766]. The over-budget call has already happened, and whether the agent then stops is the agent's choice. Every number in #41 and #53 was measured through that instrument.
+
+**Options.**
+
+- **Move the check to PreToolUse and deny.** A PreToolUse hook exiting 2 blocks the call before it runs and takes precedence over allow rules [docs: https://code.claude.com/docs/en/permissions.md @ 2026-11-13]. The over-budget call does not happen.
+  *Cost:* the counter must be incremented somewhere, and incrementing in PreToolUse counts attempts rather than completed calls — a blocked call would otherwise increment forever. The shape: PreToolUse decides and refuses, PostToolUse counts what actually ran.
+- **Keep PostToolUse, add a PreToolUse refusal that reads the same counter.** Two hooks, one state, no change to counting. *Cost:* two places to keep in step; the PostToolUse feedback becomes redundant once the PreToolUse refusal exists.
+- **Leave it as feedback and rely on the Stop hook.** Today's behaviour. *Cost:* an agent that ignores the feedback runs until the Stop hook, which is where done-check lives; the budget then bounds nothing within a turn.
+
+**Recommendation: PreToolUse denies, PostToolUse counts.** The refusal belongs where a refusal is possible, and the count belongs where a call is known to have happened. This also fixes the measurement problem the corrections above exposed: a gate whose only signal is stdout is one a test or a probe reads as a pass, which is how two of my own probes reported a block as silence.
+
+**Unverified until P7:** whether a lane in practice keeps calling tools after a PostToolUse block. Nothing in this session observed an agent's response to `feedbackBlock`, so the sentence "the agent may ignore it" is a reading of the mechanism — stdout and exit 0 cannot refuse — and **not** an observation of a lane doing so. [unverified]
+
+### 1c. How a stage or budget change becomes the human's, not the orchestrator's
+
+The earlier draft said the human gets "a host-side command the agent does not have". That is wrong in an important way: **the main session is the human *and* the orchestrator AI**, they share one `session_id` and one `cwd` [observed: payloads.jsonl:3, 13, 16], and no key in any payload separates them. Anything host-side that the human can run, the orchestrator can run. "Not a lane agent" is not "a person".
+
+So the distinction cannot come from the payload. It has to come from a layer that asks a person:
+
+- **An `ask` rule in the generated settings**, on `Bash(node "$HOME/.claude/kit/scripts/lane.js" stage *)` and on edits to the lane file. Rules are evaluated deny → ask → allow with the first match winning [docs: https://code.claude.com/docs/en/permissions.md @ 2026-11-13], so an `ask` rule takes precedence over the broad `Bash(node "$HOME/.claude/kit/scripts/*)` grant without that grant being removed. In an attended session the human is prompted, and the approval *is* the human's act. In a headless lane, a call needing approval is **denied, not held** [docs: https://code.claude.com/docs/en/permission-modes.md @ 2026-11-13], so the same rule makes the change impossible rather than unattended. One rule, both halves.
+  *Cost:* the human is prompted every time, including for the orchestrator's legitimate stage transitions in `/implement` and `/run` [verified: kit/commands/implement.md:18, 30, 49; kit/commands/run.md:25-27] — which is a prompt per stage change, four or five per lane. That is the price of the change being a person's.
+  *Status of the mechanism:* both halves are documented; **neither has been observed in this session** — `claude -p` returns an authentication error here, so the headless-denial half in particular is docs-verified and not run. [unverified]
+- **A PreToolUse hook returning `ask`.** Would allow the kit to decide *when* to prompt (for example, only when the new stage is not the next one in `STAGES` [verified: kit/scripts/lane.js:802]), rather than always.
+  *Cost:* whether a PreToolUse hook may return an `ask` decision was not read in the hooks reference during this session. [unverified] If it cannot, this option does not exist.
+- **Require a token only the human has** (a value typed into the command). Rejected: the orchestrator reads the same files and the same scrollback the human does, so any token in the repository or the session is available to it.
+
+**Recommendation: the `ask` rule in the generated settings, scoped to stage changes and lane-file edits.** It is the only option whose attended and headless behaviour both follow from documented rules, and it is the only place in this design where "a person decided" is represented by a person actually deciding. Confirm the headless half with the probe list before relying on it.
 
 ### 2. How a lane learns its workers, from one source
 
@@ -164,19 +198,32 @@ Run on the Mac session, where a live `claude` exists. None of these can be run h
 | **P4** | **Can a hook write outside `allowWrite` under srt?** Decides whether option A can ever work without B. | On a machine with `srt`: a hook that writes to `$CLAUDE_HOME/kit-state/probe` inside a launched lane; record the error. |
 | **P5** | **Is `claude --version` cheap and reachable from a hook?** Decides whether version-pinning in §4 is viable at all. | Time 100 `claude --version` calls; check it runs inside a sandboxed lane. |
 | **P6** | **Does a headless lane reach `setStage` through an allowed command?** #53 shows the direct path; #51 raises the indirect one (a test file the lane wrote, run by `npm test`). | A lane whose test file calls `lane.js stage`; run the allowed `npm test`; read `lane.json`. |
+| **P7** | **Does a lane keep calling tools after a budget block?** §1b rests on the mechanism — stdout and exit 0 cannot refuse [verified: kit/scripts/kitlib.js:763-766] — and on no observation of an agent's response. | Run a real lane with a budget set to a handful of calls; after the first `feedbackBlock`, count tool calls in the lane's events file and the collector store. Record whether it stopped, stopped after N more calls, or continued. Also confirm the other half: an `ask` rule on `lane.js stage *` prompts in an attended session and is denied under `claude -p --permission-mode default`. |
 
-P1 and P3 gate §2 and §3. P4 gates option A. Nothing in §1's recommendation (E + D) depends on an unobserved fact, which is why it is recommended first.
+P1 and P3 gate §2 and §3. P4 gates option A. P7 gates §1b.
+
+**What E + D actually cover, restated precisely.** The earlier draft said nothing in the recommendation depends on an unobserved fact. That was too strong, and the reason matters: **a headless lane's worker has no `agent_id`.** `lane.js launch` runs `claude -p` [verified: kit/scripts/sandbox.js:139 via issue #51; kit/scripts/lane.js:702], so inside that nested process the worker *is* a main session, and a main session carries no `agent_id` [observed: payloads.jsonl:3]. E therefore has two halves that cover different populations and neither covers both:
+
+| | Attended lane (subagents in a human's session) | Headless lane (`launch --exec`) |
+|---|---|---|
+| Narrowed allow list + `ask` rule (§1c) | Covers it — prompts the human | Covers it — a call needing approval is denied [docs @ 2026-11-13, not observed] |
+| Refusal keyed on `agent_id` (§4) | Covers it — subagent Bash carries `agent_id` [observed: payloads.jsonl:13, 16] | **Does not cover it** — no `agent_id` to key on |
+| D, shadow and detect | Detects, per mode (§1 option D) | Detects, per mode |
+
+So: the allow list and the permission mode are what hold in a headless lane; `agent_id` is what holds for attended subagents; D is the only part that applies to both without an unobserved fact. The parts of E that rest on documentation rather than observation are the two in §1c, and the `agent_id` half rests on Bash and Read only, never Edit or Write (P1).
 
 ## Alternatives rejected
 
 - **Keep the single-active fallback and add a cwd check** — cwd is identical for main session and subagent [observed: payloads.jsonl:3, 13, 16]. There is nothing to check.
-- **A caller check inside `setStage`** — the CLI is a separate process with no payload; it cannot authenticate its caller. The check has to be in the hook.
+- **A caller check inside `setStage`** — the CLI is a separate process with no payload; it cannot authenticate its caller. The check has to be in the hook or the permission rules.
+- **A host-side command as the human's channel** — rejected in §1c: the orchestrator AI shares the main session with the human [observed: payloads.jsonl:3, 13, 16], so every host-side path open to the human is open to it. Only a layer that prompts a person distinguishes them.
+- **Elapsed time from git** — rejected in §1 option C: the lane makes the commits and a committer date is an environment variable, so git time is agent-authored.
 - **Match the commands that write gate state** (`cd .claude &&`, `node -e`, …) — a denylist of ways to write a file, which #51 already shows is unbounded: the issue's own body could not be written with a heredoc because the guard matched the quoted text (#40).
 - **Signing the state** — a key the forger can read signs forgeries, recorded in §10.14 and unchanged by anything here.
 - **Treating absence of `agent_id` as "main session"** — §4: indistinguishable from the field being removed, and it fails open.
 
 ## Consequences
 
-Easier: one place decides who is calling, and one place holds what a gate reads. A human's change is recorded rather than inferred. The budget stops being resettable by its subject. §10.14 can say what is enforced in which mode instead of one blanket disclaimer.
+Easier: one place decides who is calling, and one place holds what a gate reads. A human's change is a person answering a prompt rather than an inference from a payload. The budget stops being resettable by its subject, and a budget stop refuses the call instead of asking the agent to stop. §10.14 can say what is enforced in which mode instead of one blanket disclaimer.
 
-Harder: lanes can be stalled by a narrowed allow list that is missing a subcommand they need, and by restriction-on-uncertainty in a two-lane repository. A human who edits `lane.json` by hand will be reported as divergence, correctly and annoyingly. And the strongest part of the design — binding by `agent_id` — rests on an observation that covers Bash and Read on one machine and one Claude Code version [observed: payloads.jsonl], has never been seen for Edit or Write, and has an unexplained hole in `SubagentStart` pairing. **Nothing here should be built before P1 and P3.**
+Harder: lanes can be stalled by a narrowed allow list that is missing a subcommand they need, and by restriction-on-uncertainty in a two-lane repository. A human who edits `lane.json` by hand will be reported as divergence, correctly and annoyingly. And the strongest part of the design — binding by `agent_id` — rests on an observation that covers Bash and Read on one machine and one Claude Code version [observed: payloads.jsonl], has never been seen for Edit or Write, and has an unexplained hole in `SubagentStart` pairing. **Nothing here should be built before P1 and P3.** Two more honest limits, after review: under `KIT_SANDBOX_RUNTIME=none` — the default — D detects accidents and tampering that did not look for a second copy, and nothing more, because the agent shares the uid and can rewrite the shadow; and in a headless lane the identity half of E does not apply at all, since that worker is a main session with no `agent_id`, leaving the allow list and the permission mode as the only things holding there.
