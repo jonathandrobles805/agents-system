@@ -67,6 +67,27 @@ test('read only agents cannot edit source', () => {
   }
 });
 
+// Claude Code's built-in tools, from the Tool column of https://code.claude.com/docs/en/tools-reference (read
+// 2026-11-15), minus TaskOutput, which that table marks "Removed in v2.1.277". A tool on an agent's tools line that
+// is not here is never granted, so the line would claim a capability the agent does not have. When Claude Code adds or
+// removes a tool, update this list from that page, not from what the agents happen to list.
+const CLAUDE_CODE_TOOLS = new Set([
+  'Agent', 'Artifact', 'AskUserQuestion', 'Bash', 'CronCreate', 'CronDelete', 'CronList', 'Edit', 'EndConversation',
+  'EnterPlanMode', 'EnterWorktree', 'ExitPlanMode', 'ExitWorktree', 'Glob', 'Grep', 'ListAgents', 'ListMcpResourcesTool',
+  'LSP', 'Monitor', 'NotebookEdit', 'PowerShell', 'PushNotification', 'Read', 'ReadMcpResourceTool', 'RemoteTrigger',
+  'ReportFindings', 'ScheduleWakeup', 'SendFeedback', 'SendMessage', 'SendUserFile', 'ShareOnboardingGuide', 'Skill',
+  'SubagentHandback', 'TaskCreate', 'TaskGet', 'TaskList', 'TaskStop', 'TaskUpdate', 'TodoWrite', 'ToolSearch',
+  'WaitForMcpServers', 'WebFetch', 'WebSearch', 'Workflow', 'Write',
+]);
+
+test('every tool an agent lists is a Claude Code tool', () => {
+  for (const p of AGENTS) {
+    const tools = /^tools:\s*(.+)$/m.exec(frontmatter(read(p)))[1].split(',').map((t) => t.trim()).filter(Boolean);
+    const unknown = tools.filter((t) => !CLAUDE_CODE_TOOLS.has(t));
+    assert.deepEqual(unknown, [], `${path.basename(p)} lists tools Claude Code does not have`);
+  }
+});
+
 test('implementer has all guard hooks', () => {
   const fm = frontmatter(read(path.join(KIT, 'agents', 'implementer.md')));
   for (const script of [
