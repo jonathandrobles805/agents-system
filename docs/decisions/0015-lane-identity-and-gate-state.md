@@ -1,10 +1,10 @@
 # 0015 Lane identity and where gate state lives
 
-Date: 2026-11-14 · Status: proposed · Evidence: issues #43, #50, #51, #53; probe `docs/research/claude-code-hook-attribution-probe.md` (34 payloads); reproductions in this document
+Date: 2026-11-14 · Status: proposed · Evidence: issues #43, #50, #51, #53; probe `docs/research/claude-code-hook-attribution-probe.md` (34 payloads); probe 2 `docs/research/claude-code-hook-probe-2.payloads.jsonl` (132 payloads) and `docs/research/claude-code-hook-probe-2.p7-lane-events.jsonl` (15 events), Claude Code 2.1.325 on macOS; reproductions in this document
 
 One root, five symptoms: **the kit guesses who is acting, and keeps the state its gates depend on where the agents those gates constrain can write it.** This proposes the design and recommends one option per question. It designs nothing outside that root.
 
-Claims are tagged. `[verified: file:line]` was read in this repository at `5f6cd62`. `[observed: payloads.jsonl:N]` is a line of the committed probe log. `[unverified]` has not been observed anywhere.
+Claims are tagged. `[verified: file:line]` was read in this repository at `5f6cd62`. `[observed: payloads.jsonl:N]` is a line of the committed probe log. `[unverified]` has not been observed anywhere. `[observed: probe-2:N]` is line N of `docs/research/claude-code-hook-probe-2.payloads.jsonl`, and `[observed: p7-events:N]` is line N of `docs/research/claude-code-hook-probe-2.p7-lane-events.jsonl`; both were committed at `356f253`.
 
 ## Context
 
@@ -18,7 +18,7 @@ Claims are tagged. `[verified: file:line]` was read in this repository at `5f6cd
 | 2+ lanes | With two lanes open and no worktree in the payload, no lane's rules apply, and the code says why: "Closing it needs a session-to-lane record, which the kit does not keep" | `kit/scripts/hook_guard_bash.js:144` [verified] |
 | §10.14 | All gate evidence is advisory, because the lane writes it | `docs/KIT-SPEC.md` §10.14 |
 | #43 | The lane registry lives in git-tracked `kit.json`, so lane records are committed by unrelated commits and come back after `finish` | issue #43 |
-| **budget stop is advice** | The budget gate is a **PostToolUse** hook, so the call it objects to has already run, and it "blocks" with `feedbackBlock` — a JSON decision on **stdout** with **exit 0** — which is feedback the agent is asked to honour, not a refusal | `kit/scripts/kitlib.js:763-766` [verified] |
+| **budget stop is advice** | The budget gate is a **PostToolUse** hook, so the call it objects to has already run, and it "blocks" with `feedbackBlock` — a JSON decision on **stdout** with **exit 0** — which is feedback the agent is asked to honour, not a refusal. P7 confirmed it: every blocked call had already run | `kit/scripts/kitlib.js:763-766` [verified]; [observed: p7-events:8-15] |
 
 **Two corrections to the first draft of this document, both verified by re-reading and re-running.** It said `hook_budget_check` never reads the `budget` field `setStage` writes. **It reads it** — `...lane.data.budget` is merged between `DEFAULT_BUDGET[stage]` and `budget_override[stage]` [verified: kit/scripts/hook_budget_check.js:61-64]. The probe that appeared to show it ignored was wrong in its instrument, not its subject: the helper captured only stderr, and a block is written to stdout with exit 0 [verified: kit/scripts/kitlib.js:763-766], so the block was invisible. Re-run with stdout captured, a `budget` of `{hours: 1, tool_calls: 5}` on the lane file produces `budget exceeded for stage 'build': 7 tool calls > budget 5; 3.5h elapsed > budget 1h` with no override set. The same wrong claim is in the body of issue #53 and needs correcting there.
 
@@ -30,10 +30,12 @@ They are one fault seen from seven directions. Every gate in the kit asks two qu
 - A subagent's Bash call carries `agent_id` and `agent_type` (`"researcher"`, `"general-purpose"`). [observed: payloads.jsonl:13, 16]
 - Subagent and main session share one `session_id` and the same `cwd` (the main checkout), so neither distinguishes them. [observed: payloads.jsonl:3, 13, 16]
 - **No key is present only for the main session**: its key list is the subagent's minus `agent_id` and `agent_type`. [observed: payloads.jsonl:20]
-- Eight `SubagentStop` events carry `agent_type: ""` with `agent_id`s that never appear in a `SubagentStart`. [observed: payloads.jsonl:19]
+- Eight `SubagentStop` events in the first probe carry `agent_type: ""` with `agent_id`s that never appear in a `SubagentStart`. [observed: payloads.jsonl:19] In probe 2 all five subagents pair `SubagentStart`/`SubagentStop` by `agent_id`, none with an empty `agent_type`: three background, one foreground inside a headless session, one in a lane. [observed: probe-2:10/26, 12/29, 50/53, 78/105, 111/116] The earlier eight did not recur and are **unexplained**.
 - `agent_name` never appears as a key in any of the 34 payloads. [observed: payloads.jsonl — F6 count]
-- **Edit and Write have not been observed**: every attribution line above is a Bash or Read call. [unverified]
-- Whether a hook process inherits `KIT_LANE`, which `lane.js launch` sets on the headless `claude` [verified: kit/scripts/lane.js:702], has not been observed. [unverified]
+- **Edit and Write carry the same attribution as Bash.** A subagent's Write and Edit carry `agent_id` and `agent_type` [observed: probe-2:17, 19, 22, 23]; the main session's carry neither, and its key list is the subagent's minus those two [observed: probe-2:4-7].
+- **`MultiEdit` is not a tool in Claude Code 2.1.325.** Neither the main session nor a general-purpose subagent had it (the subagent reported "MultiEdit: not available"), and probe 2 logged zero MultiEdit events [observed: probe-2, no MultiEdit line in 132]. `kit/agents/implementer.md:4` still lists it [verified: kit/agents/implementer.md:4]: **stale**. NotebookEdit was not exercised.
+- **A hook inherits `KIT_LANE` from the `claude -p` it runs under.** `KIT_LANE=probe claude -p "run pwd"` produced `env_KIT_LANE: "probe"` in the SessionStart, UserPromptSubmit and Bash Pre/Post hooks [observed: probe-2:31-34]. That was a direct `claude -p`, not `lane.js launch`, which sets the variable at [verified: kit/scripts/lane.js:702]; the launch path is P2-full.
+- **Hooks receive `permission_mode`.** It is `auto` in an auto-mode session [observed: probe-2:4], `default` after the owner left auto mode [observed: probe-2:44] and `default` in `claude -p` [observed: probe-2:32]. A subagent's tool calls carry the parent's mode [observed: probe-2:17]. `SubagentStart` has no `permission_mode` key [observed: probe-2:50].
 
 ### Where gate state lives now
 
@@ -109,7 +111,13 @@ A budget that stops nothing is not a gate. Today the check runs on **PostToolUse
 
 **Recommendation: PreToolUse denies, PostToolUse counts.** The refusal belongs where a refusal is possible, and the count belongs where a call is known to have happened. This also fixes the measurement problem the corrections above exposed: a gate whose only signal is stdout is one a test or a probe reads as a pass, which is how two of my own probes reported a block as silence.
 
-**Unverified until P7:** whether a lane in practice keeps calling tools after a PostToolUse block. Nothing in this session observed an agent's response to `feedbackBlock`, so the sentence "the agent may ignore it" is a reading of the mechanism — stdout and exit 0 cannot refuse — and **not** an observation of a lane doing so. [unverified]
+**P7, observed: the PostToolUse block is advisory.** The probe used a throwaway lane with `budget_override.reproduce.tool_calls = 3`. The lane subagent's first Read **ran**, and only then was it blocked with `8 tool calls > budget 3` [observed: p7-events:11-12; probe-2:113-115]. The subagent made no further call and stopped [observed: probe-2:116], so one agent complied.
+
+The main session did not stop. Its `Agent` call was blocked after it had already launched the subagent [observed: p7-events:8-10], and it kept making calls through further block messages [observed: p7-events:14-15]. 7 of the 8 counted calls were the main session's (six before the subagent existed, plus the `Agent` call that launched it), charged to the lane by the single-active fallback [observed: p7-events:1-5, 7, 10]. That is #50 live.
+
+The lane's events file records no `agent_id` (`agent: null` on every tool event) [observed: p7-events:1-15], so on its own it could not tell whose calls these were; only the probe log could.
+
+**Conclusion:** compliance is the agent's choice, and the counter counts callers that are not the lane. The stop must be a **PreToolUse deny**, on a counter that counts only bound lane workers (§2) and the headless worker of its own lane (`KIT_LANE`, §3).
 
 ### 1c. How a stage or budget change becomes the human's, not the orchestrator's
 
@@ -117,14 +125,31 @@ The earlier draft said the human gets "a host-side command the agent does not ha
 
 So the distinction cannot come from the payload. It has to come from a layer that asks a person:
 
-- **An `ask` rule in the generated settings**, on `Bash(node "$HOME/.claude/kit/scripts/lane.js" stage *)` and on edits to the lane file. Rules are evaluated deny → ask → allow with the first match winning [docs: https://code.claude.com/docs/en/permissions.md @ 2026-11-13], so an `ask` rule takes precedence over the broad `Bash(node "$HOME/.claude/kit/scripts/*)` grant without that grant being removed. In an attended session the human is prompted, and the approval *is* the human's act. In a headless lane, a call needing approval is **denied, not held** [docs: https://code.claude.com/docs/en/permission-modes.md @ 2026-11-13], so the same rule makes the change impossible rather than unattended. One rule, both halves.
+- **An `ask` rule in the generated settings**, on `Bash(node "$HOME/.claude/kit/scripts/lane.js" stage *)` and on edits to the lane file. Rules are evaluated deny → ask → allow with the first match winning [docs: https://code.claude.com/docs/en/permissions.md @ 2026-11-13], so an `ask` rule takes precedence over the broad `Bash(node "$HOME/.claude/kit/scripts/*)` grant without that grant being removed. In an attended session the human is prompted, and the approval *is* the human's act. In a headless lane, a call needing approval is **denied, not held** [docs: https://code.claude.com/docs/en/permission-modes.md @ 2026-11-13], so the same rule makes the change impossible rather than unattended. That denial has been observed only with stdin closed (status below). One rule, both halves.
   *Cost:* the human is prompted every time, including for the orchestrator's legitimate stage transitions in `/implement` and `/run` [verified: kit/commands/implement.md:18, 30, 49; kit/commands/run.md:25-27] — which is a prompt per stage change, four or five per lane. That is the price of the change being a person's.
-  *Status of the mechanism:* both halves are documented; **neither has been observed in this session** — `claude -p` returns an authentication error here, so the headless-denial half in particular is docs-verified and not run. [unverified]
+  *Status of the mechanism after probe 2:* these were tested with a generic ask rule, `Bash(node --version)`, not yet with `lane.js stage *` itself.
+  - **Headless: observed with stdin closed.** `claude -p` in `default` mode with stdin from `/dev/null` was denied in 7 s, with no PostToolUse [observed: probe-2:63-64]. An earlier run of the same command with stdin left open never returned: its transcript ends at the tool call with no result [observed: session transcript ab00bd34, not committed; its probe log was lost in a restart].
+  - **Attended, `default` mode: observed.** The call was prompted and ran after approval [observed: probe-2:70-73].
+  - **Attended, `auto` mode: possibly skipped.** Two ask-rule calls, one from the main session and one from a subagent, each logged `PermissionRequest` and ran about a second later, with no `permission_prompt` notification [observed: probe-2:14-21]. The docs say "Explicit ask rules still force a prompt" in auto mode [docs: https://code.claude.com/docs/en/permission-modes.md @ 2026-11-15]. A notification follows a prompt by about 6 s [observed: probe-2:71-72], so a fast human approval would leave none. The owner is confirming, so this is not yet a finding either way.
 - **A PreToolUse hook returning `ask`.** Would allow the kit to decide *when* to prompt (for example, only when the new stage is not the next one in `STAGES` [verified: kit/scripts/lane.js:802]), rather than always.
   *Cost:* whether a PreToolUse hook may return an `ask` decision was not read in the hooks reference during this session. [unverified] If it cannot, this option does not exist.
 - **Require a token only the human has** (a value typed into the command). Rejected: the orchestrator reads the same files and the same scrollback the human does, so any token in the repository or the session is available to it.
 
-**Recommendation: the `ask` rule in the generated settings, scoped to stage changes and lane-file edits.** It is the only option whose attended and headless behaviour both follow from documented rules, and it is the only place in this design where "a person decided" is represented by a person actually deciding. Confirm the headless half with the probe list before relying on it.
+**Recommendation: the `ask` rule in the generated settings, scoped to stage changes and lane-file edits.** It is the only option whose attended and headless behaviour both follow from documented rules, and it is the only place in this design where "a person decided" is represented by a person actually deciding. Confirm the headless half through `lane.js launch` (P2-full) before relying on it.
+
+**What holds if auto mode skips ask rules.** Then in an auto-mode session the `ask` rule is not a person deciding, and the orchestrator's `lane.js stage` runs unprompted.
+
+What still holds:
+- The refusal keyed on `agent_id` (§4): a PreToolUse hook denies a bound lane subagent whatever the mode.
+- D's shadow detects the change at the next host-side moment.
+- A headless lane is unaffected: it runs in `default` [observed: probe-2:32], where a call needing approval is denied [observed: probe-2:63-64].
+
+What does not hold is the human-versus-orchestrator distinction in the main session. **Design answer:** the PreToolUse hook on gate-state changes reads `permission_mode`. When the mode is one where an ask rule may not prompt (`auto`, `bypassPermissions`, `dontAsk`), the hook **denies** the change with "switch to default mode to change a stage" instead of relying on the rule.
+- *Cost:* a human's change costs a mode switch.
+- *If auto mode does prompt after all:* this is an unnecessary refusal, not an unguarded change, so it fails closed either way.
+- *Unverified:* whether an agent can change the session's permission mode itself. [unverified]
+
+**Should the design use `permission_mode`? Yes, as a condition, never as identity.** It tells the hook whether a prompt can be relied on. It does not tell callers apart: the main session and its subagents carry the same value [observed: probe-2:4, 17], and a headless worker reports `default` like an attended human [observed: probe-2:32, 44].
 
 ### 2. How a lane learns its workers, from one source
 
@@ -133,17 +158,30 @@ So the distinction cannot come from the payload. It has to come from a layer tha
 - *Single source:* the shadow state from §1 (`workers.json`), written only at `SubagentStart`, read by every hook. One writer, one reader path.
 - *Why not the agent frontmatter:* it has no stage or lane field [verified: kit/agents/implementer.md:1-6], and a prompt file cannot carry a per-run binding.
 - *Why not `kit.json`:* that is #43.
-- **Gap:** eight `SubagentStop` events carry `agent_type: ""` and `agent_id`s never seen at `SubagentStart` [observed: payloads.jsonl:19], so **some agents stop without having started**, as far as a hook can see. Until probe P3 explains them, a binding built only at `SubagentStart` has holes of unknown size. This is the single largest unknown in this design.
+- **Gap, after P3.** In probe 2 every `SubagentStop` paired with a `SubagentStart` by `agent_id`, foreground and background, across an attended session, a headless session and a lane [observed: probe-2:10/26, 12/29, 50/53, 78/105, 111/116]. The first probe's eight empty-`agent_type` stops [observed: payloads.jsonl:19] did not recur and are **unexplained**. The rule stands regardless: an `agent_id` not in the binding is **unbound and untrusted** (§4 table), so an unexplained agent is restricted and never attributed. `SubagentStart` carries no `permission_mode` [observed: probe-2:50], so the binding records only `agent_type` and the lane.
 
 ### 3. Identifying a headless worker with something the agent cannot change
 
 Candidates, in order of strength:
 
-1. **`agent_id` from the payload.** The agent does not author its own payload. Strongest — but observed for Bash and Read only [observed: payloads.jsonl:13, 16], and **not for Edit or Write** [unverified], which is where the scope guard lives.
-2. **`KIT_LANE` in the hook's environment.** `lane.js launch` sets it on the headless `claude` [verified: kit/scripts/lane.js:702]. A lane agent can set an env var for a process *it* spawns, but not for the hook process Claude Code spawns. Whether hooks inherit it is **unobserved** [unverified] — probe P2.
+1. **`agent_id` from the payload.** The agent does not author its own payload. Strongest, and observed for Bash and Read [observed: payloads.jsonl:13, 16] and for **Edit and Write** [observed: probe-2:17, 19, 22, 23], where the scope guard lives.
+2. **`KIT_LANE` in the hook's environment.** `lane.js launch` sets it on the headless `claude` [verified: kit/scripts/lane.js:702]. A lane agent can set an env var for a process *it* spawns, but not for the hook process Claude Code spawns. **Observed:** a hook under `KIT_LANE=probe claude -p` sees it [observed: probe-2:31-34]. This is how a headless worker, which has no `agent_id`, is identified. Through `lane.js launch` itself it is still P2-full.
 3. **The worktree path in the tool payload.** Already used, already correct where present [verified: kit/scripts/kitlib.js:894-895], and absent for Bash and for stop events.
 
-**Recommendation: `agent_id` as the identity, `KIT_LANE` as the lane it belongs to if P2 confirms inheritance, tool path as corroboration.** If P2 fails, the lane comes from the `SubagentStart` binding alone, with the §2 gap.
+**Recommendation:** use `agent_id` as the identity of a subagent, `KIT_LANE` as the lane of a headless worker (observed for `claude -p`; P2-full confirms the launch path), and tool path as corroboration. Where `KIT_LANE` and the tool path disagree, restrict under both lanes' rules and attribute nothing (the 2+ lanes row of §4).
+
+**New risk: a nested `claude` without `KIT_LANE`.** A lane agent can start a `claude` of its own with `KIT_LANE` unset or set to another lane. Its hooks then see a main session (no `agent_id`) carrying that environment.
+
+What the design covers: a nested session working in the lane's worktree is placed in the lane by cwd and tool path [verified: kit/scripts/kitlib.js:894-895], so restriction-on-uncertainty applies. A `KIT_LANE` that disagrees with that placement falls under the 2+ lanes row.
+
+What it does not cover:
+- (a) The nested session's calls are not counted to the lane's budget by any signal keyed on `KIT_LANE` or `agent_id`.
+- (b) A nested session working outside the worktree is not a lane action by any signal a hook has.
+- (c) Under `none`, nothing stops it from starting.
+
+Refusing `claude` in the Bash guard is a denylist of ways to start a process, rejected for the same reason as the #51 denylist (Alternatives).
+
+**Unresolved.** The bound is that under `srt` a nested process may inherit the lane's sandbox [unverified; P4 territory], and under `none` it adds nothing the lane could not already do directly.
 
 ### 4. Fail-closed behaviour — and the honest answer about a missing `agent_id`
 
@@ -188,12 +226,12 @@ The recurring risk across D and E is the same: **a legitimate human change must 
 
 ### 7. What must be observed before any code
 
-Run on the Mac session, where a live `claude` exists. None of these can be run here: `claude -p` returns an authentication error in this environment, so no live session is available.
+Probe 2 ran P1, P2a (the `claude -p` half of P2), P3, P7 and the ask-rule half of P7 on the Mac at `356f253` with Claude Code 2.1.325; results are below the table. P2-full, P4, P5 and P6 need a headless `lane.js launch` or `srt` and were not run.
 
 | | Probe | How |
 |---|---|---|
 | **P1** | **Do Edit and Write carry `agent_id`?** The scope guard is an Edit/Write hook, and no Edit or Write payload has ever been seen. | Extend the existing probe hook to PreToolUse/PostToolUse on `Edit|Write|MultiEdit|NotebookEdit`; have one subagent and the main session each edit a file; compare key lists as F4 did. |
-| **P2** | **Does a hook process inherit `KIT_LANE`?** `lane.js launch` sets it [verified: kit/scripts/lane.js:702]; §3 option 2 depends on it entirely. | `lane.js launch <slug> --exec` with a probe hook that records `process.env.KIT_LANE`. Needs a real headless lane, which is also still unverified end to end. |
+| **P2** | **Does a hook process inherit `KIT_LANE`?** `lane.js launch` sets it [verified: kit/scripts/lane.js:702]; §3 option 2 depends on it entirely. | `lane.js launch <slug> --exec` with a probe hook that records `KIT_LANE` from the hook's environment. Needs a real headless lane, which is also still unverified end to end. **Add the stdin risk:** `lane.js launch` runs `claude` with `stdio: 'inherit'` [verified: kit/scripts/lane.js:702], and a `claude -p` with stdin open never returned on an ask-rule match while one with stdin `/dev/null` was denied in 7 s [observed: probe-2:63-64; transcript ab00bd34]. A hung lane makes no tool calls, so no budget fires. Launch once from a terminal and once with stdin `/dev/null`, with an ask-rule command; record denied or hung, and for how long. |
 | **P3** | **What are the eight empty-`agent_type` `SubagentStop` events?** [observed: payloads.jsonl:19] They decide whether a `SubagentStart` binding has holes. | Log `SubagentStart` and `SubagentStop` for a long session and match `agent_id`s; if they still never pair, read the hooks reference for internal agents. |
 | **P4** | **Can a hook write outside `allowWrite` under srt?** Decides whether option A can ever work without B. | On a machine with `srt`: a hook that writes to `$CLAUDE_HOME/kit-state/probe` inside a launched lane; record the error. |
 | **P5** | **Is `claude --version` cheap and reachable from a hook?** Decides whether version-pinning in §4 is viable at all. | Time 100 `claude --version` calls; check it runs inside a sandboxed lane. |
@@ -202,15 +240,26 @@ Run on the Mac session, where a live `claude` exists. None of these can be run h
 
 P1 and P3 gate §2 and §3. P4 gates option A. P7 gates §1b.
 
+**Results, probe 2.**
+
+| | Result |
+|---|---|
+| P1 | **Answered.** Edit and Write carry `agent_id` and `agent_type` for a subagent and neither for the main session [observed: probe-2:4-7, 17, 19, 22, 23]. MultiEdit is not a tool in 2.1.325; `kit/agents/implementer.md:4` is stale. |
+| P2 | **Half.** P2a: a hook under `KIT_LANE=probe claude -p` sees `KIT_LANE` [observed: probe-2:31-34]. P2-full through `lane.js launch`, including the stdin risk, not run. |
+| P3 | **All five pairs matched** [observed: probe-2:10/26, 12/29, 50/53, 78/105, 111/116]. The first probe's eight empty-type stops are unexplained; unbound stays untrusted. |
+| P4, P5, P6 | Not run: they need `srt` or a headless `lane.js launch`. |
+| P7 | **Answered: advisory.** The subagent stopped after its block; the main session kept working through block messages; 7 main-session calls were already counted (#50) [observed: p7-events:1-15; probe-2:111-116]. The stop must be a PreToolUse deny (§1b). |
+| P7, ask half | **Headless denied** with stdin closed [observed: probe-2:63-64], hung once with stdin open. **Attended `default`: prompted** [observed: probe-2:70-73]. **Attended `auto`: possibly skipped**, owner confirming [observed: probe-2:14-21]. Not yet run on `lane.js stage *`. |
+
 **What E + D actually cover, restated precisely.** The earlier draft said nothing in the recommendation depends on an unobserved fact. That was too strong, and the reason matters: **a headless lane's worker has no `agent_id`.** `lane.js launch` runs `claude -p` [verified: kit/scripts/sandbox.js:139 via issue #51; kit/scripts/lane.js:702], so inside that nested process the worker *is* a main session, and a main session carries no `agent_id` [observed: payloads.jsonl:3]. E therefore has two halves that cover different populations and neither covers both:
 
 | | Attended lane (subagents in a human's session) | Headless lane (`launch --exec`) |
 |---|---|---|
-| Narrowed allow list + `ask` rule (§1c) | Covers it — prompts the human | Covers it — a call needing approval is denied [docs @ 2026-11-13, not observed] |
-| Refusal keyed on `agent_id` (§4) | Covers it — subagent Bash carries `agent_id` [observed: payloads.jsonl:13, 16] | **Does not cover it** — no `agent_id` to key on |
+| Narrowed allow list + `ask` rule (§1c) | Covers it in `default` mode, prompting the human [observed: probe-2:70-73]; in `auto` mode possibly not, so §1c's `permission_mode` deny holds it | Covers it: a call needing approval is denied [observed: probe-2:63-64, stdin closed]; may hang with stdin open (P2-full) |
+| Refusal keyed on `agent_id` (§4) | Covers it: subagent Bash, Read, Edit and Write carry `agent_id` [observed: payloads.jsonl:13, 16; probe-2:17-23] | **Does not cover it**: there is no `agent_id` to key on. Keyed on `KIT_LANE` instead [observed for `claude -p`: probe-2:31-34], except a nested `claude` started without it (§3, unresolved) |
 | D, shadow and detect | Detects, per mode (§1 option D) | Detects, per mode |
 
-So: the allow list and the permission mode are what hold in a headless lane; `agent_id` is what holds for attended subagents; D is the only part that applies to both without an unobserved fact. The parts of E that rest on documentation rather than observation are the two in §1c, and the `agent_id` half rests on Bash and Read only, never Edit or Write (P1).
+So: the allow list and the permission mode are what hold in a headless lane; `agent_id` is what holds for attended subagents; D is the only part that applies to both without an unobserved fact. After probe 2, the parts of E that rest on documentation rather than observation are the auto-mode prompt and the headless denial through `lane.js launch` (§1c). The `agent_id` half now covers Bash, Read, Edit and Write [observed: probe-2:17-23].
 
 ## Alternatives rejected
 
@@ -226,4 +275,9 @@ So: the allow list and the permission mode are what hold in a headless lane; `ag
 
 Easier: one place decides who is calling, and one place holds what a gate reads. A human's change is a person answering a prompt rather than an inference from a payload. The budget stops being resettable by its subject, and a budget stop refuses the call instead of asking the agent to stop. §10.14 can say what is enforced in which mode instead of one blanket disclaimer.
 
-Harder: lanes can be stalled by a narrowed allow list that is missing a subcommand they need, and by restriction-on-uncertainty in a two-lane repository. A human who edits `lane.json` by hand will be reported as divergence, correctly and annoyingly. And the strongest part of the design — binding by `agent_id` — rests on an observation that covers Bash and Read on one machine and one Claude Code version [observed: payloads.jsonl], has never been seen for Edit or Write, and has an unexplained hole in `SubagentStart` pairing. **Nothing here should be built before P1 and P3.** Two more honest limits, after review: under `KIT_SANDBOX_RUNTIME=none` — the default — D detects accidents and tampering that did not look for a second copy, and nothing more, because the agent shares the uid and can rewrite the shadow; and in a headless lane the identity half of E does not apply at all, since that worker is a main session with no `agent_id`, leaving the allow list and the permission mode as the only things holding there.
+Harder: lanes can be stalled by a narrowed allow list that is missing a subcommand they need, and by restriction-on-uncertainty in a two-lane repository. A human who edits `lane.json` by hand will be reported as divergence, correctly and annoyingly. The strongest part of the design, binding by `agent_id`, now rests on Bash, Read, Edit and Write on one machine and one Claude Code version (2.1.325) [observed: payloads.jsonl; probe-2:4-23]. Every subagent in probe 2 paired Start and Stop [observed: probe-2:10-116]. The first probe's eight empty-type stops remain unexplained, and the unbound-is-untrusted rule absorbs them. P1 and P3 no longer block building §2 and §3.
+
+Three things block relying on §1c and §3 in full:
+- whether auto mode honours ask rules (owner confirming);
+- whether a launched lane is denied or hangs on an approval-needing call (P2-full, stdin);
+- the nested-`claude` risk (§3, unresolved). Two more honest limits, after review: under `KIT_SANDBOX_RUNTIME=none` — the default — D detects accidents and tampering that did not look for a second copy, and nothing more, because the agent shares the uid and can rewrite the shadow; and in a headless lane the identity half of E does not apply at all, since that worker is a main session with no `agent_id`, leaving the allow list and the permission mode as the only things holding there.
