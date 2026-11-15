@@ -130,24 +130,30 @@ So the distinction cannot come from the payload. It has to come from a layer tha
   *Status of the mechanism after probe 2:* these were tested with a generic ask rule, `Bash(node --version)`, not yet with `lane.js stage *` itself.
   - **Headless: observed with stdin closed.** `claude -p` in `default` mode with stdin from `/dev/null` was denied in 7 s, with no PostToolUse [observed: probe-2:63-64]. An earlier run of the same command with stdin left open never returned: its transcript ends at the tool call with no result [observed: session transcript ab00bd34, not committed; its probe log was lost in a restart].
   - **Attended, `default` mode: observed.** The call was prompted and ran after approval [observed: probe-2:70-73].
-  - **Attended, `auto` mode: possibly skipped.** Two ask-rule calls, one from the main session and one from a subagent, each logged `PermissionRequest` and ran about a second later, with no `permission_prompt` notification [observed: probe-2:14-21]. The docs say "Explicit ask rules still force a prompt" in auto mode [docs: https://code.claude.com/docs/en/permission-modes.md @ 2026-11-15]. A notification follows a prompt by about 6 s [observed: probe-2:71-72], so a fast human approval would leave none. The owner is confirming, so this is not yet a finding either way.
+  - **Attended, `auto` mode: prompted.** On Claude Code 2.1.325, with a settings file holding only the ask rule `Bash(node --version)`, the rule prompted for both the main session and a subagent. The owner watched both on 2026-11-15 [observed: owner, on screen; no hook log, since the re-test ran without hooks]. This matches the docs: "Explicit ask rules still force a prompt" in auto mode [docs: https://code.claude.com/docs/en/permission-modes.md @ 2026-11-15].
+    The earlier probe-2 runs stay **unexplained**: two ask-rule calls, one from the main session and one from a subagent, each logged `PermissionRequest` and ran about a second later, with no `permission_prompt` notification [observed: probe-2:14-21]. A notification follows a prompt by about 6 s [observed: probe-2:71-72], so a fast human approval would leave none, but that cannot be confirmed now.
 - **A PreToolUse hook returning `ask`.** Would allow the kit to decide *when* to prompt (for example, only when the new stage is not the next one in `STAGES` [verified: kit/scripts/lane.js:802]), rather than always.
   *Cost:* whether a PreToolUse hook may return an `ask` decision was not read in the hooks reference during this session. [unverified] If it cannot, this option does not exist.
 - **Require a token only the human has** (a value typed into the command). Rejected: the orchestrator reads the same files and the same scrollback the human does, so any token in the repository or the session is available to it.
 
 **Recommendation: the `ask` rule in the generated settings, scoped to stage changes and lane-file edits.** It is the only option whose attended and headless behaviour both follow from documented rules, and it is the only place in this design where "a person decided" is represented by a person actually deciding. Confirm the headless half through `lane.js launch` (P2-full) before relying on it.
 
-**What holds if auto mode skips ask rules.** Then in an auto-mode session the `ask` rule is not a person deciding, and the orchestrator's `lane.js stage` runs unprompted.
+**What holds in a mode where ask rules never prompt.** In `bypassPermissions` or `dontAsk` the `ask` rule is not a person deciding: a stage change either runs unprompted or is auto-denied, never put to a person. The orchestrator's `lane.js stage` then has no human step.
 
 What still holds:
 - The refusal keyed on `agent_id` (§4): a PreToolUse hook denies a bound lane subagent whatever the mode.
 - D's shadow detects the change at the next host-side moment.
 - A headless lane is unaffected: it runs in `default` [observed: probe-2:32], where a call needing approval is denied [observed: probe-2:63-64].
 
-What does not hold is the human-versus-orchestrator distinction in the main session. **Design answer:** the PreToolUse hook on gate-state changes reads `permission_mode`. When the mode is one where an ask rule may not prompt (`auto`, `bypassPermissions`, `dontAsk`), the hook **denies** the change with "switch to default mode to change a stage" instead of relying on the rule.
-- *Cost:* a human's change costs a mode switch.
-- *If auto mode does prompt after all:* this is an unnecessary refusal, not an unguarded change, so it fails closed either way.
+What does not hold is the human-versus-orchestrator distinction in the main session. **Design answer:** the PreToolUse hook on gate-state changes reads `permission_mode`. When the mode never prompts (`bypassPermissions`, `dontAsk`), the hook **denies** the change with "switch to default or auto mode to change a stage" instead of relying on the rule.
+- *Cost:* a human's change in those modes costs a mode switch.
 - *Unverified:* whether an agent can change the session's permission mode itself. [unverified]
+
+**Does `auto` still need the deny? No, not now.** On 2.1.325 the ask rule prompted in auto mode for the main session and for a subagent (status above), so in auto mode the rule is a person deciding, as in `default`.
+- The evidence is one owner observation on one Claude Code version, plus the docs.
+- The probe-2 one-second runs are unexplained, not refuted.
+- So auto stays off the deny list only as long as the prompt is re-observed after each Claude Code upgrade, the same re-check this document asks of every payload observation.
+- If a later version runs an ask-rule call in auto mode without a prompt, `auto` joins the deny list.
 
 **Should the design use `permission_mode`? Yes, as a condition, never as identity.** It tells the hook whether a prompt can be relied on. It does not tell callers apart: the main session and its subagents carry the same value [observed: probe-2:4, 17], and a headless worker reports `default` like an attended human [observed: probe-2:32, 44].
 
