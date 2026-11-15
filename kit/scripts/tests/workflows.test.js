@@ -5,6 +5,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import * as L from '../lane.js';
 import * as K from '../kitlib.js';
 import * as F from './fixtures.js';
@@ -197,7 +198,7 @@ test('kill switch: stop blocks next-step, lane start and every mutation hook in 
 });
 
 test('profiles and the goal template are consistent with the commands and agents that exist', () => {
-  const kit = path.dirname(path.dirname(path.dirname(new URL(import.meta.url).pathname)));
+  const kit = path.dirname(path.dirname(path.dirname(fileURLToPath(import.meta.url))));
   const cmds = fs.readdirSync(path.join(kit, 'commands')).map((f) => '/' + f.replace(/\.md$/, ''));
   for (const p of Object.values(L.loadProfiles())) assert.ok(cmds.includes(p.command), `command ${p.command} exists for ${p.work_type}`);
   assert.ok(cmds.includes('/work'));

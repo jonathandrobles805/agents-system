@@ -4,6 +4,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { detectDatabase, KIT_BLOCK_BEGIN, KIT_BLOCK_END } from '../bootstrap.js';
 import * as F from './fixtures.js';
 import { runScript, tmpPath } from './helpers.js';
@@ -124,7 +125,7 @@ test('CLAUDE.md: the kit block is regenerated on upgrade and the human text outs
   assert.equal(outside(after), outside(human).replace(/agent-kit \d+\.\d+\.\d+/g, (m) => m));
   // a CLAUDE.md without markers (a project's own, or pre-2c): its text is kept byte for byte and the kit block is
   // appended once (field test #13); a second upgrade does not add a second block
-  const ver = read(path.join(path.dirname(path.dirname(path.dirname(new URL(import.meta.url).pathname))), '..', 'VERSION')).trim();
+  const ver = read(path.join(path.dirname(path.dirname(path.dirname(fileURLToPath(import.meta.url)))), '..', 'VERSION')).trim();
   fs.writeFileSync(cm, '# Mine\n\nKit: agent-kit 0.1.0\n\nhand-written only\n');
   boot(root, '--upgrade');
   const once = read(cm);
