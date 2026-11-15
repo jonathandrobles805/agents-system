@@ -255,13 +255,13 @@ P1 and P3 gate §2 and §3. P4 gates option A. P7 gates §1b.
 | P3 | **All five pairs matched** [observed: probe-2:10/26, 12/29, 50/53, 78/105, 111/116]. The first probe's eight empty-type stops are unexplained; unbound stays untrusted. |
 | P4, P5, P6 | Not run: they need `srt` or a headless `lane.js launch`. |
 | P7 | **Answered: advisory.** The subagent stopped after its block; the main session kept working through block messages; 7 main-session calls were already counted (#50) [observed: p7-events:1-15; probe-2:111-116]. The stop must be a PreToolUse deny (§1b). |
-| P7, ask half | **Headless denied** with stdin closed [observed: probe-2:63-64], hung once with stdin open. **Attended `default`: prompted** [observed: probe-2:70-73]. **Attended `auto`: possibly skipped**, owner confirming [observed: probe-2:14-21]. Not yet run on `lane.js stage *`. |
+| P7, ask half | **Headless denied** with stdin closed [observed: probe-2:63-64], hung once with stdin open. **Attended `default`: prompted** [observed: probe-2:70-73]. **Attended `auto`: prompted** on 2.1.325, main session and subagent [observed: owner, on screen, 2026-11-15]; the earlier one-second runs stay unexplained [observed: probe-2:14-21]. Not yet run on `lane.js stage *`. |
 
 **What E + D actually cover, restated precisely.** The earlier draft said nothing in the recommendation depends on an unobserved fact. That was too strong, and the reason matters: **a headless lane's worker has no `agent_id`.** `lane.js launch` runs `claude -p` [verified: kit/scripts/sandbox.js:139 via issue #51; kit/scripts/lane.js:702], so inside that nested process the worker *is* a main session, and a main session carries no `agent_id` [observed: payloads.jsonl:3]. E therefore has two halves that cover different populations and neither covers both:
 
 | | Attended lane (subagents in a human's session) | Headless lane (`launch --exec`) |
 |---|---|---|
-| Narrowed allow list + `ask` rule (§1c) | Covers it in `default` mode, prompting the human [observed: probe-2:70-73]; in `auto` mode possibly not, so §1c's `permission_mode` deny holds it | Covers it: a call needing approval is denied [observed: probe-2:63-64, stdin closed]; may hang with stdin open (P2-full) |
+| Narrowed allow list + `ask` rule (§1c) | Covers it in `default` and `auto` mode, prompting the human [observed: probe-2:70-73; owner, on screen, 2026-11-15]; in `bypassPermissions` and `dontAsk`, which never prompt, §1c's `permission_mode` deny holds it | Covers it: a call needing approval is denied [observed: probe-2:63-64, stdin closed]; may hang with stdin open (P2-full) |
 | Refusal keyed on `agent_id` (§4) | Covers it: subagent Bash, Read, Edit and Write carry `agent_id` [observed: payloads.jsonl:13, 16; probe-2:17-23] | **Does not cover it**: there is no `agent_id` to key on. Keyed on `KIT_LANE` instead [observed for `claude -p`: probe-2:31-34], except a nested `claude` started without it (§3, unresolved) |
 | D, shadow and detect | Detects, per mode (§1 option D) | Detects, per mode |
 
@@ -284,6 +284,6 @@ Easier: one place decides who is calling, and one place holds what a gate reads.
 Harder: lanes can be stalled by a narrowed allow list that is missing a subcommand they need, and by restriction-on-uncertainty in a two-lane repository. A human who edits `lane.json` by hand will be reported as divergence, correctly and annoyingly. The strongest part of the design, binding by `agent_id`, now rests on Bash, Read, Edit and Write on one machine and one Claude Code version (2.1.325) [observed: payloads.jsonl; probe-2:4-23]. Every subagent in probe 2 paired Start and Stop [observed: probe-2:10-116]. The first probe's eight empty-type stops remain unexplained, and the unbound-is-untrusted rule absorbs them. P1 and P3 no longer block building §2 and §3.
 
 Three things block relying on §1c and §3 in full:
-- whether auto mode honours ask rules (owner confirming);
+- whether auto mode still prompts on ask rules after a Claude Code upgrade (it prompted on 2.1.325, §1c);
 - whether a launched lane is denied or hangs on an approval-needing call (P2-full, stdin);
 - the nested-`claude` risk (§3, unresolved). Two more honest limits, after review: under `KIT_SANDBOX_RUNTIME=none` — the default — D detects accidents and tampering that did not look for a second copy, and nothing more, because the agent shares the uid and can rewrite the shadow; and in a headless lane the identity half of E does not apply at all, since that worker is a main session with no `agent_id`, leaving the allow list and the permission mode as the only things holding there.
