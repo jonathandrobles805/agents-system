@@ -15,6 +15,7 @@
 // fix that only works with a sandbox runtime installed cannot make any of them pass.
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import crypto from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -867,12 +868,32 @@ test('permissions: an upgrade can take back a kit grant, and never takes the pro
 // only the commit whose spec text to read. A grader that needed the claim named would be a checklist.
 // ===========================================================================================================
 
+// The three spec versions come from committed copies, not from git history: CI checks out one commit, so
+// `git show 1f62e28~1:docs/KIT-SPEC.md` failed there (PR #54). Each copy is the exact git blob of docs/KIT-SPEC.md at
+// the commit named below, and the test re-hashes it, so an edited copy fails here instead of grading other text.
+// Anyone with the history can confirm an id: git rev-parse 1f62e28~1:docs/KIT-SPEC.md
+const SPEC_BEFORE = {
+  '1f62e28': { file: 'kit-spec-before-1f62e28.md', commit: '75e85278d083899522af4318f2f8eb9c811a4796', blob: 'c226566c39035c2174bf5bedb81742d027cd3283' },
+  '8aaf190': { file: 'kit-spec-before-8aaf190.md', commit: '6ccc36fd8651e47ce22b2ac02c96f579ba2a3290', blob: 'f5274355b07ef873be9639e65a0bbb04899046e5' },
+};
+
+/** Path of the committed copy of docs/KIT-SPEC.md as it was just before `fix`, checked byte for byte against git. */
+function specBefore(fix) {
+  const { file, commit, blob } = SPEC_BEFORE[fix];
+  const p = path.join(SCRIPTS, 'tests', 'data', file);
+  assert.ok(K.isFile(p), `committed copy ${file} of docs/KIT-SPEC.md at ${commit} (${fix}~1) is missing`);
+  const bytes = fs.readFileSync(p);
+  const id = crypto.createHash('sha1').update(`blob ${bytes.length}\0`).update(bytes).digest('hex');
+  assert.equal(id, blob, `${file} must be byte-identical to docs/KIT-SPEC.md at ${commit}`);
+  return p;
+}
+
 test('the claim grader flags the three overstated claims it was never told about [Step 6]', async () => {
   const C = await import('../../../audit/claims.js');
-  const falsified = (at) => C.grade(C.specText({ at })).filter((g) => g.verdict === 'FALSIFIED');
+  const falsified = (fix) => C.grade(C.specText({ spec: specBefore(fix) })).filter((g) => g.verdict === 'FALSIFIED');
 
   // §10.1 before 1f62e28: a deny bullet naming rules the kit never shipped
-  const pre101 = falsified('1f62e28~1');
+  const pre101 = falsified('1f62e28');
   const deny101 = pre101.find((g) => /10\.1/.test(g.section) && g.by === 'rule' && /Bash\(curl \*\)/.test(g.evidence));
   assert.ok(deny101, `10.1's deny list must be falsified; got ${JSON.stringify(pre101.map((g) => [g.section, g.by]))}`);
   for (const rule of ['Bash(curl *)', 'Bash(wget *)', 'Bash(rm -rf *)']) {
@@ -880,13 +901,13 @@ test('the claim grader flags the three overstated claims it was never told about
   }
 
   // §11 before 8aaf190: --upgrade said to run the fault suite against the project, which cannot take one
-  const pre11 = falsified('8aaf190~1').find((g) => /^11\./.test(g.section) && g.by === 'target');
+  const pre11 = falsified('8aaf190').find((g) => /^11\./.test(g.section) && g.by === 'target');
   assert.ok(pre11, 'the upgrade claim must be falsified by the target resolver');
   assert.match(pre11.evidence, /planted-faults\/run\.js cannot be aimed at a project/);
 
   // §5.2.3, still true of the working tree before this step corrected the text: citations were claimed to resolve
   // at the recorded commit, and no hook or CI job passes --commit
-  const pre52 = falsified('1f62e28~1').find((g) => /^5\.2/.test(g.section) && g.by === 'invocation');
+  const pre52 = falsified('1f62e28').find((g) => /^5\.2/.test(g.section) && g.by === 'invocation');
   assert.ok(pre52, 'the citation claim must be falsified by the invocation resolver');
   assert.match(pre52.evidence, /--commit/);
 });
@@ -899,6 +920,24 @@ test('the claim grader is clean against the spec it grades today [Step 6]', asyn
   // and it must still be grading something: a grader that resolves nothing is vacuously clean
   assert.ok(graded.filter((g) => g.verdict === 'SUPPORTED').length >= 3, 'resolvers still reach the spec');
   assert.ok(graded.length >= 100, 'normative sentences are still being extracted');
+});
+
+test('the kit CI reports every check even when the unit tests fail [invariant]', () => {
+  // On PR #54 one failing unit test hid the architecture check and the planted faults: GitHub skips the later steps
+  // of a job after a failed step unless a step says otherwise.
+  const lines = K.splitlines(read(REPO, '.github', 'workflows', 'kit.yml'));
+  const start = lines.findIndex((l) => /^\s+- run: npm test\s*$/.test(l));
+  assert.ok(start >= 0, 'the scripts job runs npm test');
+  const end = lines.findIndex((l, i) => i > start && /^ {2}\S/.test(l));
+  const steps = [];
+  for (let i = start + 1; i < (end < 0 ? lines.length : end); i++) {
+    if (/^ {6}- /.test(lines[i])) steps.push([lines[i]]);
+    else if (steps.length) steps[steps.length - 1].push(lines[i]);
+  }
+  assert.ok(steps.length >= 2, 'checks follow npm test in the scripts job');
+  for (const s of steps) {
+    assert.ok(s.some((l) => /^\s+if: \$\{\{ !cancelled\(\) \}\}\s*$/.test(l)), `runs even when npm test fails: ${s[0].trim()}`);
+  }
 });
 
 // ===========================================================================================================

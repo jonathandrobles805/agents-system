@@ -7,8 +7,9 @@
  * given, then offers each sentence to resolvers that understand one KIND of claim (a permission rule, a tool's
  * flags, what a tool acts on, an option a claim depends on without naming it). A resolver fires on shape, so a claim
  * nobody has looked at yet is graded the same as one that has. The acceptance test for that is in bypass.test.js:
- * the grader is pointed at `git show <commit>:docs/KIT-SPEC.md` for three spec versions whose claims were later
- * found overstated, and must flag them without being told what to look for.
+ * the grader is pointed at committed copies of docs/KIT-SPEC.md (kit/scripts/tests/data/kit-spec-before-*.md, each
+ * checked byte for byte against its git blob) for three spec versions whose claims were later found overstated, and
+ * must flag them without being told what to look for.
  *
  * Verdicts (assigned by a resolver, never by hand):
  *   FALSIFIED   the code contradicts the claim; evidence names what is missing or what omits it
