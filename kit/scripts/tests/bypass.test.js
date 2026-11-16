@@ -775,11 +775,11 @@ test('ci_test_count reports success when it cannot read the base [inverts at Ste
 // Documents that have drifted from the code they describe.
 // ===========================================================================================================
 
-test('README counts 19 planted faults; the suite runs 45 [inverts at Step 7]', () => {
+test('README counts 19 planted faults; the suite runs 46 [inverts at Step 7]', () => {
   assert.match(read(REPO, 'README.md'), /the 19 faults from the spec/, 'DEFECT: the count is written by hand');
   const run = read(REPO, 'planted-faults', 'run.js');
   const ids = new Set([...run.matchAll(/\brecord\((\d+),/g)].map((m) => Number(m[1])));
-  assert.equal(ids.size, 45, 'the suite defines 45');
+  assert.equal(ids.size, 46, 'the suite defines 46 (S0 added #46)');
 });
 
 test('the generated audit names a commit that is not HEAD [inverts at Step 7]', () => {
@@ -920,6 +920,21 @@ test('the claim grader is clean against the spec it grades today [Step 6]', asyn
   // and it must still be grading something: a grader that resolves nothing is vacuously clean
   assert.ok(graded.filter((g) => g.verdict === 'SUPPORTED').length >= 3, 'resolvers still reach the spec');
   assert.ok(graded.length >= 100, 'normative sentences are still being extracted');
+});
+
+test('the invocation resolver grades a heading that names a script, not one whose command runs it [S0]', async () => {
+  // KIT-SPEC 4.5 is headed `reviewer`; /review runs validate_docs.js (kit/commands/review.md), so the command alias
+  // made the heading "name" validate_docs, and the word "changed" in "every changed file" was graded as its --changed
+  // option. It stayed hidden while kit/ci/github.yml passed --changed; S0 removed that call and the sentence read false.
+  const C = await import('../../../audit/claims.js');
+  const ctx = { rules: C.shippedRules(), tools: C.executables() };
+  const claim = (heading, text) => ({ section: heading, heading, line: 1, text });
+  assert.equal(C.resolveInvocationClaim(claim('4.5 `reviewer`', 'Checklist (minimum): every changed file is in the spec\'s list.'), ctx), null,
+    'an agent heading is not a description of a script its slash command happens to run');
+  // a heading that names the script itself is still graded, so the resolver is narrowed, not switched off
+  const named = C.resolveInvocationClaim(claim('5.2 Rules `validate-docs` enforces', 'Citations resolve at the recorded commit.'), ctx);
+  assert.equal(named?.verdict, 'FALSIFIED', 'the 5.2 citation claim is still graded against validate-docs');
+  assert.match(named.evidence, /--commit/);
 });
 
 test('the kit CI reports every check even when the unit tests fail [invariant]', () => {

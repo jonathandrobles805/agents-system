@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
+import { spawnSync } from 'node:child_process';
 import { splitlines } from '../kitlib.js';
 import * as C from '../ci_common.js';
 import * as F from './fixtures.js';
@@ -167,6 +168,82 @@ test('changed docs validates in ci mode', (t) => {
   F.commitAll(root, 'bad research');
   const r = ci('ci_changed_docs.js', root);
   assert.ok(r.returncode === 1 && r.stderr.includes('untagged-claim'));
+});
+
+// ---------------------------------------------------------------------------------------------------------------
+// S0: the project CI's validate-docs step, as bootstrap writes it, run in the cheapest checkout CI can make.
+// The step used to be `validate_docs --changed || ci_changed_docs`; --changed reads git status, which is empty in a
+// CI checkout, so it exited 0 and the fallback never ran: no doc was validated in project CI.
+// ---------------------------------------------------------------------------------------------------------------
+
+/** A valid research doc in today's (pre-contract) format, citing real lines of the bootstrapped node project. */
+const OLD_FORMAT_RESEARCH = read(path.join(SCRIPTS, 'tests', 'data'), 'good-research.md')
+  .replaceAll('src/payment.ts', 'src/domain/payment.ts').replaceAll('src/routes.ts', 'src/api/routes.ts');
+const BROKEN_RESEARCH = '# Research: x\n\n- Question: x\n- Slug: bad\n- Date: 2026-11-08\n- Commit: abc\n\n## Findings\n\n- F1. it probably works\n\n## What I could not verify\n\n- none\n\n## Confidence\n\nLow\n\n## Recommendation\n\nnone\n\n## Sources\n\n- none\n';
+
+/** Push the lane project to a bare remote and clone it as a depth-1, single-branch CI checkout: origin/main absent. */
+function depthOneCheckout(t, root) {
+  const dir = tmpPath(t);
+  const bare = path.join(dir, 'remote.git');
+  F.git(['init', '-q', '--bare', bare], dir);
+  F.git(['push', '-q', bare, 'main', 'wt/refund-route'], root);
+  const co = path.join(dir, 'checkout');
+  F.git(['clone', '-q', '--depth', '1', '--single-branch', '--branch', 'wt/refund-route', `file://${bare}`, co], dir);
+  assert.equal(F.git(['rev-parse', '--is-shallow-repository'], co).trim(), 'true');
+  assert.equal(spawnSync('git', ['rev-parse', '--verify', '--quiet', 'origin/main'], { cwd: co }).status, 1, 'the checkout starts without the base');
+  return co;
+}
+
+/** The validate-docs step exactly as bootstrap wrote it into the project's workflow, run the way a runner does. */
+function generatedDocsStep(co) {
+  const lines = splitlines(read(co, '.github', 'workflows', 'kit.yml'));
+  const at = lines.findIndex((l) => /^\s+- name: validate-docs\s*$/.test(l));
+  assert.ok(at >= 0, 'the generated workflow has a validate-docs step');
+  const run = /^\s+run:\s*(.+)$/.exec(lines[at + 1])[1];
+  return spawnSync('sh', ['-c', run], { cwd: co, encoding: 'utf8', stdin: 'ignore', env: { ...process.env, KIT_DIR: KIT } });
+}
+
+test('the generated validate-docs step fails a broken doc in a depth-1 checkout [S0]', (t) => {
+  const root = laneRepo(t);
+  write(root, 'docs/research/bad.md', BROKEN_RESEARCH);
+  F.commitAll(root, 'bad research');
+  const r = generatedDocsStep(depthOneCheckout(t, root));
+  assert.equal(r.status, 1, `a broken doc must fail the step; stdout: ${r.stdout} stderr: ${r.stderr}`);
+  assert.match(r.stderr, /untagged-claim/);
+});
+
+test('the generated validate-docs step passes a valid old-format doc, after fetching the base [S0]', (t) => {
+  const root = laneRepo(t);
+  write(root, 'docs/research/payment-charge.md', OLD_FORMAT_RESEARCH);
+  F.commitAll(root, 'research');
+  const co = depthOneCheckout(t, root);
+  const r = generatedDocsStep(co);
+  assert.equal(r.status, 0, r.stderr);
+  assert.match(r.stdout, /1 file\(s\) valid/, 'the doc was actually validated, not skipped');
+  assert.equal(spawnSync('git', ['rev-parse', '--verify', '--quiet', 'origin/main'], { cwd: co }).status, 0, 'the base was fetched');
+});
+
+test('ci_changed_docs fails, not passes, when the base cannot be found [S0]', (t) => {
+  const root = laneRepo(t);
+  write(root, 'docs/research/payment-charge.md', OLD_FORMAT_RESEARCH);
+  F.commitAll(root, 'research');
+  const r = runScript('ci_changed_docs.js', ['--repo', depthOneCheckout(t, root), '--base', 'origin/no-such-branch']);
+  assert.equal(r.returncode, 1);
+  assert.match(r.stderr, /base 'origin\/no-such-branch'/, 'the failure names the base');
+  assert.doesNotMatch(r.stderr, /node:internal|\n\s+at /, 'a clean failure, not a crash');
+});
+
+test('a doc deleted on the branch is not reported as missing [S0]', (t) => {
+  const root = laneRepo(t);
+  F.git(['checkout', '-q', 'main'], root);
+  write(root, 'docs/research/payment-charge.md', OLD_FORMAT_RESEARCH);
+  F.commitAll(root, 'research on main');
+  F.git(['checkout', '-q', 'wt/refund-route'], root);
+  F.git(['merge', '-q', '--ff-only', 'main'], root);
+  fs.unlinkSync(path.join(root, 'docs', 'research', 'payment-charge.md'));
+  F.commitAll(root, 'drop research');
+  const r = ci('ci_changed_docs.js', root);
+  assert.equal(r.returncode, 0, r.stderr);
 });
 
 test('lane slug prefers repo branch over ci env', (t) => {

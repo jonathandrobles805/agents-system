@@ -102,7 +102,7 @@ jobs:
       - name: lane-artifacts
         run: node "$KIT_DIR/scripts/ci_lane_artifacts.js" --repo .
       - name: validate-docs
-        run: node "$KIT_DIR/scripts/validate_docs.js" --changed --repo . || node "$KIT_DIR/scripts/ci_changed_docs.js" --repo . --base origin/{{default_branch}}
+        run: node "$KIT_DIR/scripts/ci_changed_docs.js" --repo . --base origin/{{default_branch}}
       - name: review-report
         run: node "$KIT_DIR/scripts/ci_review_report.js" --repo .
       - name: pr-size (warning)

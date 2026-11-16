@@ -122,7 +122,12 @@ export function executables() {
     const body = readIf(path.join(KIT, 'commands', n));
     const m = /kit\/scripts\/([\w.-]+\.js)/.exec(body);
     const target = m ? out.find((t) => t.file === `kit/scripts/${m[1]}`) : null;
-    if (target) target.aliases.push(`/${n.replace(/\.md$/, '')}`, n.replace(/\.md$/, ''));
+    if (target) {
+      // remembered apart: resolveInvocationClaim must not take a command's name for the script's (see there)
+      const viaCommand = [`/${n.replace(/\.md$/, '')}`, n.replace(/\.md$/, '')].filter((a) => !target.aliases.includes(a));
+      target.aliases.push(...viaCommand);
+      target.commandAliases = [...(target.commandAliases ?? []), ...viaCommand];
+    }
   }
   return out;
 }
@@ -256,8 +261,11 @@ export function resolveInvocationClaim(claim, ctx) {
   if (/`?--[a-z]/.test(claim.text)) return null;
   // Graded only where the spec is DESCRIBING this tool -- its heading names it. A tool mentioned inside a list
   // ("jobs on every PR: ... validate-docs") is not the subject of the sentence, and grading those made the
-  // resolver fire on any sentence that happened to share a word with an option.
-  const tool = namedTool('', claim.heading, ctx.tools);
+  // resolver fire on any sentence that happened to share a word with an option. And it names the tool ITSELF: a
+  // command alias only says the command runs the script, so `## reviewer` (/review runs validate_docs) is not a
+  // description of validate_docs, and "every changed file" there is not its --changed option.
+  const own = ctx.tools.map((t) => ({ ...t, aliases: t.aliases.filter((a) => !(t.commandAliases ?? []).includes(a)) }));
+  const tool = namedTool('', claim.heading, own);
   if (!tool) return null;
   const words = new Set(claim.text.toLowerCase().match(/[a-z]{4,}/g) ?? []);
   for (const [flag, help] of toolOptions(tool.file)) {

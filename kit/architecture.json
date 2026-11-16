@@ -133,7 +133,6 @@
     {"file": "kit/ci/github.yml", "from": "ci-job:template/kit-checks", "kind": "runs", "step": "scope-diff", "to": "ci:scope_diff"},
     {"file": "kit/ci/github.yml", "from": "ci-job:template/kit-checks", "kind": "runs", "step": "security-floor", "to": "ci:security_floor"},
     {"file": "kit/ci/github.yml", "from": "ci-job:template/kit-checks", "kind": "runs", "step": "test-count", "to": "ci:test_count"},
-    {"file": "kit/ci/github.yml", "from": "ci-job:template/kit-checks", "kind": "runs", "step": "validate-docs", "to": "script:validate_docs"},
     {"file": "kit/ci/github.yml", "from": "ci-job:template/mutation-gate", "kind": "runs", "to": "ci:mutation_gate"},
     {"file": "kit/scripts/ci_audit.js", "from": "ci:audit", "kind": "imports", "to": "script:kitlib"},
     {"file": "kit/scripts/ci_boundaries_simple.js", "from": "ci:boundaries_simple", "kind": "imports", "to": "script:ci_common"},

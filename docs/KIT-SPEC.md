@@ -262,7 +262,7 @@ Tools not installed are listed; bootstrap proposes adding them and does not add 
 
 ### 7.4 Generated CI (`kit.yml`)
 
-Jobs on every PR: tests; typecheck; lint; import boundaries; `scope-diff` against the spec named in the branch; `test-count` vs `main`; `dep-diff`; secret scan; `claude-md-cap`; `guards-present`; `validate-docs` on changed docs; review-report check (report exists for the PR's head commit with all PASS); mutation score on changed files (threshold from `kit.json`, default 70%, warning-only for the first two features then blocking); PR size warning.
+Jobs on every PR: tests; typecheck; lint; import boundaries; `scope-diff` against the spec named in the branch; `test-count` vs `main`; `dep-diff`; secret scan; `claude-md-cap`; `guards-present`; `validate-docs` on the docs changed since the base branch (fetched when the checkout lacks it; a base that cannot be found fails the job); review-report check (report exists for the PR's head commit with all PASS); mutation score on changed files (threshold from `kit.json`, default 70%, warning-only for the first two features then blocking); PR size warning.
 
 Branch protection via `gh api`: required checks = all of the above; strict up-to-date; no force push; no direct pushes to `main`.
 
@@ -381,6 +381,7 @@ The kit is done when all of the following hold:
 | 36 | Kill switch set while a lane is live | `guard-edit`, `guard-bash`, `next-step`, `start` | every mutation and transition refused until `resume-all --by` |
 | 37 | `/work` given a symptom with no type | provisional `fix`; debugger `cause:` line | boot failure → `incident`; design fault → `refactor`; single defect → `fix`, provisional dropped |
 | 38 | `security` or `migration` goal without high risk | profile `force_risk` | risk is high regardless of the header; container sandbox required |
+| 46 | Broken doc committed on a branch | generated CI `validate-docs` (`ci_changed_docs`) | job fails; in a depth-1 checkout the base is fetched first, and a base that cannot be found fails the job |
 
 ---
 

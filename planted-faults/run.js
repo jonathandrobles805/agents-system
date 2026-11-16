@@ -574,6 +574,24 @@ export function main(argv) {
     const s45 = run('lane.js', ['start', 'fix-it', '--repo', r45]);
     const n45 = s45.returncode === 0 ? JSON.parse(run('lane.js', ['next-step', 'fix-it', '--repo', r45]).stdout) : {};
     record(45, 'a fix lane cannot get past reproduce', 'lane.js start from the goal (fix/incident) + next-step reproduce → plan → approve → scope', s45.returncode === 0 && n45.stage === 'reproduce' && n45.agent === 'debugger', `start: ${s45.returncode} ${s45.stderr.trim().split('\n')[0] ?? ''}; next: ${n45.stage} ${n45.agent}`);
+
+    // 46 a broken doc committed on a branch passes project CI -> the generated validate-docs step fails it, in a
+    //    depth-1 single-branch checkout that has to fetch the base first (S0: the step used to exit 0 on any doc)
+    const r46 = fresh('f46');
+    run('bootstrap.js', ['--repo', r46]);
+    F.commitAll(r46, 'bootstrap');
+    const bare46 = path.join(tmp, 'f46-remote.git');
+    F.git(['init', '-q', '--bare', bare46], tmp);
+    F.git(['checkout', '-q', '-b', 'wt/doc'], r46);
+    writeP(path.join(r46, 'docs', 'research', 'x.md'), '# Research: x\n\n- Question: x\n- Slug: x\n- Date: 2026-11-15\n- Commit: abc\n\n## Findings\n\n- F1. it probably works\n\n## What I could not verify\n\n- none\n\n## Confidence\n\nLow\n\n## Recommendation\n\nnone\n\n## Sources\n\n- none\n');
+    F.commitAll(r46, 'broken research');
+    F.git(['push', '-q', bare46, 'main', 'wt/doc'], r46);
+    const co46 = path.join(tmp, 'f46-checkout');
+    F.git(['clone', '-q', '--depth', '1', '--single-branch', '--branch', 'wt/doc', `file://${bare46}`, co46], tmp);
+    const wf46 = K.splitlines(read(path.join(co46, '.github', 'workflows', 'kit.yml')));
+    const step46 = /^\s+run:\s*(.+)$/.exec(wf46[wf46.findIndex((l) => /^\s+- name: validate-docs\s*$/.test(l)) + 1])[1];
+    const c46 = sh('sh', ['-c', step46], { cwd: co46, env: { ...process.env, KIT_DIR: KIT } });
+    record(46, 'a broken doc committed on a branch passes project CI', 'generated CI validate-docs (ci_changed_docs; base fetched in a depth-1 checkout, missing base fails)', c46.returncode === 1 && c46.stderr.includes('untagged-claim'), c46.stderr);
   } finally {
     if (a.keep) process.stderr.write(`fixtures kept at ${tmp}\n`);
     else fs.rmSync(tmp, { recursive: true, force: true });
