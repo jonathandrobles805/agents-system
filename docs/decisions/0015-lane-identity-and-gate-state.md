@@ -1,6 +1,6 @@
 # 0015 Lane identity and where gate state lives
 
-Date: 2026-11-14 · Status: proposed · Evidence: issues #43, #50, #51, #53; probe `docs/research/claude-code-hook-attribution-probe.md` (34 payloads); probe 2 `docs/research/claude-code-hook-probe-2.payloads.jsonl` (132 payloads) and `docs/research/claude-code-hook-probe-2.p7-lane-events.jsonl` (15 events), Claude Code 2.1.325 on macOS; reproductions in this document
+Date: 2026-11-14 · Status: proposed; superseded in part by 0016 (§1–§4, see 0016 E.4) · Evidence: issues #43, #50, #51, #53; probe `docs/research/claude-code-hook-attribution-probe.md` (34 payloads); probe 2 `docs/research/claude-code-hook-probe-2.payloads.jsonl` (132 payloads) and `docs/research/claude-code-hook-probe-2.p7-lane-events.jsonl` (15 events), Claude Code 2.1.325 on macOS; reproductions in this document
 
 One root, five symptoms: **the kit guesses who is acting, and keeps the state its gates depend on where the agents those gates constrain can write it.** This proposes the design and recommends one option per question. It designs nothing outside that root.
 
