@@ -1,6 +1,6 @@
 # 0017 Commands become four `kit-` skills
 
-Date: 2026-11-17 · Status: proposed · Depends on: 0016 E.5 · Evidence: plan `commands-to-skills` (independent review 2026-11-17), issues #56–#59
+Date: 2026-11-17 · Status: accepted · Depends on: 0016 E.5 · Evidence: plan `commands-to-skills` (independent review 2026-11-17), issues #56–#59
 
 ## Context
 
@@ -47,4 +47,4 @@ Not yet known, settled by a probe before the frontmatter is relied on (`docs/res
 
 ## Approval
 
-Approved by: — on — at —
+Approved by: Jonathan Robles (via chat) on 2026-11-17 at b7ed48a

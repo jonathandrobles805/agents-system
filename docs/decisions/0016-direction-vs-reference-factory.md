@@ -1,6 +1,6 @@
 # 0016 Direction: the kit against a working reference factory
 
-Date: 2026-11-15 · Amended: 2026-11-17 (E.5) · Status: proposed · Supersedes in part, if accepted: 0015 §1–§4 (see E.4)
+Date: 2026-11-15 · Amended: 2026-11-17 (E.5) · Status: accepted · Approved by: Jonathan Robles (via chat) on 2026-11-17 at b7ed48a · Supersedes in part: 0015 §1–§4 (see E.4)
 
 ## Context
 
