@@ -20,7 +20,7 @@ hooks:
         - type: command
           command: node "$HOME/.claude/kit/scripts/hook_guard_bash.js"
   PostToolUse:
-    - matcher: Read|Bash
+    - matcher: Read|Write|Bash
       hooks:
         - type: command
           command: node "$HOME/.claude/kit/scripts/hook_read_log.js"

@@ -5,6 +5,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { CORE_ROLES, compare, loadTasks, runSet, selectTasks, summarize, writeBaseline } from '../../eval/harness.js';
 import { CHECKS, score } from '../../eval/score.js';
 import * as fixture from '../../eval/runners/fixture.js';
@@ -19,7 +20,7 @@ test('every benchmark task validates and every core role has a smoke task with a
   for (const role of CORE_ROLES) {
     const t = tasks.find((x) => x.role === role && x.tags.includes('smoke'));
     assert.ok(t, `smoke task for ${role}`);
-    assert.ok(fs.existsSync(path.join(path.dirname(path.dirname(new URL(import.meta.url).pathname)), '..', 'eval', 'fixtures', t.id, 'good.json')), `good fixture for ${t.id}`);
+    assert.ok(fs.existsSync(path.join(path.dirname(path.dirname(fileURLToPath(import.meta.url))), '..', 'eval', 'fixtures', t.id, 'good.json')), `good fixture for ${t.id}`);
     for (const c of t.checks) assert.ok(c in CHECKS, `${t.id}: check ${c} exists`);
   }
 });

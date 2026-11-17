@@ -10,7 +10,7 @@ Review feature: $ARGUMENTS
 Worktree: `node -p 'require("./.claude/kit.json").lanes["<slug>"].worktree'`. Record `HEAD=$(git -C <worktree> rev-parse HEAD)`. Read the spec's `Risk:` header.
 
 ## Step 2: reviewer
-Spawn the `reviewer` agent with working directory = the worktree and exactly this input: "Review lane `<slug>` at commit <HEAD>. Spec: docs/specs/<slug>.md. Diff: `git diff <default branch>...HEAD`. Log: docs/specs/<slug>.log. Events: docs/specs/<slug>.events.jsonl. Progress: docs/specs/<slug>.progress.md. Also read ARCHITECTURE.md, DESIGN.md, LESSONS.md. Write docs/specs/<slug>.review.md with `- Head: <HEAD>`."
+Spawn the `reviewer` agent with working directory = the worktree and exactly this input: "Review lane `<slug>` at commit <HEAD>. Spec: docs/specs/<slug>.md. Diff: `git diff <default branch>...HEAD`. Log: `.claude/session/<slug>.log` while the worktree exists, or the committed copy `<work>/<slug>.checks.txt` after it is gone. Events: docs/specs/<slug>.events.jsonl. Progress: docs/specs/<slug>.progress.md. Also read ARCHITECTURE.md, DESIGN.md, LESSONS.md. Write docs/specs/<slug>.review.md with `- Head: <HEAD>`."
 
 Give it nothing else: no summary of what was built, no excerpt of the implementer's output.
 

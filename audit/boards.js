@@ -20,6 +20,7 @@ import { fileURLToPath } from 'node:url';
 import { ArgumentParser } from '../kit/scripts/args.js';
 import * as K from '../kit/scripts/kitlib.js';
 import * as F from '../kit/scripts/tests/fixtures.js';
+import * as CLAIMS from './claims.js';
 
 const ROOT = path.dirname(path.dirname(K.realResolve(fileURLToPath(import.meta.url))));
 const KIT = path.join(ROOT, 'kit');
@@ -333,6 +334,17 @@ export function main(argv) {
     const tot = ['PRESENT', 'PLATFORM', 'INSTRUCTION', 'PARTIAL', 'MISSING'].map((s) => `'${s}': ${RESULTS.filter((r) => r.status === s).length}`).join(', ');
     process.stdout.write(`\nchecked at ${headSha}: ${RESULTS.length} boxes/arrows → {${tot}}\n`);
   }
+  // The boards audit grades the diagrams; the claim grader grades the spec's own normative sentences. Both answer
+  // "does the text match the code", so they report together and `node audit/boards.js` fails on either.
+  const graded = CLAIMS.grade(CLAIMS.specText());
+  const falsified = graded.filter((g) => g.verdict === 'FALSIFIED');
+  if (!a.json) {
+    process.stdout.write('\n=== KIT-SPEC claims ===\n');
+    for (const g of falsified) process.stdout.write(`[FALSIFIED  ] §${g.section} (line ${g.line}, by ${g.by})\n             claim: ${g.text.slice(0, 140)}\n             evidence: ${g.evidence.slice(0, 180)}\n`);
+    const ct = ['FALSIFIED', 'UNSUPPORTED', 'SUPPORTED', 'UNGRADED'].map((v) => `'${v}': ${graded.filter((g) => g.verdict === v).length}`).join(', ');
+    process.stdout.write(`\n${graded.length} normative sentences → {${ct}}\n`);
+  }
+  if (falsified.length) return 1;
   if (a.md) {
     const lines = [
       `# Board audit against \`${headSha}\``,

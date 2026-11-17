@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
+import { isoSeconds } from '../kitlib.js';
 import { git } from './fixtures.js';
 import { SCRIPTS, makeRepo, runScript } from './helpers.js';
 import { GOOD_SPEC } from './testdata.js';
@@ -21,7 +22,11 @@ function makeLane(repo, specText = GOOD_SPEC, stage = 'build', extra = null) {
   write(repo, 'docs/specs/refund-endpoint.md', specText);
   git(['add', 'docs/specs/refund-endpoint.md'], repo);
   git(['-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-q', '-m', 'spec'], repo);
-  const lane = { feature: 'refund-endpoint', spec: 'docs/specs/refund-endpoint.md', stage, started: '2026-11-08T10:00:00', ...(extra ?? {}) };
+  // `started` is measured against the current clock by hook_budget_check.hoursSince, so it must be relative:
+  // an absolute date silently crosses any hours budget once enough real time has passed. Two hours ago keeps
+  // 'budget check time limit' (hours: 0.001) over its budget and 'budget check blocks after limit' (hours: 100)
+  // well under its own, whatever the date. The format is the one lane.js:530 writes: local wall-clock, no zone.
+  const lane = { feature: 'refund-endpoint', spec: 'docs/specs/refund-endpoint.md', stage, started: isoSeconds(new Date(Date.now() - 2 * 3.6e6)), ...(extra ?? {}) };
   write(repo, '.claude/lane.json', JSON.stringify(lane));
   return repo;
 }
@@ -271,9 +276,42 @@ test('budget check blocks after limit and writes escalation', (t) => {
 
 test('budget check time limit', (t) => {
   const repo = makeRepo(t);
-  makeLane(repo, GOOD_SPEC, 'build', { budget: { tool_calls: 1000, hours: 0.001 } }); // started 2026-11-08T10:00 => long ago
+  makeLane(repo, GOOD_SPEC, 'build', { budget: { tool_calls: 1000, hours: 0.001 } }); // makeLane starts the lane two hours ago
   const r = run('hook_budget_check.js', post(repo, 'Read', { file_path: 'x' }));
   assert.equal(JSON.parse(r.stdout).decision, 'block');
+});
+
+// #41: a stage's budget is measured from that stage's own start. The counter used to be one file per session
+// that nothing ever reset, so review began wherever build left off (206 calls at its first call in the run that
+// filed #41). Scaled from that run's 300-then-1 so the suite does not spawn 300 hooks: build spends more calls than
+// review's whole budget, then review makes one call.
+function moveStage(repo, stage, budget) {
+  const lf = path.join(repo, '.claude', 'lane.json');
+  const d = JSON.parse(fs.readFileSync(lf, 'utf8'));
+  Object.assign(d, { stage, started: isoSeconds(new Date()), budget });
+  fs.writeFileSync(lf, JSON.stringify(d)); // what lane.js stage writes: the new stage, its start, its budget
+}
+
+test('#41 a stage is measured by its own calls, not the lane lifetime', (t) => {
+  const repo = makeRepo(t);
+  makeLane(repo, GOOD_SPEC, 'build', { budget: { tool_calls: 800, hours: 100 } });
+  for (let i = 0; i < 5; i++) assert.equal(run('hook_budget_check.js', post(repo, 'Read', { file_path: 'x' })).stdout.trim(), '', `build call ${i}`);
+  moveStage(repo, 'review', { tool_calls: 3, hours: 100 });
+  const r = run('hook_budget_check.js', post(repo, 'Read', { file_path: 'x' }));
+  assert.equal(r.stdout.trim(), '', `the first review call is 1 of 3, not 6 of 3: ${r.stdout}`);
+});
+
+test('#41 the over-budget message names lane.json, where a raised budget is read', (t) => {
+  const repo = makeRepo(t);
+  makeLane(repo, GOOD_SPEC, 'review', { budget: { tool_calls: 0, hours: 100 } });
+  const r = run('hook_budget_check.js', post(repo, 'Read', { file_path: 'x' }));
+  const out = JSON.parse(r.stdout);
+  assert.equal(out.decision, 'block');
+  assert.match(out.reason, /lane\.json/, out.reason);
+  assert.doesNotMatch(out.reason, /in the spec/, 'nothing reads a budget from the spec');
+  const prog = read(repo, 'docs/specs/refund-endpoint.progress.md');
+  assert.match(prog, /- Needs: .*lane\.json/, prog);
+  assert.doesNotMatch(prog, /in the spec/, prog);
 });
 
 // ---------------- done-check ----------------
@@ -335,19 +373,19 @@ test('done check refuses ref past log end', (t) => {
 test('done check allows when all green', (t) => {
   const repo = makeRepo(t);
   makeLane(repo);
-  write(repo, '.claude/session/refund-endpoint.log', '=== 2026-11-11T10:00:00 test: npm test -> exit 1\n2 failed\n\n=== 2026-11-11T10:05:00 test: npm test -> exit 0\n2 passed\n');
-  write(repo, 'docs/specs/refund-endpoint.progress.md', progress({ g1: 'refund-endpoint.log#4', g2: 'refund-endpoint.log#4', att: '{{n}} of 3', fail: '{{what fails}}' }));
+  write(repo, '.claude/session/refund-endpoint.log', '=== 2026-11-11T10:00:00 test: npm test -> exit 1\nTAP version 13\nnot ok 1 - returns 200\nnot ok 2 - calls refund once\n1..2\n\n=== 2026-11-11T10:05:00 test: npm test -> exit 0\nTAP version 13\nok 1 - returns 200\nok 2 - calls refund once\n1..2\n');
+  write(repo, 'docs/specs/refund-endpoint.progress.md', progress({ g1: 'refund-endpoint.log#7', g2: 'refund-endpoint.log#7', att: '{{n}} of 3', fail: '{{what fails}}' }));
   let r = run('hook_done_check.js', stop(repo));
   assert.ok(r.returncode === 0 && r.stdout.trim() === '', r.stdout);
   // field test #42: a "green" reference that points at a failing run, or a "red" one at a passing run, is refused
-  write(repo, 'docs/specs/refund-endpoint.progress.md', progress({ g1: 'refund-endpoint.log#1', g2: 'refund-endpoint.log#4', att: '{{n}} of 3', fail: '{{what fails}}' }));
+  write(repo, 'docs/specs/refund-endpoint.progress.md', progress({ g1: 'refund-endpoint.log#1', g2: 'refund-endpoint.log#7', att: '{{n}} of 3', fail: '{{what fails}}' }));
   r = run('hook_done_check.js', stop(repo));
   assert.ok(JSON.parse(r.stdout).reason.includes('failed (exit 1); a green run must pass'), r.stdout);
-  write(repo, 'docs/specs/refund-endpoint.progress.md', progress({ g1: 'refund-endpoint.log#4', g2: 'refund-endpoint.log#4', att: '{{n}} of 3', fail: '{{what fails}}' }).replaceAll('refund-endpoint.log#1 |', 'refund-endpoint.log#4 |'));
+  write(repo, 'docs/specs/refund-endpoint.progress.md', progress({ g1: 'refund-endpoint.log#7', g2: 'refund-endpoint.log#7', att: '{{n}} of 3', fail: '{{what fails}}' }).replaceAll('refund-endpoint.log#1 |', 'refund-endpoint.log#7 |'));
   r = run('hook_done_check.js', stop(repo));
   assert.ok(JSON.parse(r.stdout).reason.includes('passed (exit 0); a red run must fail'), r.stdout);
   // a P-criterion (preserved behaviour) needs a green run only
-  write(repo, 'docs/specs/refund-endpoint.progress.md', progress({ g1: 'refund-endpoint.log#4', g2: 'refund-endpoint.log#4', att: '{{n}} of 3', fail: '{{what fails}}' }).replace('| D1 |', '| P1 |').replace('refund-endpoint.log#1 | refund-endpoint.log#4', '— | refund-endpoint.log#4'));
+  write(repo, 'docs/specs/refund-endpoint.progress.md', progress({ g1: 'refund-endpoint.log#7', g2: 'refund-endpoint.log#7', att: '{{n}} of 3', fail: '{{what fails}}' }).replace('| D1 |', '| P1 |').replace('refund-endpoint.log#1 | refund-endpoint.log#7', '— | refund-endpoint.log#7'));
   r = run('hook_done_check.js', stop(repo));
   assert.ok(r.returncode === 0 && r.stdout.trim() === '', r.stdout);
 });
@@ -461,7 +499,7 @@ test('guard tests only', (t) => {
 test('done check in test stage needs red only', (t) => {
   const repo = makeRepo(t);
   makeLane(repo, GOOD_SPEC, 'test');
-  write(repo, '.claude/session/refund-endpoint.log', '=== 2026-11-11T10:00:00 test: npm test -> exit 1\n2 failed\n');
+  write(repo, '.claude/session/refund-endpoint.log', '=== 2026-11-11T10:00:00 test: npm test -> exit 1\nTAP version 13\nnot ok 1 - returns 200\nnot ok 2 - calls refund once\n1..2\n');
   write(repo, 'docs/specs/refund-endpoint.progress.md', progress({ g1: '—', g2: '—', att: '{{n}} of 3', fail: '{{what fails}}' }));
   let r = run('hook_done_check.js', stop(repo));
   assert.ok(r.returncode === 0 && r.stdout.trim() === ''); // red runs present (log#1), no green needed in test stage

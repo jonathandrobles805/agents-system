@@ -124,6 +124,9 @@ The agent's belief is never evidence. Evidence is the output of something that r
 | Kit drifts across projects | `/bootstrap` stamps the kit version into the project. `/bootstrap --upgrade` diffs and applies changes. A kit changelog records every change | Kit repo + version stamp |
 | A rule exists but nobody knows why | Every rule and every structural decision has a file in `docs/decisions/` with context and the alternative rejected | `/retro` and `/plan` templates |
 | The kit itself was built by guessing | The kit has its own spec, acceptance tests, and a **planted-fault test**: a repo seeded with known mistakes (an unread-file edit, a scope-creep file, a weakened test, a boundary violation, a missing caller). The kit is not done until every planted fault is caught at the gate that owns it | Kit acceptance suite |
+| A kit test passes or fails depending on the machine, or launches a real app (#52) | Tests build paths with `fileURLToPath`, never `URL.pathname` (a path with a space becomes `%20`), and control every tool they rely on being absent or present (the dashboard test strips `claude` from PATH and records any terminal launcher instead of running it) | Kit test suite |
+| An agent routes around a guard false positive instead of reporting it (#40) | A false positive is filed as a kit issue with the blocked command and the guard rule that matched; the agent does not rephrase, re-encode, or move the write elsewhere to get past the guard | Text-only until #40 is fixed |
+| A gate whose state the agent can write is not a gate (#51) | Anything a gate reads (`.claude/lane.json`, budgets, counters) must be unwritable by the lane: the Bash guard matches only a literal `.claude/` after a redirect, so `cd` or an interpreter write gets through | Open: #51 |
 
 ---
 

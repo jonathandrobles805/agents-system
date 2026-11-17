@@ -12,9 +12,7 @@
     "Read(**/.aws/**)",
     "Read(**/.ssh/**)",
     "Edit(.claude/**)",
-    "Write(.claude/**)",
     "Edit(.github/workflows/**)",
-    "Write(.github/workflows/**)",
     "Bash(git push --force*)",
     "Bash(git push -f*)",
     "Bash(git reset --hard*)",
@@ -41,14 +39,11 @@
     "sk-ant-[0-9A-Za-z_-]{20,}"
   ],
   "network": {
-    "$comment": "Allowlist the sandbox enforces for every lane (step 2b). Package registries plus what the spec declares. Per-agent additions are the only way to widen it.",
+    "$comment": "Allowlist the sandbox enforces for every lane (step 2b). Package registries plus what the lane's own spec declares under its `## Network` section; the spec is the only way to widen it. There is deliberately no per-agent list: the sandbox boundary is the lane process and the kit's agents are subagents inside one lane session, so a role cannot have a network of its own.",
     "default_allow": [
       "registry.npmjs.org", "registry.yarnpkg.com", "pypi.org", "files.pythonhosted.org",
       "proxy.golang.org", "sum.golang.org", "index.crates.io", "static.crates.io", "github.com", "api.github.com", "objects.githubusercontent.com"
-    ],
-    "per_agent": {
-      "researcher": ["*"]
-    }
+    ]
   },
   "second_family": null,
   "max_researchers": 8

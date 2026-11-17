@@ -182,7 +182,7 @@ The reviewer inspects changes and evidence, never the implementer's conversation
 | Licenses | License check on the lockfile | CI |
 | Cost | Monthly cap per project in `kit.json`; lanes pause at the cap; cost from telemetry only | budget hook |
 | Disaster recovery | Runbook per project (restore from backup, redeploy from tag), tested in onboarding | onboarding stage 6 |
-| Kit upgrades | `/bootstrap --upgrade` runs the planted faults before and after, backs up every file it replaces, reverts if any fault stops being caught. A kit release goes first to one designated canary project, runs one real lane there, then to the rest | upgrade that loses a fault → reverted |
+| Kit upgrades | `/bootstrap --upgrade` runs the two read-only project checks (`guards_present`, `security_floor`) before and after, backs up every file it replaces, and restores when a check that passed before fails after. The planted faults are the kit's release gate, not an upgrade step: the suite builds and destroys its own fixtures and takes no `--repo` (KIT-SPEC §11). A kit release goes first to one designated canary project, runs one real lane there, then to the rest | upgrade that breaks a check it previously passed → restored |
 
 # 13. Knowledge and learning
 

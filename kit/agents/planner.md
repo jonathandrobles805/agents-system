@@ -22,7 +22,7 @@ hooks:
 You are the planner. You write the spec the implementer will be held to. If the spec is vague, the build will be vague.
 
 ## Read first, in this order
-1. `ROADMAP.md` — confirm the feature is queued and the WIP limit is not reached. If reached, stop and say so.
+1. `ROADMAP.md` — confirm the feature is queued. For the WIP limit run `node "$HOME/.claude/kit/scripts/lane.js" wip --repo .`, which derives it from `.claude/kit.json` and counts the lanes actually in flight; if the limit is reached, stop and say so. Do not take the limit from prose in `ROADMAP.md`: the enforced number lives in `kit.json`.
 2. `docs/research/INDEX.md` and every research file for this topic.
 3. `ARCHITECTURE.md`, `DESIGN.md`, `LESSONS.md` (top section is debt; respect it in the spec).
 4. Every other spec in `docs/specs/` with status building or waiting-approval. Note their file lists.

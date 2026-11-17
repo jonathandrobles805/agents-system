@@ -53,18 +53,10 @@ export function detectRuntime(env = process.env) {
   return { runtime: null, how: 'no srt on PATH or in the kit, no working docker/podman' };
 }
 
-/** Domains the spec declares under an optional `## Network` section (one per list item). */
-export function specNetwork(specPath) {
-  if (!K.isFile(specPath)) return [];
-  const sec = K.parseSections(K.stripHtmlComments(K.readLines(specPath))).get('network');
-  if (!sec) return [];
-  const out = [];
-  for (const [, line] of sec.lines ?? []) {
-    const m = /^\s*[-*]\s+`?([a-z0-9.-]+\.[a-z]{2,}|\*)`?/i.exec(line);
-    if (m) out.push(m[1].toLowerCase());
-  }
-  return out;
-}
+// The spec's declared domains decide two things that must agree: the sandbox allowlist built here, and whether the
+// bash guard lets the lane fetch by hand (KIT-SPEC 10.1). The parser therefore lives in kitlib, where both reach it
+// without a hook having to import the sandbox.
+export const specNetwork = K.specNetwork;
 
 /** Home-relative floor patterns become absolute deny paths; project-relative ones stay relative to the worktree. */
 function denyReadPaths(wt, floor, kit) {
@@ -92,10 +84,14 @@ export function sandboxConfig({ root, wt, slug, agent = 'implementer', env = pro
   const preferred = typeof kit.sandbox?.runtime === 'string' ? kit.sandbox.runtime : null;
   const runtime = preferred === 'container' && det.runtime ? 'container' : det.runtime;
   const net = floor.network ?? {};
-  const perAgent = Array.isArray(net.per_agent?.[agent]) ? net.per_agent[agent] : [];
+  // `agent` is recorded, not enforced: the sandbox boundary is the lane process, and the kit's agents are subagents
+  // inside one lane session sharing that process, so a role cannot have a network of its own. The floor used to
+  // carry a per_agent list for exactly that and no lane ever reached it (lane.js never passes an agent), which
+  // meant a researcher's "open egress" was configuration nobody applied. The allowlist a lane gets is the
+  // registries plus what its own spec declares, as KIT-SPEC 10.9 says.
   // the kit's telemetry collector on localhost is always reachable (KIT-SPEC 9.4); nothing else on localhost is implied
   const collector = `127.0.0.1:${Number(env.KIT_TELEMETRY_PORT || 4318)}`;
-  const domains = [...new Set([...(Array.isArray(net.default_allow) ? net.default_allow : []), ...specNetwork(path.join(wt, 'docs', 'specs', `${slug}.md`)), ...perAgent, collector])].sort();
+  const domains = [...new Set([...(Array.isArray(net.default_allow) ? net.default_allow : []), ...K.specNetwork(path.join(wt, K.workRoot(root), `${slug}.md`)), collector])].sort();
   const scratch = path.join(os.tmpdir(), `kit-lane-${slug}`);
   return {
     runtime,

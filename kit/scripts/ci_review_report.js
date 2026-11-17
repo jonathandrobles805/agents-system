@@ -16,7 +16,7 @@ export function main(argv) {
   const root = K.realResolve(a.repo);
   const slug = C.laneSlug(root);
   if (!slug) return C.ok('review-report: not a lane branch; skipped');
-  const rep = C.joinPath(root, 'docs', 'specs', `${slug}.review.md`);
+  const rep = C.joinPath(root, K.workRoot(root), `${slug}.review.md`);
   if (!K.isFile(rep)) return C.fail(`review-report: ${C.relativeTo(rep, root)} missing; run /review`);
   if (V.main([rep, '--repo', root])) return C.fail('review-report: report does not validate');
   const text = C.readText(rep);

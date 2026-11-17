@@ -448,32 +448,51 @@ export class Lane {
   }
 
   get specPath() {
-    const spec = typeof this.data.spec === 'string' && this.data.spec ? this.data.spec : `${workRoot(this.root)}/${this.slug}.md`;
+    const spec = typeof this.data.spec === 'string' && this.data.spec ? this.data.spec : `${this.work}/${this.slug}.md`;
     return path.resolve(this.root, spec);
   }
 
-  get progressPath() {
-    return path.join(this.root, 'docs', 'specs', `${this.slug}.progress.md`);
+  /**
+   * Where this lane's artifacts live (KIT-SPEC 10.11). The directory of the spec `lane.js start` recorded, so every
+   * reader inside the lane agrees with the writer even if the project's paths.work changed afterwards: .claude/kit.json
+   * is tracked, so a worktree sees the value at its base commit, and ALWAYS_BLOCKED_EDIT means a lane can never
+   * update it. Falls back to the project's current setting for a lane.json written before this field existed.
+   */
+  get work() {
+    const spec = typeof this.data.spec === 'string' && this.data.spec ? this.data.spec : null;
+    return spec ? path.dirname(spec) : workRoot(this.root);
   }
 
-  /** Check output is machine output: it lives with the session files, not in docs/ (field test #44: a project's own
-   * structure check rejects *.log under docs/). References keep the form `<slug>.log#<line>`. */
+  get progressPath() {
+    return path.join(this.root, this.work, `${this.slug}.progress.md`);
+  }
+
+  /**
+   * Check output is machine output: it lives with the session files, not in docs/ (field test #44: a project's own
+   * structure check rejects *.log under docs/). References keep the form `<slug>.log#<line>`.
+   *
+   * ADVISORY, NOT ENFORCED, IN EVERY SANDBOX MODE (KIT-SPEC 10.14). done-check reads the exit code on the line a
+   * progress cell names, and this file sits inside the worktree, which is writable in all three modes: degraded has
+   * no boundary at all, and under srt and in a container the worktree is precisely what the lane is given to write.
+   * It has to be: post-edit-check runs the project's checks from inside the lane and appends them here, and that is
+   * the only path by which evidence is produced (kit/agents/implementer.md:50,53 — the agent copies a line number
+   * from this file into the Red run and Green run cells).
+   *
+   * Moving this file outside the worktree would not fix that and would break it: the writer is in-lane, so it would
+   * lose the ability to write, and no host-side process witnesses the run. Signing the lines would not fix it either,
+   * because any key the in-lane writer can read, the agent can read. Real enforcement needs the command to be RUN on
+   * the host — see the note on lane.js check, and KIT-SPEC 10.14 for what that would take.
+   */
   get logPath() {
     return path.join(this.root, '.claude', 'session', `${this.slug}.log`);
   }
 
   get eventsPath() {
-    return path.join(this.root, 'docs', 'specs', `${this.slug}.events.jsonl`);
+    return path.join(this.root, this.work, `${this.slug}.events.jsonl`);
   }
 
   alwaysAllowed() {
-    const work = workRoot(this.root);
-    return [
-      `${work}/${this.slug}.progress.md`,
-      `${work}/${this.slug}.log`,
-      `${work}/${this.slug}.events.jsonl`,
-      `${decisionsRoot(this.root)}/*.md`,
-    ];
+    return laneArtifacts(this.work, this.slug, this.root);
   }
 }
 
@@ -522,6 +541,78 @@ export function globMatch(rel, patterns) {
   return false;
 }
 
+// --- permission rules -------------------------------------------------------------------------------------
+// Claude Code evaluates rules deny -> ask -> allow and the first match wins, so an allow rule can never carve an
+// exception out of a deny rule [docs: https://code.claude.com/docs/en/permissions.md @ 2026-11-13]. The kit relies
+// on that twice: the floor's deny list stays the ceiling whatever a project allows (ci_security_floor), and the
+// generator refuses to WRITE an allow rule that would overlap the floor at all (bootstrap), so the two never
+// disagree. Both call allowLoosens, which is why it lives here and not in either of them.
+
+const WILDCARD_ONLY = new Set(['', '*', '**', '*:*']);
+
+/** Split "Tool(pattern)" into [tool, pattern]; a bare "Tool" is the whole tool. */
+export function splitRule(rule) {
+  const m = /^([A-Za-z_]+)(?:\(([\s\S]*)\))?$/.exec(rule.trim());
+  if (!m) return null;
+  return [m[1], (m[2] ?? '').trim()];
+}
+
+/** True when an allow rule grants something a floor deny rule forbids. */
+export function allowLoosens(allowRule, denyRule) {
+  const a = splitRule(allowRule);
+  const d = splitRule(denyRule);
+  if (!a || !d || a[0] !== d[0]) return false;
+  const [, ap] = a;
+  const [, dp] = d;
+  if (WILDCARD_ONLY.has(ap)) return true; // the whole tool
+  if (ap === dp) return true;
+  // the deny names a concrete path or command prefix and the allow's glob covers it
+  const concrete = !/[*?[]/.test(dp.replace(/\*$/, ''));
+  if (concrete && globMatch(dp.replace(/\*$/, ''), [ap])) return true;
+  return false;
+}
+
+/**
+ * True when an allow rule and a floor deny rule overlap at all, in either direction. The two directions are
+ * different faults and both disqualify a generated rule:
+ *   - the allow is WIDER than the deny (`Bash` vs `Bash(sudo *)`): at runtime deny still wins, but the rule claims
+ *     a grant the floor refuses, which is what ci_security_floor fails a project for.
+ *   - the allow is INSIDE the deny (`Bash(sudo make install *)` vs `Bash(sudo *)`): the rule can never take effect,
+ *     so writing it only tells a reader the lane may do something it may not.
+ * ci_security_floor judges a project's own settings and so asks the first question only; the generator must not
+ * write either, because a rule it writes is the kit speaking.
+ */
+export function ruleOverlapsFloor(allowRule, denyRule) {
+  return allowLoosens(allowRule, denyRule) || allowLoosens(denyRule, allowRule);
+}
+
+/**
+ * True for a rule Claude Code accepts and then never matches: it checks file permissions against `Edit(path)` and
+ * `Read(path)` only, so a path rule for Write, NotebookEdit, Glob or MultiEdit does nothing
+ * [docs: https://code.claude.com/docs/en/permissions.md @ 2026-11-13]. `Edit` already covers every built-in tool
+ * that edits files and `Read` covers those that read them, so the rule is not merely redundant but misleading: it
+ * reads like a guard and is not one. A bare tool name (no pattern) is a real rule and not inert.
+ */
+const INERT_PATH_TOOLS = new Set(['Write', 'NotebookEdit', 'Glob', 'MultiEdit']);
+export function inertPathRule(rule) {
+  if (typeof rule !== 'string') return false;
+  const parts = splitRule(rule);
+  return parts !== null && INERT_PATH_TOOLS.has(parts[0]) && parts[1] !== '';
+}
+
+/** Domains the spec declares under an optional `## Network` section (one per list item). */
+export function specNetwork(specPath) {
+  if (!isFile(specPath)) return [];
+  const sec = parseSections(stripHtmlComments(readLines(specPath))).get('network');
+  if (!sec) return [];
+  const out = [];
+  for (const [, line] of sec.lines ?? []) {
+    const m = /^\s*[-*]\s+`?([a-z0-9.-]+\.[a-z]{2,}|\*)`?/i.exec(line);
+    if (m) out.push(m[1].toLowerCase());
+  }
+  return out;
+}
+
 /** (read_first, change, create) path lists from a spec, as repo-relative strings. */
 export function specFileLists(specPath) {
   if (!isFile(specPath)) return [[], [], []];
@@ -540,6 +631,12 @@ export function specFileLists(specPath) {
   return [pathsIn('files to read first'), pathsIn('files to change'), pathsIn('files to create')];
 }
 
+/**
+ * The read log guard-edit consults. ADVISORY in every sandbox mode: the event it records — this session called Read
+ * on this file — happens inside the lane and has no witness outside it. Relocating the file or signing its lines
+ * would move the forgery, not remove it, because whatever can write a true entry can write a false one. Planted
+ * fault 1 proves the gate fires on the honest path; it does not prove the path cannot be faked (KIT-SPEC 10.14).
+ */
 export function readsLogPath(root, sessionId) {
   const d = path.join(root, SESSION_DIR);
   fs.mkdirSync(d, { recursive: true });
@@ -564,6 +661,60 @@ export function appendEvent(p, event) {
 }
 
 /** Append a titled block to the lane log. Returns the 1-based line number where the block starts. */
+/**
+ * Result lines a test run printed, as `{ok, name}`, from the patterns the stacks declare plus any the project adds
+ * in kit.json `results`.
+ *
+ * This is what makes a cited run evidence rather than an exit code. In the field run 33 of 36 "red" runs failed on
+ * MODULE_NOT_FOUND before a single assertion ran, and one was npm failing to find package.json (exit 254), yet all
+ * of them satisfied done-check because it read only the `-> exit N` header.
+ *
+ * Note what is deliberately NOT here: a list of infrastructure failures to exclude. "MODULE_NOT_FOUND", "Could not
+ * read package.json" and whatever comes next are all covered by one property -- a run that crashed before testing
+ * emits no result line for the row's test -- so requiring that line rejects the whole class without naming any
+ * member of it. A pattern list would have to be extended for every new way a runner can fail to start.
+ */
+export function resultLines(lines, patterns) {
+  const out = [];
+  for (const raw of lines) {
+    for (const p of patterns) {
+      const fail = new RegExp(p.fail).exec(raw);
+      if (fail) { out.push({ ok: false, name: (fail[1] ?? '').trim() }); break; }
+      const pass = new RegExp(p.pass).exec(raw);
+      if (pass) { out.push({ ok: true, name: (pass[1] ?? '').trim() }); break; }
+    }
+  }
+  return out;
+}
+
+/** Result-line patterns from every stack config, plus the project's own kit.json `results` additions. */
+export function resultPatterns(root) {
+  const out = [];
+  const dir = path.join(KIT_DIR, 'stacks');
+  if (isDir(dir)) {
+    for (const n of fs.readdirSync(dir).filter((x) => x.endsWith('.json')).sort()) {
+      try {
+        for (const p of JSON.parse(fs.readFileSync(path.join(dir, n), 'utf8')).results ?? []) {
+          if (typeof p?.fail === 'string' && typeof p?.pass === 'string') out.push(p);
+        }
+      } catch { /* a stack file that will not parse is bootstrap's problem to report, not this gate's */ }
+    }
+  }
+  // A project whose runner none of the stacks describe declares its own pair here rather than being unable to
+  // finish a lane. The gate stays on; what changes is that it can read that runner's output.
+  for (const p of (root ? plainObject(loadKitJson(root)).results : null) ?? []) {
+    if (typeof p?.fail === 'string' && typeof p?.pass === 'string') out.push(p);
+  }
+  return out;
+}
+
+/** A test name from a progress-row cell or a result line, comparable across the two. */
+export function testKey(s) {
+  const t = String(s ?? '').trim().replace(/^[`'"]+|[`'"]+$/g, '').trim();
+  const quoted = /["']([^"']{3,})["']\s*$/.exec(t);
+  return (quoted ? quoted[1] : t).toLowerCase().replace(/\s+/g, ' ').trim();
+}
+
 export function appendLog(p, title, body) {
   fs.mkdirSync(path.dirname(p), { recursive: true });
   const existing = isFile(p) ? (fs.readFileSync(p, 'utf8').match(/\n/g) || []).length : 0;
@@ -632,7 +783,40 @@ export function changedDocs(root) {
   return paths;
 }
 
-export const REVIEW_ONLY_FILE = /^docs\/specs\/[^/]+\.(review\.md|progress\.md|log|events\.jsonl)$|(^|\/)(tests?|__tests__|spec)\/|\.(test|spec)\.[a-z]+$|(^|\/)test_[^/]+\.py$|_test\.(go|py|rb|rs)$/;
+/**
+ * The files a lane may write that its own spec does not list: its progress file, its review report, its event log,
+ * and the decision records a lane is allowed to add.
+ *
+ * ONE list, because two consumers need it and the two hand-kept copies had already drifted. ci_scope_diff allowed
+ * `<slug>.review.md` in a lane's diff and Lane.alwaysAllowed did not, so `/review` wrote the file CI was waiting
+ * for and the edit guard refused the write. A lane could not produce the report its own merge gate required.
+ *
+ * The check log is deliberately NOT here. It lives at Lane.logPath -- `.claude/session/<slug>.log`, where field
+ * test #44 moved it because a project's structure check rejects *.log under docs/ -- and every writer and reader
+ * agrees on that path (lane.js check, hook_post_edit_check, hook_done_check). `.claude/session/` is gitignored, so
+ * it never reaches a diff for CI to allow; the hooks write it directly, so no agent edit needs permitting; and the
+ * floor denies `Edit(.claude/**)` regardless. Both copies carried a `<work>/<slug>.log` entry left over from before
+ * the move, naming a path nothing has written since. Pointing it at the real log instead of dropping it would hand
+ * the agent write access to the evidence done-check reads (KIT-SPEC 10.14), which is the opposite of the fix.
+ */
+export function laneArtifacts(work, slug, root) {
+  return [
+    `${work}/${slug}.progress.md`,
+    `${work}/${slug}.review.md`,
+    `${work}/${slug}.events.jsonl`,
+    // the committed copy of the check log. The live log is gitignored (see above), so once the worktree is removed
+    // it is the only thing a `log#N` citation in the merged progress and review files can still resolve against,
+    // and the retro has nothing to read without it (#35). Line numbers are preserved, so the refs keep pointing.
+    `${work}/${slug}.checks.txt`,
+    `${decisionsRoot(root)}/*.md`,
+  ];
+}
+
+/** Files a review commit may touch without making the review stale: the lane's own artifacts under `work`, and tests. */
+export function reviewOnlyFile(work) {
+  const w = work.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  return new RegExp(`^${w}/[^/]+\\.(review\\.md|progress\\.md|log|events\\.jsonl)$|(^|/)(tests?|__tests__|spec)/|\\.(test|spec)\\.[a-z]+$|(^|/)test_[^/]+\\.py$|_test\\.(go|py|rb|rs)$`);
+}
 
 /**
  * A review names the commit it reviewed. It is current if that is HEAD, or HEAD's parent and the
@@ -655,7 +839,8 @@ export function reviewHeadOk(root, reviewedSha) {
   } catch {
     return false;
   }
-  return parent.startsWith(reviewedSha) && changed.every((f) => REVIEW_ONLY_FILE.test(f));
+  const reviewOnly = reviewOnlyFile(workRoot(root));
+  return parent.startsWith(reviewedSha) && changed.every((f) => reviewOnly.test(f));
 }
 
 /** A settings.json hook entry belongs to the kit when one of its commands runs a script from the installed kit (any version). */
@@ -668,4 +853,49 @@ export const isKitHookEntry = (entry) =>
  */
 export function laneFor(cwd, absPath) {
   return (absPath ? findLane(absPath) : null) ?? (cwd ? findLane(cwd) : null);
+}
+
+/** Lanes kit.json records as open whose recorded worktree still holds a lane.json. */
+export function activeLanes(root) {
+  const lanes = plainObject(loadKitJson(root)?.lanes ?? {});
+  const out = [];
+  for (const v of Object.values(lanes)) {
+    const wt = typeof plainObject(v).worktree === 'string' ? plainObject(v).worktree : '';
+    const lane = wt && isFile(path.join(wt, LANE_FILE)) ? findLane(wt) : null;
+    if (lane) out.push(lane);
+  }
+  return out;
+}
+
+/**
+ * The lane a hook is acting on, in three tiers, with the reason it was chosen.
+ *
+ * A subagent started by the main session reports the MAIN repo as `cwd`, not the worktree. Every hook that asked
+ * `findLane(d.cwd)` therefore found nothing and returned 0 for the tester, implementer and reviewer: the field run
+ * logged 373 events with `lane: null`, a 1-hour budget reached 6h43m with no `budget_exceeded`, the lane's own
+ * network declaration did not bind a subagent's Bash, and the gate protecting `.claude/settings.json` was blind in
+ * the one directory that file lives in. Five gates, one wrong derivation, repeated five times.
+ *
+ *   tool-path     the file the tool is touching is inside a worktree -- the strongest signal, and the only one
+ *                 hook_guard_edit ever used, which is why scope checking kept working when nothing else did
+ *   cwd           the session really is in the worktree (an attended lane session)
+ *   single-active kit.json records exactly one open lane: the subagent case, where no path and no cwd can help
+ *
+ * `ambiguous` (two or more open lanes) is NOT resolved by guessing. Each caller decides: the gates block, because a
+ * gate that cannot tell which lane it is protecting must not wave work through; the event log records the ambiguity
+ * instead of inventing an owner. `laneFor` stays the two-tier form, for hooks that always have the tool's path and
+ * where tier 3 would start gating edits made outside any lane.
+ */
+export function laneForHook(d) {
+  const data = plainObject(d);
+  const cwd = typeof data.cwd === 'string' && data.cwd ? data.cwd : '.';
+  const ti = plainObject(data.tool_input);
+  const p = ['file_path', 'notebook_path', 'path'].map((k) => ti[k]).find((v) => typeof v === 'string' && v);
+  const byPath = p ? findLane(path.isAbsolute(p) ? p : path.join(cwd, p)) : null;
+  if (byPath) return { lane: byPath, via: 'tool-path', slugs: [byPath.slug] };
+  const byCwd = findLane(cwd);
+  if (byCwd) return { lane: byCwd, via: 'cwd', slugs: [byCwd.slug] };
+  const active = activeLanes(repoRoot(cwd));
+  if (active.length === 1) return { lane: active[0], via: 'single-active', slugs: [active[0].slug] };
+  return { lane: null, via: active.length ? 'ambiguous' : 'none', slugs: active.map((l) => l.slug) };
 }

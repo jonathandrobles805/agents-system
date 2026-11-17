@@ -30,14 +30,28 @@ test('precheck refuses open question', (t) => {
   assert.ok(r.returncode === 2 && r.stderr.includes('open-questions'));
 });
 
-test('precheck refuses overlap and wip', (t) => {
-  const { root, commit } = project(t, { wipLimit: 1 });
+test('precheck refuses overlap', (t) => {
+  const { root, commit } = project(t, { wipLimit: 2 });
   const other = spec({ commit: commit.slice(0, 7), deps: 'none', extra: '' }).replaceAll('refund-route', 'other').replaceAll('Refund route', 'Other');
   write(path.join(root, 'docs', 'specs', 'other.md'), other);
-  const rm = path.join(root, 'ROADMAP.md');
-  write(rm, read(rm).replaceAll('| Other | other | M1 | queued |', '| Other | other | M1 | building |'));
   const r = lane('precheck', 'refund-route', '--repo', root);
-  assert.ok(r.returncode === 2 && r.stderr.includes("file overlap with active spec 'other'") && r.stderr.includes('WIP limit reached: 1/1'));
+  assert.ok(r.returncode === 2 && r.stderr.includes("file overlap with active spec 'other'"), r.stderr);
+});
+
+test('precheck refuses when the WIP limit is already taken by a live lane', (t) => {
+  const { root, commit } = project(t, { wipLimit: 1 });
+  // a second feature that touches different files, so only the WIP limit can refuse it
+  let other = spec({ commit: commit.slice(0, 7), deps: 'none', extra: '' }).replaceAll('refund-route', 'other').replaceAll('Refund route', 'Other');
+  other = other.replaceAll('src/api/routes.ts', 'src/api/other.ts').replaceAll('tests/routes.test.ts', 'tests/other.test.ts');
+  write(path.join(root, 'src', 'api', 'other.ts'), "import { PaymentService } from '../domain/payment';\nexport function other(s: PaymentService) {\n  return { charge: (u: string) => s.charge(u) };\n}\n");
+  write(path.join(root, 'docs', 'specs', 'other.md'), other);
+  commitAll(root, 'second spec');
+  // WIP is the number of worktrees holding a lane.json, not a word in ROADMAP (decision 0006): starting one takes it
+  assert.equal(JSON.parse(lane('wip', '--repo', root).stdout).in_flight, 0);
+  assert.equal(lane('start', 'other', '--repo', root).returncode, 0);
+  assert.equal(JSON.parse(lane('wip', '--repo', root).stdout).in_flight, 1);
+  const r = lane('precheck', 'refund-route', '--repo', root);
+  assert.ok(r.returncode === 2 && r.stderr.includes('WIP limit reached: 1/1 in flight (other)'), r.stderr);
 });
 
 test('start creates worktree lane and progress', (t) => {
@@ -51,7 +65,10 @@ test('start creates worktree lane and progress', (t) => {
   assert.ok(lj.feature === 'refund-route' && lj.stage === 'build' && lj.branch === 'wt/refund-route');
   const prog = read(wt, 'docs', 'specs', 'refund-route.progress.md');
   assert.ok(prog.includes('| D1 | routes exposes refund | `tests/routes.test.ts::exposes refund` | — | — |'));
-  assert.ok(read(wt, 'ROADMAP.md').includes('| Refund route | refund-route | M1 | building |'));
+  // #36: the status belongs on main, the only copy anyone reads to see what is in flight, and the lane's own
+  // ROADMAP is left exactly as the branch had it
+  assert.ok(read(root, 'ROADMAP.md').includes('| Refund route | refund-route | M1 | building |'));
+  assert.ok(!read(wt, 'ROADMAP.md').includes('| Refund route | refund-route | M1 | building |'));
   assert.equal(git(['branch', '--show-current'], wt).trim(), 'wt/refund-route');
   const kit = JSON.parse(read(root, '.claude', 'kit.json'));
   assert.ok('refund-route' in kit.lanes);
@@ -76,15 +93,36 @@ test('stage and finish', (t) => {
   assert.ok(!('refund-route' in JSON.parse(read(root, '.claude', 'kit.json')).lanes));
 });
 
-test('wip count', (t) => {
+test('#41 a raised review budget survives lane.js stage review', (t) => {
+  // A human raised the review budget to 400/4h; the next lane.js stage review put it back to the default and the
+  // budget hook stopped the lane again at 250 calls. A raise recorded in budget_override.<stage> outlives the stage change.
+  const { root } = project(t);
+  const wt = JSON.parse(lane('start', 'refund-route', '--repo', root).stdout).worktree;
+  const lf = path.join(wt, '.claude', 'lane.json');
+  const d = JSON.parse(fs.readFileSync(lf, 'utf8'));
+  d.budget_override = { review: { tool_calls: 400, hours: 4 } };
+  fs.writeFileSync(lf, JSON.stringify(d, null, 2));
+  assert.equal(lane('stage', 'refund-route', 'review', '--repo', root).returncode, 0);
+  const after = JSON.parse(fs.readFileSync(lf, 'utf8'));
+  assert.equal(after.stage, 'review');
+  assert.equal(after.budget.tool_calls, 400, JSON.stringify(after.budget));
+  assert.equal(after.budget.hours, 4, JSON.stringify(after.budget));
+  assert.deepEqual(after.budget_override, { review: { tool_calls: 400, hours: 4 } }, 'the override itself is kept');
+});
+
+test('wip count comes from the lane worktrees, not from ROADMAP', (t) => {
   const { root } = project(t, { wipLimit: 1 });
   let r = lane('wip', '--repo', root);
   assert.ok(r.returncode === 0 && JSON.parse(r.stdout).in_flight === 0);
-  lane('start', 'refund-route', '--repo', root);
-  const rm = path.join(root, 'ROADMAP.md');
-  write(rm, read(rm).replaceAll('| refund-route | M1 | queued |', '| refund-route | M1 | building |'));
+  assert.equal(lane('start', 'refund-route', '--repo', root).returncode, 0);
+  // no ROADMAP edit: lane.js start writes 'building' into the worktree's copy, which the main checkout never sees
+  assert.match(read(path.join(root, 'ROADMAP.md')), /\| refund-route \| M1 \| building \|/); // #36
   r = lane('wip', '--repo', root);
-  assert.ok(r.returncode === 2 && JSON.parse(r.stdout).in_flight === 1);
+  assert.ok(r.returncode === 2 && JSON.parse(r.stdout).in_flight === 1, r.stdout);
+  assert.deepEqual(JSON.parse(r.stdout).lanes, ['refund-route']);
+  // and /status reports the same number, because it calls the same function
+  const s = JSON.parse(runScript('kit_status.js', ['--repo', root, '--json']).stdout);
+  assert.deepEqual(s.wip, { in_flight: 1, limit: 1 });
 });
 
 test('index lookup reuse stale new', (t) => {
@@ -228,7 +266,8 @@ test('next in queue respects goal and wip', (t) => {
   write(rm, read(rm).replaceAll('| Other | other | M1 | queued |', '| Other | other | M1 | queued |'));
   r = lane('next', '--repo', root);
   assert.ok(r.returncode === 0 && JSON.parse(r.stdout).slug === 'other');
-  write(rm, read(rm).replaceAll('| refund-route | M1 | queued |', '| refund-route | M1 | building |'));
+  // taking the limit means a live lane, not a ROADMAP word; refund-route is the one with an approved spec
+  assert.equal(lane('start', 'refund-route', '--repo', root).returncode, 0);
   r = lane('next', '--repo', root);
-  assert.ok(r.returncode === 2 && JSON.parse(r.stdout).reason.includes('WIP 1/1'));
+  assert.ok(r.returncode === 2 && JSON.parse(r.stdout).reason.includes('WIP 1/1'), r.stdout);
 });

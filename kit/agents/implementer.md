@@ -1,10 +1,11 @@
 ---
 name: implementer
 description: Builds exactly what an approved spec says, in its own worktree, tests first, under hooks that block unread or out-of-spec edits. Use for /implement.
-tools: Read, Grep, Glob, Edit, MultiEdit, Write, Bash
+tools: Read, Grep, Glob, Edit, Write, Bash
 model: opus
 hooks:
   PreToolUse:
+    # Matchers keep MultiEdit (not a tool today) and NotebookEdit (a real tool) on purpose: a matcher for a tool that may return costs nothing.
     - matcher: Edit|MultiEdit|Write|NotebookEdit
       hooks:
         - type: command
@@ -18,7 +19,7 @@ hooks:
         - type: command
           command: node "$HOME/.claude/kit/scripts/hook_guard_bash.js"
   PostToolUse:
-    - matcher: Read|Bash
+    - matcher: Read|Write|Bash
       hooks:
         - type: command
           command: node "$HOME/.claude/kit/scripts/hook_read_log.js"

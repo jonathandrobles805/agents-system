@@ -43,6 +43,30 @@ export const LANE_RULES = [
 export const RM_RF = new RegExp(`${B}rm${S}+(-[a-zA-Z]*r[a-zA-Z]*f[a-zA-Z]*|-[a-zA-Z]*f[a-zA-Z]*r[a-zA-Z]*)${S}+([^\\n]+)`, 'gu');
 export const SECRET_CONTENT = /(AKIA[0-9A-Z]{16}|sk_live_[0-9a-zA-Z]{10,}|-----BEGIN (RSA |EC |OPENSSH )?PRIVATE KEY-----|ghp_[0-9A-Za-z]{20,}|xox[baprs]-[0-9A-Za-z-]{10,}|AIza[0-9A-Za-z_-]{30,})/;
 export const GIT_COMMIT = new RegExp(`${B}git${S}+commit${E}`, 'u');
+/**
+ * Fetching by hand. KIT-SPEC 10.1 denies curl and wget "unless the spec declares network access", and that
+ * condition is why the rule lives here and not in permissions.deny: a deny rule is unconditional, and it beats an
+ * allow rule, a hook's "allow" and every permission mode, so a project-level entry would also refuse the lane whose
+ * spec does declare a domain. Claude Code's own docs point at a PreToolUse hook for exactly this, and note that a
+ * text rule is not a boundary around a program anyway: `/usr/bin/curl` and `sh -c 'curl …'` do not match it
+ * [docs: https://code.claude.com/docs/en/permissions.md @ 2026-11-13]. The boundary is the sandbox's network
+ * allowlist, which is built from the same declaration (sandbox.js sandboxConfig); this rule makes the lane's intent
+ * reviewable and keeps the two from disagreeing.
+ */
+export const FETCH = new RegExp(`${B}(curl|wget)${E}`, 'u');
+export const URL_IN = /(?:https?:\/\/|\/\/)([A-Za-z0-9._-]+\.[A-Za-z]{2,})/gu;
+
+/** The reason a fetch must not run in this lane, or null when every host it names is declared. */
+export function fetchOk(cmd, specPath) {
+  if (!FETCH.test(cmd)) return null;
+  const declared = K.specNetwork(specPath);
+  if (declared.includes('*')) return null;
+  const hosts = [...new Set([...cmd.matchAll(URL_IN)].map((m) => m[1].toLowerCase()))];
+  if (!hosts.length) return 'fetching with curl/wget; the spec must declare the host under `## Network`';
+  const undeclared = hosts.filter((h) => !declared.includes(h));
+  if (!undeclared.length) return null;
+  return `fetching ${undeclared.join(', ')}; the lane's spec declares ${declared.length ? declared.join(', ') : 'no network access'}`;
+}
 const WHITESPACE = new RegExp(`${S}+`, 'u');
 
 const inside = (p, root) => p === root || p.startsWith(root.endsWith('/') ? root : root + '/');
@@ -109,8 +133,21 @@ export function main() {
     process.stderr.write(`guard-bash: the kill switch is set; no mutations until lane.js resume-all --by <name>\n`);
     return 2;
   }
-  const lane = K.findLane(cwd);
+  // A Bash call carries no file path, so a subagent -- which reports the main repo as cwd -- resolves only by
+  // tier 3. Until it did, every lane rule below (the branch rules and the spec's network declaration) was off for
+  // the tester, implementer and reviewer.
+  //
+  // Ambiguity is the one place here that does NOT fail closed, and the reason is in the rules themselves: they
+  // only ADD restrictions, so with two open lanes and no worktree there is no lane whose rules apply, and blocking
+  // every Bash call in a repository that is allowed two concurrent lanes by default would stop all work. The
+  // residue is real and is recorded as an event: with 2+ open lanes a subagent's Bash runs under the project rules
+  // alone. Closing it needs a session-to-lane record, which the kit does not keep.
+  const r = K.laneForHook(d);
+  const lane = r.lane;
   const events = lane ? lane.eventsPath : path.join(root, '.claude', 'session', 'events.jsonl');
+  if (r.via === 'ambiguous') {
+    K.appendEvent(events, { event: 'lane_unresolved', tool: 'Bash', result: 'ok', summary: `${r.slugs.length} lanes open (${r.slugs.join(', ')}); lane rules not applied` });
+  }
 
   const deny = (reason) => {
     K.appendEvent(events, { event: 'blocked', tool: 'Bash', command: [...cmd].slice(0, 200).join(''), result: 'blocked', summary: reason });
@@ -121,6 +158,13 @@ export function main() {
   if (lane) for (const [re, why] of LANE_RULES) if (re.test(cmd)) return deny(why);
   const bad = rmTargetsOk(cmd, root, cwd);
   if (bad) return deny(bad);
+  // A lane fetches only what its own spec declares. Outside a lane this rule has nothing to evaluate against -- the
+  // condition KIT-SPEC 10.1 states is the lane's spec -- and a human's session in a bootstrapped repo is not a lane,
+  // so their own curl is left alone. The other rules above are unconditional and apply to every session.
+  if (lane) {
+    const fetch = fetchOk(cmd, lane.specPath);
+    if (fetch) return deny(fetch);
+  }
   if (GIT_COMMIT.test(cmd)) {
     const hits = stagedSecrets(cwd);
     if (hits.length) return deny('staged files look like secrets: ' + hits.join('; '));

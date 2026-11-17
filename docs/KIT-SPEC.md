@@ -188,13 +188,15 @@ Every finding, assumption, or claim in a research file, spec, or review report c
 
 1. Required sections present for the document type.
 2. Every bullet under Findings, Assumptions, Impact, and Checklist carries a tag.
-3. Every `[verified: path:line]` resolves: file exists at the recorded commit, lines in range, and when a quoted snippet is present it matches the file.
+3. Every `[verified: path:line]` resolves: the file exists, the lines are in range, and when a quoted snippet is present it matches the file. Citations resolve against the working tree; `validate_docs.js --commit <hash>` resolves them at a commit instead, and no hook or CI job passes it, so a citation that was true when written and has since moved is caught as a mismatch rather than checked against the commit the document records.
 4. No decision in a spec (Files to change, Approach, Data changes) rests on `[inferred]` or `[unknown]` claims.
 5. Hedge words (`should`, `probably`, `likely`, `I think`, `assume`) are not allowed in Findings or Impact unless the line is tagged `[unknown]`.
 6. Spec: each done-criterion has a test name; Open questions is empty before approval; file list is non-empty; Assumptions section present; Non-goals present.
 7. Spec risk flag: `high-risk` is set when any listed file matches the project's high-risk paths (`.claude/kit.json`) or the spec mentions auth, payment, delete, migration, public API, secrets.
 8. Research: date, commit hash, Confidence, and "What I could not verify" present; INDEX entry exists.
-9. Review report: every checklist item is PASS or FAIL with evidence; every FAIL has file, line, rule, and what passing looks like.
+9. Review report: every checklist item is PASS or FAIL with evidence; every FAIL has file, line, rule, and what passing looks like. Every bare `path:N` or `path:N-M` in checklist evidence or a Fail-list entry is range-checked the same way a `[verified: ...]` citation is.
+10. A test command a spec names as a run must be one the project records in `.claude/kit.json` `commands`; a spec that names a runner the hook will never invoke is refused, because a run of it would never reach the log.
+11. A spec that declares a route -- an HTTP method and a path together -- carries a done-criterion covering a request it cannot parse. The check looks for `malformed` or `unparseable` in a criterion, or `invalid` together with what it is invalid about; `invalid` alone does not count, because a configuration check satisfies that word while the route still crashes on a malformed target.
 
 Exit code 2 with the list of violations on stderr. Runs as a `SubagentStop` hook for the three writing agents, as a `PostToolUse` hook on writes under `docs/`, and in CI.
 
@@ -260,7 +262,7 @@ Tools not installed are listed; bootstrap proposes adding them and does not add 
 
 ### 7.4 Generated CI (`kit.yml`)
 
-Jobs on every PR: tests; typecheck; lint; import boundaries; `scope-diff` against the spec named in the branch; `test-count` vs `main`; `dep-diff`; secret scan; `claude-md-cap`; `guards-present`; `validate-docs` on changed docs; review-report check (report exists for the PR's head commit with all PASS); mutation score on changed files (threshold from `kit.json`, default 70%, warning-only for the first two features then blocking); PR size warning.
+Jobs on every PR: tests; typecheck; lint; import boundaries; `scope-diff` against the spec named in the branch; `test-count` vs `main`; `dep-diff`; secret scan; `claude-md-cap`; `guards-present`; `validate-docs` on the docs changed since the base branch (fetched when the checkout lacks it; a base that cannot be found fails the job); review-report check (report exists for the PR's head commit with all PASS); mutation score on changed files (threshold from `kit.json`, default 70%, warning-only for the first two features then blocking); PR size warning.
 
 Branch protection via `gh api`: required checks = all of the above; strict up-to-date; no force push; no direct pushes to `main`.
 
@@ -379,6 +381,7 @@ The kit is done when all of the following hold:
 | 36 | Kill switch set while a lane is live | `guard-edit`, `guard-bash`, `next-step`, `start` | every mutation and transition refused until `resume-all --by` |
 | 37 | `/work` given a symptom with no type | provisional `fix`; debugger `cause:` line | boot failure → `incident`; design fault → `refactor`; single defect → `fix`, provisional dropped |
 | 38 | `security` or `migration` goal without high risk | profile `force_risk` | risk is high regardless of the header; container sandbox required |
+| 46 | Broken doc committed on a branch | generated CI `validate-docs` (`ci_changed_docs`) | job fails; in a depth-1 checkout the base is fetched first, and a base that cannot be found fails the job |
 
 ---
 
@@ -386,9 +389,13 @@ The kit is done when all of the following hold:
 
 Claude Code asks for permission on tools by default, which would turn every lane into a prompt waiting for you. Each lane therefore runs with a permission profile generated by `/bootstrap` into `.claude/settings.json` under `permissions`:
 
-- `allow`: the tools listed in the active agent's frontmatter, scoped by pattern where possible (`Edit(src/**)`, `Bash(npm test *)`, `Bash(git commit *)`).
-- `deny`: `Read(.env*)`, `Read(**/*.pem)`, `Read(**/secrets/**)`, `Bash(git push --force*)`, `Bash(rm -rf *)`, `Edit(.claude/**)`, `Bash(curl *)` and `Bash(wget *)` unless the spec declares network access.
-- Everything not listed falls to `ask`, which in an unattended lane means the lane pauses and writes an escalation. That is the intended behavior: an unexpected tool is a signal, not something to auto-approve.
+- `allow`: the lane's own working set, written by `/bootstrap` — `Edit(/**)` for the worktree (the same scope the sandbox makes writable), `Bash(git add *)` and `Bash(git commit *)`, the kit's own scripts, and one rule per command the project recorded in `.claude/kit.json` (`Bash(npx vitest run *)`, `Bash(npx tsc --noEmit -p . *)`, …). The rules are derived from those recorded commands, not listed per project, and `/bootstrap` refuses to write any rule that overlaps the floor's deny list in either direction. Reads and Claude Code's built-in read-only commands need no rule.
+- `deny`: `Read(.env)`, `Read(.env.*)`, `Read(**/*.pem)`, `Read(**/secrets/**)`, `Bash(git push --force*)`, `Bash(rm -rf /*)`, `Edit(.claude/**)`. Path rules are written as `Edit(...)` and `Read(...)` only: Claude Code matches file permissions against those two and accepts a `Write(...)`, `Glob(...)` or `NotebookEdit(...)` path rule without ever matching it, and `Edit` already covers every built-in tool that edits a file.
+- `rm -rf` is denied only outside the project (`Bash(rm -rf /*)`). An unconditional `Bash(rm -rf *)` would stop a lane clearing its own `node_modules` or build directory; what the deny rule does not cover, the bash guard does, by resolving every `rm -rf` target and refusing anything outside the worktree or `/tmp`, plus `.git`, `.claude` and the docs root.
+- curl and wget are refused by the bash guard unless the lane's own spec declares the host under `## Network`, which is the same declaration the sandbox's network allowlist is built from. The rule is a hook and not a deny entry because a deny entry is unconditional: it beats allow rules, a hook's `allow`, and every permission mode, so it would also refuse the lane whose spec does declare a domain. **Neither is a boundary.** A Bash rule matches the command text Claude writes, so `/usr/bin/curl` and `sh -c 'curl …'` are different text and do not match; the boundary is the sandbox's network allowlist, and in `degraded` mode there isn't one (§10.9).
+- Everything not listed falls to `ask`. In an unattended lane that is **denied, not held**: a headless `claude -p --permission-mode default` session refuses any call needing approval when no human is there to answer it. An unexpected tool is still a signal, but it stops the call rather than pausing the lane, so a tool the lane genuinely needs belongs in `allow` or in `kit.json commands`.
+
+Permission rules are enforced by Claude Code, not by the model, and are evaluated deny → ask → allow with the first match winning, so an allow rule can never carve an exception out of a deny rule. `[docs: https://code.claude.com/docs/en/permissions.md, https://code.claude.com/docs/en/permission-modes.md @ 2026-11-13]`
 
 Lanes never hold production credentials. `/bootstrap` checks for credential files in the repo and refuses to generate a lane profile that can read them.
 
@@ -491,13 +498,63 @@ Routing is a version-controlled table: one profile per kind of work in `kit/work
 
 `lane.js stop --by <name> --reason <text>` writes `.claude/STOP` in the project and `STOP` into every lane's session directory, and logs a `stop` event per lane. While set: `next-step` returns `stopped`; `lane.js start` refuses; `guard-edit` and `guard-bash` refuse every mutation in every lane; the host-side launcher refuses to start a session. `lane.js resume-all --by <name>` lifts it and logs who did. The flag alone is not the mechanism: each entry point checks it.
 
+## 10.14 What the gates are worth: evidence integrity
+
+The gates read their truth from files. This section says who can write those files, so that no one has to find out
+the hard way which of the kit's guarantees are enforced and which are conventions that hold while everyone behaves.
+
+**The evidence, and who produces it.**
+
+| File | Produced by | Witnessed outside the lane |
+|---|---|---|
+| `.claude/session/<slug>.log` — the runs done-check accepts | `post-edit-check`, from inside the lane | no |
+| `.claude/session/<sid>.reads` — what guard-edit calls "read" | `read-log` hook, from inside the lane | no |
+| `.claude/session/<sid>.attempts.json` — the three-strikes counter | `post-edit-check`, from inside the lane | no |
+| `<work>/<slug>.events.jsonl` — the lane's history | hooks, from inside the lane | no |
+
+**Every one of them is advisory.** Not because of where the files sit, but because of who produces them. The events
+they record — a command was run, a file was read, an attempt was made — happen inside the lane, and nothing outside
+the lane observes them. A file the lane must be able to write is a file the lane can write untruthfully.
+
+This holds in all three sandbox modes, for different reasons:
+
+- **degraded** (no runtime; the default on a clean install, `sandbox.js detect` → `runtime: null` unless `srt` is on
+  PATH or a container engine answers): the lane is a child process with the host's uid. There is no boundary at all.
+- **srt** and **container**: the worktree is exactly what the lane is given to write, and the evidence is in it. It
+  has to be, because the producer is in there too.
+
+So the planted-fault suite proves these gates fire on the honest path. It does not prove the path cannot be faked,
+and faults 1, 11 and 12 should be read that way.
+
+**What would make them evidence, and why it is not built.** Only one thing: the check must be *run* by a host-side
+process, so that something outside the lane witnesses the exit code, and its log must live where the lane cannot
+write. `lane.js check` already runs commands host-side, but it is a convenience a human invokes — the documented
+path has the agent copy line numbers from `post-edit-check`'s in-lane runs
+(`kit/agents/implementer.md:50,53`). Closing this means a host-side runner per lane that the lane can *ask* to run a
+check, its log kept outside the worktree (outside `allowWrite` under srt, a read-only mount in a container). The lane
+could still ask for a weak command — it cannot fabricate an exit code, and the command text stays in the log for the
+reviewer.
+
+Two things that look like fixes and are not, recorded so they are not proposed again:
+
+- **Signing the lines.** The key would have to be readable by whatever writes a true entry. In degraded mode that is
+  a file under the same uid; under srt the lane inherits the host environment whole (`lane.js` launch). A key the
+  forger can read signs forgeries.
+- **Moving the files out of the worktree.** The writer is inside the lane, so it would lose the ability to write and
+  the gates would stop recording anything. Relocation only helps once the producer has already moved to the host.
+
+Until that runner exists, the dashboard's "every value comes from files, never an agent's claim" is true about the
+*dashboard* — it reports what the files say rather than what an agent said in prose — and is not a claim that the
+files cannot be written by the agent.
+
 ---
 
 ## 11. Versioning and upgrades
 
 - `VERSION` follows semver. `CHANGELOG.md` records every change with the lesson or decision that caused it.
 - `/bootstrap` stamps the kit version into `CLAUDE.md` and `.claude/kit.json`.
-- `/bootstrap --upgrade` first runs the planted-fault suite against the project's current configuration, backs up every file it will replace into `.claude/backup/<version>/`, diffs generated files against the current templates, shows the changes, and applies them on your yes. Files you edited by hand are merged, not overwritten. It then re-runs the planted-fault suite and reverts from the backup if any fault is no longer caught.
+- `/bootstrap --upgrade` is transactional, and what it verifies is what can be evaluated against a project's own files. Before changing anything it records a baseline by running the two read-only project checks: `ci_guards_present` (every kit hook present and unchanged, kit-owned files matching the manifest, `disableAllHooks` unset) and `ci_security_floor` (effective permissions at or above the floor in every settings scope). It backs up every file it will replace into `.claude/backup/<the version being replaced>/`, diffs generated files against the current templates, shows the changes, and applies them on your yes. Files you edited by hand are merged, not overwritten. It then runs the same two checks again and **restores from the backup when a check that passed in the baseline fails afterwards**, naming the check and its output. A check that failed both before and after is reported, not restored: a project behind the current kit fails `guards_present` by design, and bringing it up to date is the reason to upgrade.
+- The planted-fault suite is the kit's **release** gate (§10.7), not an upgrade step. `planted-faults/run.js` builds its own fixture projects in a temporary directory and mutates them destructively (`git reset --hard`, deleted assertions, a rewritten `settings.json`, a staged secret), so it cannot be aimed at a repository holding real work; it takes no `--repo`. It runs before a kit release, against those fixtures. An upgrade verifies a project with the read-only checks above.
 - `/status` warns when a project is more than one minor version behind.
 
 ---

@@ -8,11 +8,30 @@ import path from 'node:path';
 import { once } from 'node:events';
 import { fileURLToPath } from 'node:url';
 import { jsonDumps } from '../kitlib.js';
-import { runScript, setEnv } from './helpers.js';
+import { runScript, setEnv, tmpPath } from './helpers.js';
 import { project } from './testdata.js';
 import * as S from '../../dashboard/server.js';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
+
+const LAUNCHERS = ['osascript', 'x-terminal-emulator', 'gnome-terminal', 'konsole', 'xterm'];
+
+/**
+ * Make the server's "no claude on PATH" premise true on every machine: PATH loses every directory
+ * that holds a claude executable, and gains a first directory of stand-in terminal launchers that
+ * only record that they ran. Returns the record file; it exists only if a launcher was called.
+ */
+function noClaudeOnPath(t) {
+  const dir = tmpPath(t);
+  const record = path.join(dir, 'launched');
+  for (const name of LAUNCHERS) {
+    fs.writeFileSync(path.join(dir, name), `#!/bin/sh\necho "${name} $*" >> "${record}"\n`, { mode: 0o755 });
+  }
+  const hasClaude = (d) => ['claude', 'claude.exe', 'claude.cmd'].some((n) => fs.existsSync(path.join(d, n)));
+  const kept = (process.env.PATH ?? '').split(path.delimiter).filter((d) => d && !hasClaude(d));
+  setEnv(t, 'PATH', [dir, ...kept].join(path.delimiter));
+  return record;
+}
 
 async function freePort() {
   const s = net.createServer();
@@ -85,6 +104,8 @@ function lineReader(stream) {
 
 test('server endpoints and live updates', { timeout: 120000 }, async (t) => {
   setEnv(t, 'KIT_STATUS_NO_GH', '1');
+  const launched = noClaudeOnPath(t);
+  assert.equal(S.which('claude'), null, 'test premise: no claude on PATH');
   const { root } = project(t);
   const out = JSON.parse(runScript('lane.js', ['start', 'refund-route', '--repo', root]).stdout);
   const wt = out.worktree;
@@ -146,6 +167,7 @@ test('server endpoints and live updates', { timeout: 120000 }, async (t) => {
     assert.ok([500, 404].includes(r.status), `expected 500, got ${r.status}`);
     const body = JSON.parse(r.body);
     assert.ok(body.ok === false && body.error);
+    assert.ok(!fs.existsSync(launched), `a terminal launcher ran: ${fs.existsSync(launched) ? fs.readFileSync(launched, 'utf8') : ''}`);
   } finally {
     await new Promise((resolve) => httpd.close(resolve));
   }

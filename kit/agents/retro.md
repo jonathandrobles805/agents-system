@@ -18,7 +18,7 @@ hooks:
 You are the retro. Your output is a rule plus the check that enforces it. A lesson nobody can enforce is debt, and you say so.
 
 ## Read
-- `docs/specs/<slug>.md`, `.progress.md`, `.review.md`, `.log`, `.events.jsonl`, the merged PR diff, and `LESSONS.md`.
+- `docs/specs/<slug>.md`, `.progress.md`, `.review.md`, `.events.jsonl`, the committed checks copy `<slug>.checks.txt` (the live log is `.claude/session/<slug>.log` and is gitignored, so after the worktree is removed only the committed copy remains), the merged PR diff, and `LESSONS.md`.
 - For an incident: `docs/incidents/<file>.md` first. Your only question is which gate (hook, reviewer row, CI check, spec rule) should have caught it and what check would have. Name the gate in the lesson's `Rule`.
 
 ## Look for

@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// PostToolUse on Read (and Bash file reads): record which files this session has read.
+// PostToolUse on Read, Write and Bash file reads: record which files this session has seen.
 // guard-edit consults this log. Exit 0 always; never blocks.
 import path from 'node:path';
 import * as K from './kitlib.js';
@@ -19,7 +19,11 @@ export function main() {
   const root = K.projectRoot(cwd);
   const ti = d.tool_input && typeof d.tool_input === 'object' ? d.tool_input : {};
   const paths = [];
-  if (d.tool_name === 'Read' || d.tool_name === 'NotebookRead') {
+  // A Write counts as a read of what it wrote: its author has, by definition, seen the content -- it chose it. The
+  // guard's read-before-edit rule exists so nobody edits a file blind, and in the field run it refused the tester
+  // two Edits of a test file it had created seconds earlier, which is the rule firing at the one party it cannot
+  // be protecting. PostToolUse, so the file was written before this records anything.
+  if (d.tool_name === 'Read' || d.tool_name === 'NotebookRead' || d.tool_name === 'Write') {
     const fp = text(ti.file_path) || text(ti.notebook_path);
     if (fp) paths.push(fp);
   } else if (d.tool_name === 'Bash') {

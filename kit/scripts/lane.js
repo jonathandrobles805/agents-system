@@ -14,6 +14,7 @@
 //   lane.js agent-for <work_type> <stage>      the one agent allowed for a stage; refuses unknown types and unlisted stages
 //   lane.js wip --repo R                      active lanes vs WIP limit
 //   lane.js unknowns <draft spec> --repo R    exit 0 none / 3 resolve (1..3, one researcher each) / 2 research insufficient (>3)
+//   lane.js evidence <slug> --repo R          copy the check log to <work>/<slug>.checks.txt
 //   lane.js roadmap-set <slug> <status> --repo R
 //   lane.js index lookup "<question>" --repo R [--json]   reuse | stale | new, from docs/research/INDEX.md
 //   lane.js index add "<question>" --repo R --slug S --keywords K --files F --commit C
@@ -53,6 +54,11 @@ const DOC = `lane: the mechanical half of the pipeline commands. Agents do the t
 Exit 0 ok, 2 refused (reasons on stderr), 1 usage/git error.`;
 
 export const ACTIVE = new Set(['researching', 'planning', 'waiting-approval', 'building', 'in-review', 'escalated', 'ready-to-merge']);
+/**
+ * Positions that mean a lane is under way. Kept as the documented vocabulary (KIT-SPEC 9.2, decision 0006) and used
+ * by readers of a lane's position; it is no longer the source of the WIP count, which wip() derives from the
+ * worktrees themselves because ROADMAP status is a record, not a source.
+ */
 export const IN_FLIGHT = new Set(['building', 'in-review', 'escalated', 'ready-to-merge']);
 
 // ---------------------------------------------------------------------------
@@ -230,8 +236,9 @@ export function refuse(msgs) {
   return 2;
 }
 
+/** The spec for a slug, under the project's lane-artifact root (KIT-SPEC 10.11, kit.json paths.work). */
 export function specPath(root, slug) {
-  return pjoin(root, 'docs', 'specs', `${slug}.md`);
+  return pjoin(root, K.workRoot(root), `${slug}.md`);
 }
 
 /** Header fields of a spec as a Map of lowercase key -> value (empty when the file is missing). */
@@ -284,7 +291,7 @@ export function roadmapSet(root, slug, status, cols = {}) {
 /** Specs that are approved or in flight, with the set of files each one touches. Returns [[slug, Set]]. */
 export function activeSpecs(root, exclude = null) {
   const out = [];
-  const dir = pjoin(root, 'docs', 'specs');
+  const dir = pjoin(root, K.workRoot(root));
   let names = [];
   try {
     names = fs.readdirSync(dir);
@@ -306,11 +313,28 @@ export function activeSpecs(root, exclude = null) {
   return out;
 }
 
-/** [in flight, limit, slugs]. */
+/**
+ * The lane worktree for a slug, or null when there is no lane: the path the main checkout's kit.json recorded at
+ * start, else the conventional one, and only when it holds a lane.json. This is the derivation kit-status has always
+ * used for position `building`; wip() and laneState share it so the two cannot report different numbers.
+ */
+export function laneWorktree(root, kit, slug) {
+  const lanes = asDict(kget(asDict(kit), 'lanes', {}));
+  const recorded = Object.hasOwn(lanes, slug) ? kget(asDict(lanes[slug]), 'worktree', '') : '';
+  const wt = recorded ? pjoin(recorded) : pjoin(lanesDir(root), slug);
+  return K.isFile(pjoin(wt, '.claude', 'lane.json')) ? wt : null;
+}
+
+/**
+ * [in flight, limit, slugs]. In flight means a worktree with a lane.json exists, derived from the filesystem.
+ * It used to count ROADMAP rows whose status is in IN_FLIGHT, which lane.js start never writes: start calls
+ * roadmapSet on the *worktree's* copy, so the main checkout's ROADMAP stayed `queued` and the limit was inert
+ * (two lanes opened under max_concurrent_lanes 1). ROADMAP status is a record, not a source (decision 0006).
+ */
 export function wip(root) {
   const kit = asDict(K.loadKitJson(root));
   const limit = pyInt(kget(kit, 'max_concurrent_lanes', kget(kit, 'wip_limit', 2))); // KIT-SPEC 10.9; wip_limit is the older name
-  const lanes = roadmapRows(root).filter((r) => IN_FLIGHT.has(r.status)).map((r) => r.slug);
+  const lanes = roadmapRows(root).map((r) => r.slug).filter((slug) => laneWorktree(root, kit, slug));
   return [lanes.length, limit, lanes];
 }
 
@@ -375,7 +399,7 @@ export function scope(root, slug) {
     K.appendEvent(pjoin(wt, '.claude', 'session', 'events.jsonl'), { event: 'risk', from: 'normal', to: 'high', summary: 'the approved spec raised the lane to high risk' });
     if (runtime !== 'container') K.appendEvent(pjoin(wt, '.claude', 'session', 'events.jsonl'), { event: 'waiver', what: 'high-risk without container', by: kget(waiverR, 'by', ''), reason: kget(waiverR, 'reason', ''), summary: `high-risk lane without container, waived by ${kget(waiverR, 'by', '')}` });
   }
-  const prog = pjoin(wt, K.workRoot(wt), `${slug}.progress.md`);
+  const prog = pjoin(wt, K.findLane(wt).work, `${slug}.progress.md`);
   const text = K.isFile(prog) ? readText(prog) : '';
   const sep = '|---|---|---|---|---|\n';
   const at = text.indexOf(sep);
@@ -398,8 +422,16 @@ export function scope(root, slug) {
 
 /**
  * Run a command for a done-criterion in the lane's worktree and append it to the lane log, the same way post-edit-check
- * does; prints the log reference to put in progress.md's Red run or Green run cell (field test #43). The reference is
- * evidence, not a claim: done-check reads the exit code on that log line.
+ * does; prints the log reference to put in progress.md's Red run or Green run cell (field test #43).
+ *
+ * This is the ONE place in the kit where a check is executed by a host-side process rather than from inside the lane,
+ * so it is the only point at which evidence could be made unforgeable — and it is not, today, for two reasons worth
+ * stating rather than discovering later. The log it appends to is inside the worktree, which the lane may write in
+ * every sandbox mode. And nothing routes the agent through here: kit/agents/implementer.md:50,53 has the agent copy
+ * line numbers from post-edit-check's in-lane runs, so this command is a convenience a human runs, not a gate.
+ *
+ * Making evidence real means making this the only producer and moving its log out of the lane's reach, which needs a
+ * way for the lane to ASK the host to run a check. KIT-SPEC 10.14 records that design and why it is not built.
  */
 export function check(root, slug, criterion, cmd) {
   const wt = pjoin(lanesDir(root), slug);
@@ -414,6 +446,48 @@ export function check(root, slug, criterion, cmd) {
   K.appendEvent(lane.eventsPath, { event: 'check', criterion, command: cmd, result: code === 0 ? 'ok' : 'fail', ref, summary: `${criterion}: exit ${code}` });
   process.stdout.write(K.jsonDumps({ criterion, exit: code, ref, tail: K.splitlines(out).slice(-8) }) + '\n');
   return 0;
+}
+
+/**
+ * What a lane would lose on merge. The check log lives in the gitignored `.claude/session/`, so every `log#N`
+ * citation in the merged progress and review files resolves against nothing once the worktree is removed, and the
+ * retro has no evidence to read. The events file is in the work root but nothing required it to be committed.
+ *
+ * Returns the problems, so `merged` can refuse and say which, and `evidence` can fix them.
+ */
+export function evidenceGaps(root, slug) {
+  const kit = asDict(K.loadKitJson(root));
+  const wt = laneWorktree(root, kit, slug);
+  const repo = wt ?? root;
+  const work = K.workRoot(repo);
+  const out = [];
+  const tracked = (rel) => pyStrip(K.git(['ls-files', '--', rel], repo)) !== '';
+  // The gate protects evidence that exists; it does not demand that evidence exist. A lane that ran no checks has
+  // nothing to lose, and whether a criterion needed a run is done-check's question, asked long before this one.
+  const lane = K.findLane(repo);
+  const liveLog = lane && K.isFile(lane.logPath);
+  for (const rel of [`${work}/${slug}.events.jsonl`, `${work}/${slug}.checks.txt`]) {
+    const exists = K.isFile(pjoin(repo, rel));
+    if (exists && !tracked(rel)) out.push(`${rel} exists but is not committed`);
+    else if (!exists && rel.endsWith('.checks.txt') && liveLog) {
+      out.push(`${rel} does not exist, but ${relativeTo(repo, lane.logPath)} does and is gitignored, so its log#N citations die with the worktree`);
+    }
+  }
+  return out;
+}
+
+/** Copy the live check log to the committed copy, line for line, so `log#N` citations keep resolving after merge. */
+export function evidence(root, slug) {
+  const kit = asDict(K.loadKitJson(root));
+  const wt = laneWorktree(root, kit, slug) ?? root;
+  const lane = K.findLane(wt);
+  if (!lane) return [`no lane.json for '${slug}'`];
+  const dest = pjoin(wt, lane.work, `${slug}.checks.txt`);
+  if (!K.isFile(lane.logPath)) return [`no check log at ${relativeTo(wt, lane.logPath)}; nothing has run yet`];
+  fs.mkdirSync(path.dirname(dest), { recursive: true });
+  fs.copyFileSync(lane.logPath, dest);
+  process.stdout.write(K.jsonDumps({ copied: relativeTo(wt, dest), from: relativeTo(wt, lane.logPath), lines: K.readLines(dest).length }) + '\n');
+  return [];
 }
 
 export function precheck(root, slug) {
@@ -433,6 +507,15 @@ export function precheck(root, slug) {
   const [n, limit, lanes] = wip(root);
   if (status === 'approved' && n >= limit) {
     problems.push(`WIP limit reached: ${n}/${limit} in flight (${lanes.join(', ')}). Merge or escalate one first.`);
+  }
+  // Derived state and the board must agree: a lane kit.json records as open is one main should show in flight.
+  // When they disagree the board is the stale one, and nobody reading it can tell (#36).
+  const byStatus = new Map(roadmapRows(root).map((r) => [r.slug, r.status]));
+  for (const s of Object.keys(asDict(kget(asDict(K.loadKitJson(root)), 'lanes', {})))) {
+    const st = byStatus.get(s);
+    if (st !== undefined && !IN_FLIGHT.has(st)) {
+      problems.push(`kit.json records lane '${s}' as open but main's ROADMAP row reads '${st}', which is not in flight; run lane.js roadmap-set ${s} building --repo <main repo>`);
+    }
   }
   const [, change, create] = K.specFileLists(sp);
   const mine = new Set([...change, ...create]);
@@ -469,6 +552,9 @@ export function start(root, slug, base) {
   if (problems.length) return refuse(problems);
   const kit = asDict(K.loadKitJson(root));
   base = base || kget(kit, 'default_branch', 'main');
+  // The project's lane-artifact root, read once on the host side and recorded in lane.json's spec field, so every
+  // reader inside the lane resolves the same directory for the life of the lane (Lane.work).
+  const work = K.workRoot(root);
   const wt = pjoin(lanesDir(root), slug);
   const branch = `wt/${slug}`;
   if (fs.existsSync(wt)) return refuse([`worktree ${wt} already exists; resume with /implement ${slug} inside it, or run lane.js finish first`]);
@@ -530,7 +616,7 @@ export function start(root, slug, base) {
   const now = K.isoSeconds();
   const startCommit = pyStrip(K.git(['rev-parse', 'HEAD'], wt));
   const lane = {
-    feature: slug, spec: `docs/specs/${slug}.md`, stage: reproFirst ? 'reproduce' : 'build', started: now, created: now,
+    feature: slug, spec: `${work}/${slug}.md`, stage: reproFirst ? 'reproduce' : 'build', started: now, created: now,
     base, branch, start_commit: startCommit, budget: kget(kget(kit, 'budgets', {}), 'build', {}),
     risk: highRisk ? 'high' : 'normal',
     work_type: fields.work_type, size: fields.size, domain: fields.domain,
@@ -553,16 +639,21 @@ export function start(root, slug, base) {
       if (cells.length >= 3) rows.push(`| ${cells[0]} | ${cells[1]} | ${cells[2]} | — | — |`);
     }
   }
-  const prog = pjoin(wt, 'docs', 'specs', `${slug}.progress.md`);
+  const prog = pjoin(wt, work, `${slug}.progress.md`);
   writeText(
     prog,
-    `# Progress: ${slug}\n\n- Spec: \`docs/specs/${slug}.md\`\n- Worktree: \`${wt}\`\n- Branch: \`${branch}\`\n- Started: ${now}\n- Last update: ${now}\n\n` +
+    `# Progress: ${slug}\n\n- Spec: \`${work}/${slug}.md\`\n- Worktree: \`${wt}\`\n- Branch: \`${branch}\`\n- Started: ${now}\n- Last update: ${now}\n\n` +
       '## Done-criteria\n\n| # | Criterion | Test | Red run | Green run |\n|---|---|---|---|---|\n' + rows.join('\n') +
       (reproFirst ? "\n\n## Reproduction\n\n<!-- debugger: the steps, what happens, what should happen, the failing command and its output; end with exactly one cause: line. The criteria table above is filled by lane.js scope once the spec is approved. -->\n" : '') +
       (reproFirst ? '\n## Current step\n\nreproducing' : "\n\n## Current step\n\nreading the spec's files") +
       '\n\n## Uncertainties\n\n- none\n\n## Escalation\n\n- Attempts: {{n}} of 3\n- Failure: {{what fails}}\n- Tried: {{what each attempt changed}}\n- Needs: {{decision or information}}\n',
   );
-  roadmapSet(wt, slug, 'building', { lane: relativeTo(path.dirname(root), wt) });
+  // The status goes on MAIN, which is the only copy anyone reads to see what is in flight. Writing it into the
+  // worktree left the main checkout at waiting-approval through build and both reviews of the field run, and
+  // waiting-approval is not in IN_FLIGHT, so a WIP check there counted nothing. cbfaeb5 worked around that by
+  // deriving the count from kit.json; this fixes the writer. Uncommitted on main, exactly as the kit.json
+  // registration below is: the lane does not own main's history.
+  roadmapSet(root, slug, 'building', { lane: relativeTo(path.dirname(root), wt) });
   // register the lane in the main checkout's kit.json (not committed by the lane)
   const kj = pjoin(root, '.claude', 'kit.json');
   if (K.isFile(kj)) {
@@ -630,7 +721,8 @@ export function setStage(root, slug, stage) {
   const data = asDict(JSON.parse(readText(lf)));
   data.stage = stage;
   data.started = K.isoSeconds();
-  data.budget = kget(kget(asDict(K.loadKitJson(root)), 'budgets', {}), stage, {});
+  // #41: a human's raise (budget_override.<stage>) outlives the stage change; it used to be overwritten by the default.
+  data.budget = { ...asDict(kget(kget(asDict(K.loadKitJson(root)), 'budgets', {}), stage, {})), ...asDict(kget(asDict(kget(data, 'budget_override', {})), stage, {})) };
   writeText(lf, K.jsonDumps(data, { indent: 2 }) + '\n');
   process.stdout.write(`lane ${slug}: stage ${stage}\n`);
   return 0;
@@ -823,7 +915,11 @@ export async function nextStep(root, slug) {
     prof = profileFor(fields.work_type);
   }
   // The spec may raise the risk the goal declared (the validator derives it from the paths touched); never lower it.
-  for (const sp of [specPath(root, slug), pjoin(lanesDir(root), slug, K.workRoot(root), `${slug}.md`)]) {
+  const laneSpec = (() => {
+    const l = K.findLane(pjoin(lanesDir(root), slug));
+    return l ? pjoin(l.root, l.work, `${slug}.md`) : null;
+  })();
+  for (const sp of [specPath(root, slug), ...(laneSpec ? [laneSpec] : [])]) {
     if (K.isFile(sp) && (specHeader(sp).get('risk') ?? '').toLowerCase().includes('high')) fields = { ...fields, risk: 'high' };
   }
   const ctx = { KS, kit, rows, row, g };
@@ -839,7 +935,8 @@ export function rerouteFromEvidence(root, slug, fields, prof) {
   const table = asDict(kget(prof, 'reroute', {}));
   if (!Object.keys(table).length) return null;
   const wt = pjoin(lanesDir(root), slug);
-  const prog = pjoin(fs.existsSync(wt) ? wt : root, K.workRoot(root), `${slug}.progress.md`);
+  const inLane = fs.existsSync(wt) ? K.findLane(wt) : null;
+  const prog = pjoin(inLane ? wt : root, inLane ? inLane.work : K.workRoot(root), `${slug}.progress.md`);
   if (!K.isFile(prog)) return null;
   const m = /^cause:\s*(.+)$/m.exec(readText(prog));
   if (!m) return null;
@@ -904,8 +1001,7 @@ async function nextStepRepro(root, slug, ctx) {
   if (['start', 'retro', 'done', 'escalated', 'wait-merge', 'review'].includes(feat.stage)) return feat;
   const wt = pjoin(lanesDir(root), slug);
   if (!K.isFile(pjoin(wt, '.claude', 'lane.json'))) return { slug, stage: 'lane', reason: 'agreed goal; a fix lane opens from the goal alone' };
-  const work = K.workRoot(wt);
-  const prog = pjoin(wt, work, `${slug}.progress.md`);
+  const prog = pjoin(wt, K.findLane(wt).work, `${slug}.progress.md`);
   if (!/^cause:\s*\S/m.test(K.isFile(prog) ? readText(prog) : '')) return { slug, stage: 'reproduce', reason: 'no cause: line in the progress file yet' };
   return inLanePlanning(root, slug) ?? feat;
 }
@@ -920,7 +1016,7 @@ export function inLanePlanning(root, slug) {
   const wt = pjoin(lanesDir(root), slug);
   const lj = pjoin(wt, '.claude', 'lane.json');
   if (!K.isFile(lj)) return null;
-  const sp = pjoin(wt, K.workRoot(wt), `${slug}.md`);
+  const sp = pjoin(wt, K.findLane(wt).work, `${slug}.md`);
   if (!K.isFile(sp)) return { slug, stage: 'plan', reason: 'the lane has no spec yet' };
   if (!APPROVAL_RE.test(readText(sp))) {
     const status = (specHeader(sp).get('status') ?? '').toLowerCase();
@@ -1114,6 +1210,8 @@ export async function main(argv = process.argv.slice(2)) {
   s.addArgument('--repo', { default: '.' });
   s = sub.addParser('unknowns');
   s.addArgument('spec'); s.addArgument('--repo', { default: '.' }); s.addArgument('--json', { action: 'store_true' });
+  s = sub.addParser('evidence');
+  s.addArgument('slug'); s.addArgument('--repo', { default: '.' });
   s = sub.addParser('roadmap-set');
   s.addArgument('slug'); s.addArgument('status'); s.addArgument('--repo', { default: '.' }); s.addArgument('--pr'); s.addArgument('--spec');
   s = sub.addParser('index');
@@ -1170,6 +1268,10 @@ export async function main(argv = process.argv.slice(2)) {
     process.stdout.write(relativeTo(root, p) + '\n');
     return 0;
   }
+  if (a.cmd === 'evidence') {
+    const problems = evidence(root, a.slug);
+    return problems.length ? refuse(problems) : 0;
+  }
   if (a.cmd === 'merged') {
     // Verify in git before writing the word: refuse to mark a lane merged that is not an ancestor of base.
     const kit = asDict(K.loadKitJson(root));
@@ -1183,6 +1285,12 @@ export async function main(argv = process.argv.slice(2)) {
     const startC = kget(kget(kget(kit, 'lanes', {}), a.slug, null) || {}, 'start_commit', null);
     if (tip && (tip === startC || spawnSync('git', ['merge-base', '--is-ancestor', tip, base], { cwd: root }).status !== 0)) {
       return refuse([`wt/${a.slug} is not merged into ${base} yet (no lane commits in ${base})`]);
+    }
+    // The worktree is about to go, and with it the gitignored check log every log#N citation points at (#35).
+    const gaps = evidenceGaps(root, a.slug);
+    if (gaps.length) {
+      return refuse([...gaps.map((g) => `evidence: ${g}`),
+        `Run: node "$HOME/.claude/kit/scripts/lane.js" evidence ${a.slug} --repo <main repo>, then commit the result on the lane branch before merging. Without it the merged progress and review files cite a log nobody can open.`]);
     }
     const cols = a.pr ? { pr: a.pr } : {};
     const ok = roadmapSet(root, a.slug, 'merged', { lane: '—', ...cols });

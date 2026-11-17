@@ -129,6 +129,8 @@ function pyPathArg(v) {
 const globalOf = (re) => new RegExp(re.source, re.flags.includes("g") ? re.flags : re.flags + "g");
 const ANY_TAG_G = globalOf(K.ANY_TAG);
 const TAG_VERIFIED_LINES_G = globalOf(K.TAG_VERIFIED_LINES);
+// a bare `path/to/file.ext:12` or `:12-20`, with or without backticks, as review evidence is written
+const BARE_CITATION_G = /`?([A-Za-z0-9_./-]+\.[A-Za-z0-9]{1,5}):(\d+)(?:-(\d+))?`?/g;
 const TAG_DOCS_G = globalOf(K.TAG_DOCS);
 export const HIGH_RISK_KEYWORDS_SCAN = globalOf(K.HIGH_RISK_KEYWORDS);
 
@@ -145,7 +147,7 @@ function kitDir() {
   return K.KIT_DIR;
 }
 
-export function detectType(p) {
+export function detectType(p, work = 'docs/specs') {
   const s = pyNorm(p);
   const name = s === "." || s === "/" ? "" : s.slice(s.lastIndexOf("/") + 1);
   if (name === "LESSONS.md") return "lesson";
@@ -153,7 +155,7 @@ export function detectType(p) {
   if (s.includes("/docs/research/") || s.startsWith("docs/research/")) {
     return name.toUpperCase() === "INDEX.MD" ? null : "research";
   }
-  if (s.includes("/docs/specs/") || s.startsWith("docs/specs/")) {
+  if (s.includes(`/${work}/`) || s.startsWith(`${work}/`)) {
     if (name.endsWith(".review.md")) return "review";
     if (name.endsWith(".progress.md") || name.endsWith(".log") || name.endsWith(".jsonl")) return null;
     return "spec";
@@ -225,6 +227,26 @@ export class Validator {
         if (m) this.add(p, n, "hedge-word", `'${m[0]}' is not evidence; verify it or tag [unknown]`);
       }
       this.resolveCitations(p, n, body);
+    }
+  }
+
+  /**
+   * A bare `path:N` or `path:N-M`, as review evidence is written. Only citations wrapped in
+   * `[verified: path:N-M]` were range-checked, so review round 1 of the field run cited a spec at lines 306-308
+   * and 92 when the file had 289 lines and the section it named was on line 7, and nothing objected.
+   */
+  resolveBareCitations(p, n, body) {
+    for (const m of body.matchAll(BARE_CITATION_G)) {
+      const rel = m[1];
+      // only paths that look like this repository's files, so prose and version numbers are not citations
+      if (!/\.[a-z0-9]{1,5}$/i.test(rel) || /^https?:/.test(rel)) continue;
+      const start = Number(m[2]);
+      const end = Number(m[3] ?? m[2]);
+      const lines = K.fileLinesAt(this.root, rel, this.commit);
+      if (lines === null) continue; // a path this repo does not have is not a citation to range-check
+      if (start < 1 || end > lines.length || start > end) {
+        this.add(p, n, "citation-out-of-range", `${rel} has ${lines.length} lines; cited ${m[2]}${m[3] ? `-${m[3]}` : ""}`);
+      }
     }
   }
 
@@ -306,6 +328,94 @@ export class Validator {
     if (fnd && !fnd.bullets().length) this.add(p, fnd.start, "empty-findings", "Findings has no bullets");
   }
 
+  /**
+   * A spec that declares a route must say what the route does with input it cannot parse.
+   *
+   * In the field run the Approach prescribed `new URL(req.url, 'http://localhost')` and a raw `GET //` threw
+   * ERR_INVALID_URL uncaught, killing the server (review round 1, R11). Planning had covered bad PORT values and
+   * nothing about bad request input, because nothing required it to.
+   *
+   * WHY THIS IS NOT A LIST OF RISKY FUNCTIONS. The issue proposed matching `new URL(`, `JSON.parse(` and
+   * `decodeURIComponent(` in the Approach. Two things are wrong with that. It is open-ended -- the next entry
+   * (`querystring.parse`, a hand-rolled regex, `Buffer.from`) is always the one that was missing -- and it keys on
+   * how the work is implemented, which is not what receives malformed input. This keys on what the spec PROMISES:
+   * a method-and-path pair is a declared HTTP interface, and anything reachable from outside gets input its author
+   * did not choose. The vocabulary is closed -- the HTTP methods are a fixed set defined by the protocol, not by
+   * which libraries exist -- so it does not grow.
+   *
+   * What it is NOT: a proof. "Declares a route" has to be recognised somehow, and this recognises it from a method
+   * and a path appearing together. A spec that serves requests without ever writing one down is not detected, and
+   * a spec that writes `GET /foo` in prose about something else is. Both are judgement calls a reviewer still has
+   * to make; this only makes the common case impossible to forget.
+   */
+  checkMalformedInput(p, sections) {
+    const ROUTE = /\b(GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS)\s+\/\S*/;
+    let declared = null;
+    for (const name of ["summary", "goal", "done-criteria", "files to change", "files to create", "approach"]) {
+      const sec = sections.get(name);
+      for (const [n, line] of sec?.lines ?? []) {
+        const m = ROUTE.exec(line);
+        if (m) { declared = { n, what: m[0], where: name }; break; }
+      }
+      if (declared) break;
+    }
+    if (!declared) return;
+    const dc = sections.get("done-criteria");
+    // #34 specifies /malformed|invalid|unparseable/i. Applied to the run that produced the issue, that regex PASSES:
+    // the spec's criteria already said "an invalid PORT value is rejected", and the server still died on `GET //`.
+    // So "invalid" on its own proves nothing -- a config check satisfies it -- and it counts only when the row also
+    // names the surface the request arrives on. "malformed" and "unparseable" describe input that cannot be read and
+    // need no qualifier. The vocabulary is #34's; what is added is which of its words carry the claim.
+    const SURFACE = /\b(request|input|url|uri|path|target|body|payload|header|query|querystring|method|json|utf-?8)\b/i;
+    const covered = (dc?.tableRows() ?? []).some(([, cells]) => {
+      const row = cells.join(" ");
+      if (/malformed|unparseable/i.test(row)) return true;
+      return /\binvalid\b/i.test(row) && SURFACE.test(row);
+    });
+    if (!covered) {
+      this.add(p, dc ? dc.start : declared.n, "unhandled-parse",
+        `this spec declares a route ('${declared.what}' in ${declared.where}) but no done-criterion covers input it cannot parse; ` +
+        "add one naming what the route returns for a request it cannot parse. This looks for 'malformed' or " +
+        "'unparseable' in a criterion, or 'invalid' together with what it is invalid about (request, url, path, body, header, query, json)");
+    }
+  }
+
+  /**
+   * A test command a spec names must be one the kit will actually run. The field run's spec told the tester to run
+   * `node --test` before package.json existed; the hook runs `commands.test`, which was `npm test`, so seven
+   * exit-254 entries were logged and the real red results never were. Review round 1 failed on it.
+   *
+   * Only commands recognisable as test runs are compared -- the ones naming a test runner the project has recorded
+   * -- so a spec may still show a curl, a migration or a build step without being told it is wrong.
+   */
+  checkRedRunCommand(p, sections) {
+    const kitObj = this.kit && typeof this.kit === "object" && !Array.isArray(this.kit) ? this.kit : {};
+    const cmds = kitObj.commands && typeof kitObj.commands === "object" && !Array.isArray(kitObj.commands) ? kitObj.commands : {};
+    const known = ["test", "test_affected", "test_file", "coverage", "integration"]
+      .map((k) => (typeof cmds[k] === 'string' ? cmds[k].split('{')[0].trim() : ''))
+      .filter(Boolean);
+    if (!known.length) return;
+    const runners = [...new Set(known.map((c) => c.split(/\s+/).slice(0, 2).join(' ')))];
+    for (const name of ["red run", "approach", "test plan", "done-criteria"]) {
+      const sec = sections.get(name);
+      if (!sec) continue;
+      for (const [n, line] of sec.lines ?? []) {
+        for (const m of line.matchAll(/`([^`]{3,120})`/g)) {
+          const cmd = pyStrip(m[1]);
+          // It has to be a command before it can be the wrong command: something with an argument, whose first
+          // token is a program rather than a path. A backticked `tests/routes.test.ts` is a file, not a run.
+          const toks = cmd.split(/\s+/);
+          if (toks.length < 2 || toks[0].includes("/") || toks[0].includes(".")) continue;
+          const firstTwo = toks.slice(0, 2).join(" ");
+          // \b, not \s: the field run's command was `node --test`, where the word is preceded by a hyphen
+          if (!/\b(test|tests|spec|vitest|jest|mocha|pytest|unittest)\b/i.test(cmd)) continue;
+          if (known.some((k) => cmd.startsWith(k)) || runners.includes(firstTwo)) continue;
+          this.add(p, n, "red-run-command", `'${cmd}' is not a command this project runs; the hook runs ${known.map((k) => `'${k}'`).join(' or ')}, so a run of this would never be logged`);
+        }
+      }
+    }
+  }
+
   spec(p, lines) {
     const clean = K.stripHtmlComments(lines);
     this.checkPlaceholders(p, clean);
@@ -318,6 +428,8 @@ export class Validator {
       this.checkTaggedBullets(p, sections.get(name), new Set(["verified", "docs"]));
     }
     this.checkCmdBlocks(p, sections.get("impact analysis"));
+    this.checkRedRunCommand(p, sections);
+    this.checkMalformedInput(p, sections);
     this.checkTaggedBullets(p, sections.get("assumptions"), new Set(["verified", "docs", "inferred"]));
     // Files to change must be non-empty
     const ftc = sections.get("files to change");
@@ -414,6 +526,7 @@ export class Validator {
         if (!evidence || ["—", "-", "n/a", "N/A"].includes(evidence) || pyLen(evidence) < 6) {
           this.add(p, n, "checklist-no-evidence", `${rid} has no evidence (file:line, log line, or command output)`);
         }
+        this.resolveBareCitations(p, n, evidence); // #33: evidence that points past the end of a file is not evidence
         if (result === "FAIL") fails.push(rid);
       }
     }
@@ -428,6 +541,7 @@ export class Validator {
         if (!body.toLowerCase().includes("rule:") || !body.toLowerCase().includes("passing looks like:") || !FAIL_LOCATION.test(body)) {
           this.add(p, n, "fail-entry", "fail entry needs `file:line`, 'rule:', and 'passing looks like:'");
         }
+        this.resolveBareCitations(p, n, body); // #33: the `file:line` a fail entry points at must exist
       }
     }
     for (const rid of fails) {
@@ -502,7 +616,7 @@ export class Validator {
   }
 
   run(p, kind = null) {
-    kind = kind || detectType(p);
+    kind = kind || detectType(p, K.workRoot(this.root));
     if (kind === null) return;
     if (!K.isFile(p)) {
       this.add(p, 1, "missing-file", "file not found");

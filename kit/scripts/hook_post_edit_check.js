@@ -30,14 +30,46 @@ const text = (v) => (typeof v === 'string' ? v : '');
 const clip = (s, n) => Array.from(s.slice(0, 2 * n)).slice(0, n).join('');
 const readText = (p) => fs.readFileSync(p, 'utf8').replace(/\r\n?/g, '\n');
 
-/** Stable id for 'the same failure': the failing test names when parseable, else the last meaningful lines. */
-export function failureSignature(name, out) {
-  const names = [...new Set([...out.matchAll(FAILED_TEST)].map((m) => clip(m[1].trim(), 120)))].sort();
+/**
+ * Everything in a run's output that changes between two runs of the same failing tests: how long it took, where
+ * the temp files went, when it happened. Without this the signature of an unchanged failure is new every time.
+ * Not a list of things to ignore -- these are the shapes of a measurement, and a measurement cannot identify a
+ * failure. What identifies it is which tests failed, which is why that is tried first.
+ */
+export function normalizeRun(out) {
+  return out
+    .replace(/\b\d{4}-\d\d-\d\dT[\d:.]+Z?\b/g, '<t>')
+    .replace(/\b\d+(?:\.\d+)?\s*(?:ms|s|sec|secs|seconds|us|ns)\b/gi, '<d>')
+    .replace(/\b(?:duration(?:_ms)?|elapsed|time|took)\b\s*[:=]?\s*[\d.]+/gi, '<d>')
+    .replace(/(?:\/[\w.@+-]+){2,}/g, '<p>')
+    .replace(/\b[0-9a-f]{7,40}\b/gi, '<h>')
+    .replace(/\b\d{4,}\b/g, '<n>');
+}
+
+/**
+ * Stable id for 'the same failure': which tests failed, and only if nothing can be parsed, the normalized tail.
+ *
+ * The counter this feeds could not reach three. FAILED_TEST matches jest-style "FAIL name" lines and never TAP's
+ * `not ok 1 - name`, so for a TAP runner the signature fell through to the raw last five lines -- which carry a
+ * duration and a timestamped temp path -- and the same failure got a fresh signature on every run. All 13 attempt
+ * events in the field run read "attempt 1/3", seven of them the same npm failure.
+ *
+ * The failing names now come from the same parser done-check uses (#30), so "which tests failed" is answered one
+ * way in the kit rather than two.
+ */
+export function failureSignature(name, out, root = null) {
+  const parsed = K.resultLines(K.splitlines(out), K.resultPatterns(root)).filter((r) => !r.ok).map((r) => clip(r.name, 120));
+  const matched = [...out.matchAll(FAILED_TEST)].map((m) => clip(m[1].trim(), 120));
+  const names = [...new Set([...parsed, ...matched])].sort();
   if (names.length) return name + ':' + names.slice(0, 8).join('|');
-  const tail = K.splitlines(out).map((l) => l.trim()).filter(Boolean).slice(-5);
+  const tail = K.splitlines(normalizeRun(out)).map((l) => l.trim()).filter(Boolean).slice(-5);
   return name + ':' + clip(tail.join('|'), 400);
 }
 
+/**
+ * The three-strikes counter. ADVISORY: it is a file inside the worktree, so the lane can reset it, and the thing it
+ * counts — an edit attempt against the same failure — is observed only inside the lane (KIT-SPEC 10.14).
+ */
 function attemptsPath(lane, sid) {
   const dir = path.join(lane.root, K.SESSION_DIR);
   fs.mkdirSync(dir, { recursive: true });
@@ -155,6 +187,16 @@ export function main() {
   const events = lane ? lane.eventsPath : path.join(root, '.claude', 'session', 'events.jsonl');
   const failures = [];
   const sid = text(d.session_id) || 's';
+
+  // Writing up the work is not working on the code. An edit to one of the lane's own artifacts -- its progress
+  // file, its review report, its event log -- used to run the project's whole suite and, because the suite was red
+  // at the time, record an `attempt` against the three-strikes counter: in the field run three full `npm test`
+  // runs started that way, each counted as a failed attempt to fix something nobody had touched. The counter is
+  // for edits to the code under test, so these return before any step runs. A Bash call is not covered: it has no
+  // single path to judge, and shell writes are exactly what the scope check below exists to catch.
+  if (lane && rel && d.tool_name !== 'Bash' && K.globMatch(rel, K.laneArtifacts(lane.work, lane.slug, lane.root))) {
+    return 0;
+  }
   const redSigs = []; // [signature, log ref] for failing test/typecheck steps this call
   let testGreen = false;
 
@@ -173,7 +215,7 @@ export function main() {
     K.appendEvent(events, { event: name, tool: 'hook', command: cmd, result: code === 0 ? 'ok' : 'fail', summary, ref: `${path.basename(log)}#${line}`, path: rel });
     if (code !== 0) {
       failures.push(`[${name}] ${cmd} -> exit ${code} (log ${path.basename(log)}#${line})\n${K.splitlines(out).slice(-40).join('\n')}`);
-      if (name === 'test' || name === 'typecheck') redSigs.push([failureSignature(name, out), `${path.basename(log)}#${line}`]);
+      if (name === 'test' || name === 'typecheck') redSigs.push([failureSignature(name, out, root), `${path.basename(log)}#${line}`]);
     } else if (name === 'test') {
       testGreen = true;
     }

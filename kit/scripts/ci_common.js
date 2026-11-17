@@ -443,6 +443,46 @@ export function laneSlug(root) {
   return m ? m[1] : null;
 }
 
+/** True when `git <args>` exits 0. Output is discarded; stdin is closed. */
+function gitOk(args, cwd) {
+  try {
+    execFileSync('git', args, { cwd, stdio: 'ignore' });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Make `base` usable for a `base...HEAD` diff, or say why it is not. A CI checkout made at depth 1 or for one branch
+ * has neither the base ref nor the history down to the merge-base, and changedFiles() then either throws or falls back
+ * to a two-dot diff against the wrong commits. So: fetch the base from its remote when the ref is missing, unshallow
+ * when there is no merge-base, and report whatever is still missing. Returns null when ready, else the reason; a
+ * missing base is never treated as "nothing changed". Fetches are non-interactive (no prompt, stdin closed).
+ */
+export function ensureBase(root, base) {
+  const errors = [];
+  const fetch = (args) => {
+    try {
+      execFileSync('git', ['fetch', '--no-tags', '-q', ...args], {
+        cwd: root, stdio: ['ignore', 'pipe', 'pipe'], timeout: 300000, env: { ...process.env, GIT_TERMINAL_PROMPT: '0' },
+      });
+    } catch (e) {
+      errors.push(pyStrip(String(e.stderr ?? e.message)));
+    }
+  };
+  const resolves = () => gitOk(['rev-parse', '--verify', '--quiet', `${base}^{commit}`], root);
+  const m = /^([^/]+)\/(.+)$/.exec(base);
+  const remote = m && gitOk(['remote', 'get-url', m[1]], root) ? m[1] : null;
+  const tail = () => (errors.length ? `: ${errors.join('; ')}` : '');
+  if (!resolves() && remote) fetch([remote, `+refs/heads/${m[2]}:refs/remotes/${remote}/${m[2]}`]);
+  if (!resolves()) return `base '${base}' not found${remote ? ` and could not be fetched from '${remote}'` : ''}${tail()}`;
+  const mergeBase = () => gitOk(['merge-base', base, 'HEAD'], root);
+  if (!mergeBase() && remote && pyStrip(gitPy(['rev-parse', '--is-shallow-repository'], root)) === 'true') fetch(['--unshallow', remote]);
+  if (!mergeBase()) return `base '${base}' and HEAD have no common ancestor in this checkout${tail()}`;
+  return null;
+}
+
 export function changedFiles(root, base) {
   let out;
   try {

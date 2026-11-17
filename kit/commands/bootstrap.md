@@ -44,7 +44,7 @@ Then:
 ```
 node "$HOME/.claude/kit/scripts/bootstrap.js" --repo "$PWD" --upgrade --json
 ```
-Show what was backed up (`.claude/backup/<version>/`), what was regenerated, and that human-owned files were left alone except the version stamp. Run `ci_guards_present.js` afterwards.
+Show what was backed up (`.claude/backup/<the version being replaced>/`), what was regenerated, and that human-owned files were left alone except the version stamp. The upgrade runs `guards-present` and `security-floor` itself, before and after, and reports each as `before -> after`; it restores from the backup and exits 1 when a check that passed before fails after (KIT-SPEC 11), so there is nothing to re-run by hand.
 
 ## Step 5: branch protection (only with --protect, and only on an explicit yes)
 ```

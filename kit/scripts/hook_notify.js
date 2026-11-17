@@ -26,7 +26,8 @@ function desktop(title, body) {
 export async function main() {
   const d = K.readHookInput();
   if (!d || Object.keys(d).length === 0) return 0;
-  const lane = K.findLane(text(d.cwd) || '.');
+  // one resolver for every lane-scoped hook (#29); notification text only, so ambiguity just means no lane name
+  const lane = K.laneForHook(d).lane;
   const cfgPath = path.join(process.env.CLAUDE_HOME ?? path.join(os.homedir(), '.claude'), 'kit-notify.json');
   let cfg = {};
   if (K.isFile(cfgPath)) {

@@ -22,11 +22,16 @@ jobs:
         with:
           node-version: ${{ matrix.node }}
       - run: npm test
+      # The steps below run even when an earlier step failed, so one failing unit test cannot hide their results.
+      # !cancelled() rather than always(): a cancelled run stops here.
       - name: architecture map matches the code (kit/manifest.json declares every component; kit/architecture.json is current)
+        if: ${{ !cancelled() }}
         run: npm run architecture:check
       - name: planted-fault suite (every planted fault must be caught)
+        if: ${{ !cancelled() }}
         run: node planted-faults/run.js
       - name: settings fragment is valid JSON and references real scripts
+        if: ${{ !cancelled() }}
         run: |
           node --input-type=commonjs - <<'JS'
           const fs = require("fs");
@@ -47,6 +52,7 @@ jobs:
           console.log("settings fragment ok:", n, "hook entries");
           JS
       - name: install.sh is idempotent in a temp home
+        if: ${{ !cancelled() }}
         run: |
           export CLAUDE_HOME="$(mktemp -d)"
           ./install.sh && ./install.sh

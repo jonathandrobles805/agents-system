@@ -1,13 +1,39 @@
 {
   "name": "rust",
-  "detect": ["Cargo.toml"],
-  "lockfiles": ["Cargo.lock"],
-  "frameworks": {"axum": "Axum", "actix-web": "Actix", "rocket": "Rocket", "tokio": "Tokio"},
+  "detect": [
+    "Cargo.toml"
+  ],
+  "lockfiles": [
+    "Cargo.lock"
+  ],
+  "frameworks": {
+    "axum": "Axum",
+    "actix-web": "Actix",
+    "rocket": "Rocket",
+    "tokio": "Tokio"
+  },
   "tools": {
-    "cargo": {"test": "cargo test", "test_affected": "cargo test", "typecheck": "cargo check", "lint": "cargo clippy -- -D warnings", "lint_all": "cargo clippy -- -D warnings"}
+    "cargo": {
+      "test": "cargo test",
+      "test_affected": "cargo test",
+      "typecheck": "cargo check",
+      "lint": "cargo clippy -- -D warnings",
+      "lint_all": "cargo clippy -- -D warnings"
+    }
   },
   "audit": "cargo audit",
-  "test_dirs": ["tests"],
-  "source_dirs": ["src"],
-  "install_hint": {}
+  "test_dirs": [
+    "tests"
+  ],
+  "source_dirs": [
+    "src"
+  ],
+  "install_hint": {},
+  "results": [
+    {
+      "name": "cargotest",
+      "fail": "^test (\\S+) \\.\\.\\. FAILED$",
+      "pass": "^test (\\S+) \\.\\.\\. ok$"
+    }
+  ]
 }
