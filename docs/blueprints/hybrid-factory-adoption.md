@@ -10,7 +10,7 @@ Make `/factory` the primary autonomous execution entry point. Preserve the kit's
 
 The factory runs independently inside the approved scope. It reports to the human only for a defined decision, blocked work, failed enforcement, or final merge. It must never approve its own scope changes, bypass a required check, or merge its own work.
 
-**Do not copy Factory v2 wholesale.** Adapt its orchestration, durable job progression, risk-based reviewer routing, and deterministic gates to the existing kit. Do not create a second state system or duplicate existing skills.
+**Do not copy Factory v2 wholesale.** Adapt its orchestration, durable job progression, risk-based reviewer routing, and deterministic gates to the existing kit. Do not introduce a second runtime state system or a skills layer that does not exist in this repository.
 
 ## 2. Target operating model
 
@@ -53,8 +53,8 @@ Factory v2's reference escalation cases to adopt: intake needs information; buil
 
 Keep the existing red/green model. Add the Factory's deterministic checks model as a separate layer:
 
-1. **Test-first:** the tester writes an observable test for every approved done-criterion and proves it fails for the expected reason. The implementer cannot start until red evidence exists.
-2. **Implementation feedback:** retain post-edit hooks for fast typecheck/lint/test feedback while code is changing.
+1. **Behavior-first test design:** the tester derives tests directly from each approved done-criterion—not from the implementer's proposed code or internal design. Each test states the preconditions, user/system action, and observable expected outcome. Cover the successful path and relevant negative, boundary, and failure paths. The test must exercise the real behavior being specified; it must not merely check that a function was called, that code compiles, or that an implementation-specific detail has a particular value. Choose the test level to match the criterion: unit tests for isolated rules, integration/API/contract tests for component interactions and boundaries, and end-to-end/browser tests when the criterion describes a user workflow. A criterion spanning multiple components cannot be considered fully validated by unit tests alone. The tester runs the test against the pre-implementation system and records a meaningful RED result showing the required behavior is absent or incorrect. A failure caused by a broken test, test harness, dependency, or environment is not valid RED evidence. The implementer cannot start until the criterion-to-test mapping and valid RED evidence exist.
+2. **Implementation feedback:** retain post-edit hooks for fast typecheck/lint/test feedback while code is changing. After implementation, rerun the same criterion-linked tests and require GREEN evidence, then run the relevant regression suite. Do not rewrite or weaken a test simply to make the implementation pass; any test change must be justified against the approved criterion and independently reviewed.
 3. **Pre-review gate:** after implementation, run the full required project checks against the exact lane HEAD. If it fails, do not start any reviewer; send the evidence to the implementer for another bounded attempt.
 4. **Independent specialist review:** only after the pre-review gate passes.
 5. **Pre-merge gate:** fetch and integrate the latest protected base, fail on fetch/conflict, rerun the full required checks, and confirm all review reports apply to the exact resulting HEAD. Any new code commit invalidates prior gate/review evidence.
@@ -77,7 +77,7 @@ Keep `kit/agents/implementer.md` as the build worker (Factory v2's builder equiv
 
 It does not design architecture, rewrite acceptance criteria, expand scope, weaken tests, edit kit controls, or approve its own work. Out-of-scope needs go to escalation and require an amended/re-approved spec.
 
-### Reviewers and existing skills
+### Reviewer roles and current repository structure
 
 Adopt four review responsibilities, routed deterministically from risk and changed surfaces:
 
@@ -90,7 +90,7 @@ Adopt four review responsibilities, routed deterministically from risk and chang
 
 Run the selected reviewers in parallel; wait for every required verdict. Any CHANGES verdict returns the lane to the implementer. Retry only within a configured limit, then escalate. Preserve the general reviewer as a code-review fallback/coordinator only if its responsibilities are explicit; do not run duplicate overlapping reviews.
 
-**Do not turn skills into agents or create duplicate skills.** Skills are reusable capabilities/instructions; reviewer agents are accountable roles. First inventory the 23 skill definitions the operator says already exist, record their actual paths and purpose, then map relevant skills into each reviewer/implementer. The current tracked `kit/manifest.json` registers command components, not `skill:*` components, so locate the skill source before changing it. Reviewer selection must be script/config-driven—not an agent's discretionary routing decision.
+**Repository correction:** the current `agents-system` repository contains command definitions, agent definitions, workflow JSON, scripts, and CI configuration. It does not contain the 23 skill definitions previously referenced; that was my incorrect description. The tracked `kit/manifest.json` registers commands and agents, not a skill library. Therefore, there is no skill inventory to perform and nothing to map as existing skills. Do not invent skill paths, create duplicate skill files, or add `skill:*` manifest entries as part of this plan. Put each reviewer's accountable responsibilities in its agent definition and keep genuinely shared policy in the repository's existing documentation/configuration. A separate reusable-skills system would require its own explicit design and approval. Reviewer selection must be script/config-driven—not an agent's discretionary routing decision.
 
 ## 6. Repository change map
 
@@ -105,7 +105,7 @@ Run the selected reviewers in parallel; wait for every required verdict. Any CHA
 | `kit/scripts/delivery_gate.js` + tests | **Add.** Deterministic pre-review and pre-merge gate with immutable trusted checks and stale-evidence rejection. |
 | `kit/agents/implementer.md`, `tester.md` | Preserve test-first and bounded implementation; add resumable build rounds and structured handoff evidence. |
 | `kit/agents/reviewer.md` + specialist agent files | Add code, security, architecture, and UX/UI reviewer roles; keep agent outputs structured and evidence-based. |
-| `kit/manifest.json` | Register every new/changed component and its single responsibility. |
+| `kit/manifest.json` | Register new/changed commands and agents using the manifest's existing component model; do not add a nonexistent skills component type. |
 | `kit/ci/github.yml`, `kit/scripts/bootstrap.js` | Require the generated checks and verify protected-branch settings; no silent optional protection for factory mode. |
 | `kit/scripts/kit_status.js`, `kit/dashboard/server.js`, `kit/dashboard/index.html` | Show current stage, gate status/commit, reviewer statuses, escalation reason/action, retries, and human queue. |
 | `kit/scripts/tests/`, `kit/eval/` | Add unit, integration, planted-fault, and adversarial tests for transitions, gate bypass, worktree isolation, routing, and escalation. |
@@ -113,7 +113,7 @@ Run the selected reviewers in parallel; wait for every required verdict. Any CHA
 
 ## 7. Delivery sequence and acceptance
 
-- [ ] **Phase 0 — Approve this blueprint.** Inventory the 23 existing skills and map current commands, agents, workflow profiles, hooks, CI checks, and dashboard data. No code changes.
+- [ ] **Phase 0 — Approve this blueprint.** Inventory the actual commands, agent definitions, workflow profiles, hooks, CI checks, and dashboard data. Record explicitly that the current repository has no tracked skill definitions; do not create a skills layer during this phase. No code changes.
 - [ ] **Phase 1 — Factory controller.** Add `/factory`, queue/resume, legal transitions, escalation records, and fail-closed worktree creation. Prove interrupted jobs resume without duplicate work.
 - [ ] **Phase 2 — Test and delivery gates.** Preserve red/green tests; add pre-review and pre-merge gates; enforce required GitHub checks and protection. Prove a failing or missing required check prevents review/merge.
 - [ ] **Phase 3 — Reviewer routing.** Map existing skills to the four specialist roles; route from trusted risk/surface data; require all selected verdicts before human merge.
