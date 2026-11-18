@@ -14,7 +14,7 @@ const DEFAULT_BUDGET = {
   review: { hours: 1, tool_calls: 200 },
 };
 
-/** Hours since `started` ("YYYY-MM-DD[THH:MM[:SS[.ffffff]]]", local wall-clock time as /implement writes it); 0 when it does not parse. */
+/** Hours since `started` ("YYYY-MM-DD[THH:MM[:SS[.ffffff]]]", local wall-clock time as /kit implement writes it); 0 when it does not parse. */
 function hoursSince(started) {
   const m = /^(\d{4})-(\d\d)-(\d\d)(?:[T ](\d\d):(\d\d)(?::(\d\d)(?:\.(\d+))?)?)?$/.exec(typeof started === 'string' ? started : '');
   if (!m) return 0;

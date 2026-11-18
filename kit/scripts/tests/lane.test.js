@@ -120,7 +120,7 @@ test('wip count comes from the lane worktrees, not from ROADMAP', (t) => {
   r = lane('wip', '--repo', root);
   assert.ok(r.returncode === 2 && JSON.parse(r.stdout).in_flight === 1, r.stdout);
   assert.deepEqual(JSON.parse(r.stdout).lanes, ['refund-route']);
-  // and /status reports the same number, because it calls the same function
+  // and /kit-status reports the same number, because it calls the same function
   const s = JSON.parse(runScript('kit_status.js', ['--repo', root, '--json']).stdout);
   assert.deepEqual(s.wip, { in_flight: 1, limit: 1 });
 });

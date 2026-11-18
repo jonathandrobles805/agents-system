@@ -1,5 +1,5 @@
 {
-  "command": "/fix",
+  "command": "/kit fix",
   "description": "A defect with a reproducible symptom. The lane opens from the agreed goal; the debugger reproduces and localizes inside it (read-only, writes only the progress file); the planner writes a short spec from the goal and the reproduction; a human approves it; the tester writes the failing test; the implementer fixes; review; human merge.",
   "stages": [
     "start",

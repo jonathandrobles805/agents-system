@@ -357,5 +357,5 @@ test('guards present flags hooks written by an older kit version', (t) => {
   toPythonEraKit(root);
   const r = runScript('ci_guards_present.js', ['--repo', root, '--kit', KIT]);
   assert.equal(r.returncode, 1);
-  assert.ok(r.stderr.includes('older kit version') && r.stderr.includes('hook_guard_edit.py') && r.stderr.includes('/bootstrap --upgrade'), r.stderr);
+  assert.ok(r.stderr.includes('older kit version') && r.stderr.includes('hook_guard_edit.py') && r.stderr.includes('/kit-setup --upgrade'), r.stderr);
 });

@@ -1,5 +1,5 @@
 {
-  "command": "/security",
+  "command": "/kit security",
   "description": "A security finding or review. Assess, contain, investigate, remediate, verify; human security sign-off before merge. Always high risk.",
   "stages": [
     "start",

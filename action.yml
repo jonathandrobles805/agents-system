@@ -1,6 +1,6 @@
 name: agent-kit
 description: Puts this kit version on the runner and exports KIT_DIR (the kit/ directory) for the kit's CI checks in a project.
-# Used by the project CI that /bootstrap generates (kit/ci/github.yml) as `uses: <owner>/agents-system@<pinned ref>`.
+# Used by the project CI that /kit-setup generates (kit/ci/github.yml) as `uses: <owner>/agents-system@<pinned ref>`.
 # The runner downloads the whole repository at that ref for the action, so kit/ is next to this file.
 # A private kit repository must allow access: Settings → Actions → General → Access → "Accessible from repositories owned by the user".
 runs:

@@ -1,20 +1,19 @@
 ---
 description: Start work when you do not know what kind it is. Routes provisionally to `fix`; the debugger's evidence settles the real kind (fix, incident, refactor) and the controller re-routes. The user never has to classify.
 argument-hint: <the symptom or wish, in your own words>
-allowed-tools: Read, Write, Bash, AskUserQuestion
 ---
 
-Work: $ARGUMENTS
+Work: the arguments
 
 ## Step 1: one question at most
 
-Read the words. If they clearly name a kind of work, use that command instead and say so: a new capability → `/new-feature`; something broken → `/fix`; a screen or style → `/ui`; "why does", "how does", "where is" → `/investigate`; production down → `/incident`; a schema or data move → `/migrate`; a security concern → `/security`; a restructure with no behaviour change → `/refactor`; docs → `/docs`.
+Read the words. If they clearly name a kind of work, use that work type instead and say so: a new capability → `/kit feature`; something broken → `/kit fix`; a screen or style → `/kit ui`; "why does", "how does", "where is" → `/kit investigation`; production down → `/kit incident`; a schema or data move → `/kit migration`; a security concern → `/kit security`; a restructure with no behaviour change → `/kit refactor`; docs → `/kit docs`.
 
 If the words are ambiguous between two kinds, ask **one** question with two options. Otherwise do not ask.
 
 ## Step 2: route provisionally to fix
 
-Write the goal through `/start` with:
+Write the goal through `/kit start` with:
 
 ```
 - Work type: fix (provisional)
@@ -22,7 +21,7 @@ Write the goal through `/start` with:
 - Size: M
 ```
 
-Size is M, never S, when the scope is unknown (KIT-SPEC 10.12). Then `/run <slug>`.
+Size is M, never S, when the scope is unknown (KIT-SPEC 10.12). Then run the loop in SKILL.md for `<slug>` (what `/kit <slug>` does).
 
 ## Step 3: the evidence decides
 

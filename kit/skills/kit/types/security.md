@@ -1,10 +1,9 @@
 ---
 description: A security finding or review: start it as work type `security` and carry it through the `security` workflow profile (kit/workflows/security.json). The controller decides every stage from files; this command only classifies and hands off.
 argument-hint: <what you want, in one sentence>
-allowed-tools: Read, Write, Bash, AskUserQuestion
 ---
 
-A security finding or review. The human said: $ARGUMENTS
+A security finding or review. The human said: the arguments
 
 ## What this kind of work is
 
@@ -14,7 +13,7 @@ Profile `security`: `start → research → plan → approve → lane → test �
 
 ## Step 1: classify, then start
 
-Follow `/start` exactly (understand before anything else; agree the goal; write `docs/goals/<slug>.md`), with these header fields set:
+Follow `/kit start` exactly (understand before anything else; agree the goal; write `docs/goals/<slug>.md`), with these header fields set:
 
 ```
 - Work type: security
@@ -29,4 +28,4 @@ Run `node "$HOME/.claude/kit/scripts/validate_docs.js" docs/goals/<slug>.md --re
 
 ## Step 2: hand off
 
-`/run <slug>`. The loop asks `lane.js next-step`, which reads the profile and names the one agent allowed for each stage (`lane.js agent-for security <stage>`). Spawn only that agent. If `next-step` returns `refused`, stop and show its reason; never pick a stage yourself.
+Run the loop in SKILL.md for `<slug>` (what `/kit <slug>` does). The loop asks `lane.js next-step`, which reads the profile and names the one agent allowed for each stage (`lane.js agent-for security <stage>`). Spawn only that agent. If `next-step` returns `refused`, stop and show its reason; never pick a stage yourself.

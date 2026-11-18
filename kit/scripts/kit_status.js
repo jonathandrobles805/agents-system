@@ -247,7 +247,7 @@ export function projectStatus(root) {
   const kit = L.asDict(K.loadKitJson(root));
   const rows = L.roadmapRows(root);
   const lanes = rows.map((r) => laneState(root, r, kit));
-  // One WIP number for the whole kit: lane.js wip() is what gates lane creation, so /status must not compute its own.
+  // One WIP number for the whole kit: lane.js wip() is what gates lane creation, so /kit-status must not compute its own.
   // It counts worktrees holding a lane.json, the same derivation as position `building` above.
   const [inFlightCount, wipLimit] = L.wip(root);
   let ci = null;

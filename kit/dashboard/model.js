@@ -2,7 +2,7 @@
 // No DOM, no network, no clock (callers pass `now`), so every rule here is unit-tested in kit/scripts/tests/dashboard_model.test.js.
 
 export const KINDS = {
-  command: { label: 'COMMAND', plural: 'commands' },
+  skill: { label: 'SKILL', plural: 'skills' },
   agent: { label: 'AGENT', plural: 'agents' },
   hook: { label: 'HOOK', plural: 'hooks' },
   ci: { label: 'CI CHECK', plural: 'CI checks' },
@@ -115,7 +115,7 @@ export function nodeStates(manifest, idx, ctx = {}) {
 // ---------------------------------------------------------------------------------------------- layout
 
 export const BANDS = [
-  { key: 'commands', title: 'ORCHESTRATION · commands', kinds: ['command'], w: 124, h: 38 },
+  { key: 'skills', title: 'ORCHESTRATION · skills', kinds: ['skill'], w: 124, h: 38 },
   { key: 'agents', title: 'AGENTS', kinds: ['agent'], w: 188, h: 76 },
   { key: 'hooks', title: 'GATES · hooks', kinds: ['hook'], w: 150, h: 48 },
   { key: 'scripts', title: 'CORE · scripts', kinds: ['script'], w: 150, h: 40 },
@@ -123,7 +123,7 @@ export const BANDS = [
   { key: 'jobs', title: 'CI · jobs', kinds: ['ci-job'], w: 190, h: 40 },
 ];
 
-/** Components in the order a reader expects: /run first, agents in pipeline order, the rest by name. */
+/** Components in the order a reader expects: /kit first, agents in pipeline order, the rest by name. */
 export function orderedNodes(manifest, kind) {
   const nodes = manifest.nodes.filter((n) => n.kind === kind);
   if (kind === 'agent') {
@@ -132,7 +132,7 @@ export function orderedNodes(manifest, kind) {
     const rank = (n) => (order.includes(n.id) ? order.indexOf(n.id) : order.length);
     return nodes.sort((a, b) => rank(a) - rank(b) || (a.id < b.id ? -1 : 1));
   }
-  if (kind === 'command') return nodes.sort((a, b) => (a.id === 'command:run' ? -1 : b.id === 'command:run' ? 1 : a.id < b.id ? -1 : 1));
+  if (kind === 'skill') return nodes.sort((a, b) => (a.id === 'skill:kit' ? -1 : b.id === 'skill:kit' ? 1 : a.id < b.id ? -1 : 1));
   return nodes.sort((a, b) => (a.id < b.id ? -1 : 1));
 }
 
@@ -173,7 +173,7 @@ export function edgePath(a, b) {
 
 // ---------------------------------------------------------------------------------------------- pipeline
 
-/** The stages of /run with the lanes of one project that stand at each: [{...stage, lanes: [slug]}]. */
+/** The stages of /kit with the lanes of one project that stand at each: [{...stage, lanes: [slug]}]. */
 export function pipelineView(manifest, overlay) {
   return manifest.pipeline.map((s) => ({ ...s, lanes: (overlay?.lanes ?? []).filter((l) => l.stage === s.id).map((l) => l.slug) }));
 }

@@ -18,7 +18,7 @@ Facts this rests on, checked on Claude Code 2.1.326 and its docs on 2026-11-17:
 2. **Only a human or the launcher starts them.** Every kit skill sets `disable-model-invocation: true`. The headless launcher starts lanes with `/kit <slug>` [lane.js:691 today sends `/run <slug>`].
 3. **Install: personal, one copy.** `install.sh` links `kit/skills/<name>/` into `~/.claude/skills/<name>/`, removes the kit's old files from `~/.claude/commands/` (links and `--copy` copies, kit files only), and prints the name map. Projects get no copy of these skills. A plugin is not used while plugin agents cannot carry hooks.
 4. **Folder.** `kit/skills/<name>/`. The subfolders `kit/skills/domains/` and `kit/skills/workflows/` stay reserved for the domain and workflow skills of OPERATING-MODEL §3, and `install.sh` skips them.
-5. **Inside `/kit`.** `SKILL.md` holds today's `/run` loop: ask `lane.js next-step`, act on the stage, repeat. Each stage's steps move to `stages/<stage>.md` (from today's `/start`, `/research`, `/plan`, `/implement`, `/review`, `/sync`, `/retro` and the stage rows of `/run`), and each work type's notes to `types/<type>.md` (from the 11 work-type commands and `/work`). The skill reads only the file the next step names. An argument that names an existing goal resumes it; anything else starts the goal conversation. Behaviour does not change; only where the text lives and what it is called.
+5. **Inside `/kit`.** `SKILL.md` holds today's `/run` loop: ask `lane.js next-step`, act on the stage, repeat. Each stage's steps move to `stages/<stage>.md` (from today's `/start`, `/research`, `/plan`, `/implement`, `/review`, `/sync`, `/retro` and the stage rows of `/run`), and each work type's notes to `types/<type>.md` (from the 11 work-type commands and `/work`). The skill reads only the file the next step names. An argument that names an existing goal resumes it; a stage name runs that one stage (as the old stage commands did); anything else starts the goal conversation. Behaviour does not change; only where the text lives and what it is called.
 6. **OPERATING-MODEL §3 skill rules** (copied per project, hashed by `guards-present`, rejected by CI without a planted fault, an eval set or a `criteria` section) apply to domain and workflow skills. The four orchestration skills are exempt: they are covered by the kit's own tests, the architecture map and the planted faults that already exercise the stages.
 7. **The hybrid-factory blueprint** (branch `docs/hybrid-factory-adoption-blueprint`, draft) is superseded by 0016 and this decision and is not merged. It forbade a skills layer [blueprint L26, L111].
 
@@ -30,7 +30,7 @@ Facts this rests on, checked on Claude Code 2.1.326 and its docs on 2026-11-17:
 | `/start <what you want>` | `/kit <what you want>` |
 | `/work <symptom>` | `/kit <symptom>` (no work type: the controller routes it, as `/work` does today) |
 | `/new-feature`, `/fix`, `/ui`, `/refactor`, `/docs`, `/investigate`, `/security`, `/architecture`, `/migrate`, `/incident`, `/new-skill` | `/kit <work type> <what you want>` |
-| `/research`, `/plan`, `/implement`, `/review`, `/sync`, `/retro` | stages of `/kit`; not started by hand |
+| `/research`, `/plan`, `/implement`, `/review`, `/sync`, `/retro` | `/kit research`, `/kit plan <slug>`, … : one stage by hand, as before (`/kit <slug>` runs them all); `/retro --incident` is `/kit retro --incident` |
 | `/status` | `/kit-status` |
 | `/dashboard` | `/kit-dashboard` |
 | `/bootstrap [--upgrade]` | `/kit-setup [--upgrade]` |

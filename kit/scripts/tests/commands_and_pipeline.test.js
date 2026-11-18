@@ -1,4 +1,4 @@
-// Structural checks on the command files, plus a mechanical end-to-end run of the pipeline scripts on the Node fixture:
+// Structural checks on the skill files (decision 0017), plus a mechanical end-to-end run of the pipeline scripts on the Node fixture:
 // bootstrap -> research index -> spec -> approve -> lane start -> hooks during build -> done-check -> review report -> CI checks -> finish.
 // Agents are not run here (they need Claude Code); every script they call is.
 import test from 'node:test';
@@ -12,20 +12,39 @@ import { SCRIPTS, runScript, tmpPath } from './helpers.js';
 import { spec as makeSpec, review as makeReview } from './testdata.js';
 
 const KIT = path.dirname(SCRIPTS);
-const COMMANDS = fs.readdirSync(path.join(KIT, 'commands')).filter((f) => f.endsWith('.md')).sort().map((f) => path.join(KIT, 'commands', f));
-const EXPECTED = new Set(['bootstrap', 'dashboard', 'implement', 'plan', 'research', 'retro', 'review', 'run', 'start', 'status', 'sync',
-  // step 7: one command per kind of work plus the router (KIT-SPEC 10.12)
-  'work', 'new-feature', 'fix', 'ui', 'refactor', 'docs', 'investigate', 'security', 'architecture', 'migrate', 'incident', 'new-skill']);
+const SKILLS = path.join(KIT, 'skills');
+// every prompt file of the kit's skills: each SKILL.md, and the /kit stage and work-type files beside it
+const COMMANDS = fs.readdirSync(SKILLS, { recursive: true }).filter((f) => f.endsWith('.md')).sort().map((f) => path.join(SKILLS, f));
+const EXPECTED = new Set(['kit/SKILL.md', 'kit-status/SKILL.md', 'kit-dashboard/SKILL.md', 'kit-setup/SKILL.md',
+  ...['start', 'research', 'plan', 'implement', 'review', 'sync', 'retro'].map((s) => `kit/stages/${s}.md`),
+  // step 7: one work type per kind of work plus the router for an unknown kind (KIT-SPEC 10.12)
+  ...['unknown', 'feature', 'fix', 'ui', 'refactor', 'docs', 'investigation', 'security', 'architecture', 'migration', 'incident', 'skill-development'].map((s) => `kit/types/${s}.md`)]);
 const read = (p) => fs.readFileSync(p, 'utf8');
+const rel = (p) => path.relative(SKILLS, p).split(path.sep).join('/');
 
-test('all commands exist with frontmatter', () => {
-  assert.deepEqual(new Set(COMMANDS.map((p) => path.basename(p, '.md'))), EXPECTED);
+test('all skills exist with frontmatter; each SKILL.md names its folder and lists its tools', () => {
+  assert.deepEqual(new Set(COMMANDS.map(rel)), EXPECTED);
   for (const p of COMMANDS) {
     const m = /^---\n([\s\S]*?)\n---\n/.exec(read(p));
     assert.ok(m, p);
     assert.match(m[1], /^description:\s*\S/m, p);
-    assert.match(m[1], /^allowed-tools:\s*\S/m, p);
+    if (path.basename(p) === 'SKILL.md') {
+      assert.match(m[1], new RegExp(`^name: ${path.basename(path.dirname(p))}$`, 'm'), p);
+      assert.match(m[1], /^allowed-tools:\s*\S/m, p);
+    } else {
+      // only SKILL.md's frontmatter is read by Claude Code; a tool list here would only mislead
+      assert.doesNotMatch(m[1], /^allowed-tools:/m, p);
+    }
   }
+});
+
+test('/kit names every stage and work type it can be given, and each has its file', () => {
+  const text = read(path.join(SKILLS, 'kit', 'SKILL.md'));
+  for (const f of EXPECTED) {
+    const m = /^kit\/(stages|types)\/(.+)\.md$/.exec(f);
+    if (m && m[2] !== 'unknown') assert.ok(text.includes(`\`${m[2]}\``), `SKILL.md names ${m[1]} ${m[2]}`);
+  }
+  assert.ok(text.includes('types/unknown.md'));
 });
 
 test('commands reference real scripts and subcommands', () => {
@@ -45,8 +64,8 @@ test('commands never merge or approve for the human', () => {
   for (const p of COMMANDS) {
     assert.ok(!read(p).toLowerCase().includes('gh pr merge'), path.basename(p));
   }
-  assert.ok(read(path.join(KIT, 'commands', 'plan.md')).toLowerCase().includes('nothing is built before that'));
-  assert.ok(read(path.join(KIT, 'commands', 'review.md')).toLowerCase().includes('this command never merges'));
+  assert.ok(read(path.join(SKILLS, 'kit', 'stages', 'plan.md')).toLowerCase().includes('nothing is built before that'));
+  assert.ok(read(path.join(SKILLS, 'kit', 'stages', 'review.md')).toLowerCase().includes('this command never merges'));
 });
 
 const hook = (name, payload) => runScript(name, [], { stdin: jsonDumps(payload) });

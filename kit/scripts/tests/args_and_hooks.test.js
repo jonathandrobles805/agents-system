@@ -153,7 +153,7 @@ test('notify: Stop in a lane reports the lane, Stop outside a lane and other eve
     const stop = await runAsync('hook_notify.js', JSON.stringify({ hook_event_name: 'Stop', cwd: repo }), env);
     assert.equal(stop.returncode, 0, stop.stderr);
     assert.equal(received.length, 1);
-    assert.match(JSON.parse(received[0].body).text, /^Lane refund-endpoint: stopped: Check \/status/);
+    assert.match(JSON.parse(received[0].body).text, /^Lane refund-endpoint: stopped: Check \/kit-status/);
   });
 });
 

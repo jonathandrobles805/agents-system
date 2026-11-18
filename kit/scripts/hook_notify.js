@@ -46,7 +46,7 @@ export async function main() {
     const prog = K.isFile(lane.progressPath) ? fs.readFileSync(lane.progressPath, 'utf8') : '';
     const state = prog.includes('- Attempts:') && !prog.includes('{{') ? 'escalated' : 'stopped';
     title = `Lane ${lane.slug}: ${state}`;
-    body = 'Check /status or the dashboard.';
+    body = 'Check /kit-status or the dashboard.';
   } else {
     return 0;
   }

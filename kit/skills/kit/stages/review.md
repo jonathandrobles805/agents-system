@@ -1,10 +1,9 @@
 ---
 description: Review a lane with the fresh-context reviewer agent; second reviewer on high-risk specs. Writes docs/specs/<slug>.review.md and posts the fail list to the PR. The reviewer never sees the builder's conversation.
 argument-hint: <feature slug>
-allowed-tools: Bash, Read, Agent
 ---
 
-Review feature: $ARGUMENTS
+Review feature: the arguments
 
 ## Step 1: locate
 Worktree: `node -p 'require("./.claude/kit.json").lanes["<slug>"].worktree'`. Record `HEAD=$(git -C <worktree> rev-parse HEAD)`. Read the spec's `Risk:` header.
@@ -24,5 +23,5 @@ node "$HOME/.claude/kit/scripts/validate_docs.js" docs/specs/<slug>.review.md --
 A report that fails validation goes back to the reviewer with the violations.
 
 Commit the review file (and the adversarial test) in the worktree and push. Then:
-- Verdict FAIL: post the `## Fail list` section as a PR comment (`gh pr comment`), `lane.js roadmap-set <slug> building`, `lane.js stage <slug> build`, and spawn the `implementer` with only the fail list as input: "Fix exactly these items in lane `<slug>`: <fail list>. Then stop." When it stops, run `/review <slug>` again. Count the round; after 3 FAIL rounds, set the lane to `escalated` and stop.
+- Verdict FAIL: post the `## Fail list` section as a PR comment (`gh pr comment`), `lane.js roadmap-set <slug> building`, `lane.js stage <slug> build`, and spawn the `implementer` with only the fail list as input: "Fix exactly these items in lane `<slug>`: <fail list>. Then stop." When it stops, run `/kit review <slug>` again. Count the round; after 3 FAIL rounds, set the lane to `escalated` and stop.
 - Verdict PASS: `lane.js roadmap-set <slug> ready-to-merge`. Tell the human the PR is ready and what CI shows. The human merges; this command never merges.

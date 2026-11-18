@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // lane: the mechanical half of the pipeline commands. Agents do the thinking; this does the git and file bookkeeping.
 //
-//   lane.js precheck <slug> --repo R          may /implement start? (spec valid + approved, no open questions, WIP, no file overlap)
+//   lane.js precheck <slug> --repo R          may /kit implement start? (spec valid + approved, no open questions, WIP, no file overlap)
 //   lane.js scope <slug> --repo R             fix/incident: after the human approved the in-lane spec, check it and copy its criteria
 //   lane.js check <slug> <criterion> --repo R -- <command>   run a criterion's command in the lane, log it, print the log ref
 //   lane.js start <slug> --repo R [--base B]  precheck, then worktree ../<repo>-lanes/<slug> on branch wt/<slug> from fresh base; lane.json; progress skeleton
@@ -21,7 +21,7 @@
 //   lane.js next-step <slug> --repo R         JSON: the next stage for this feature, derived from files and git
 //   lane.js next --repo R                     JSON: next queued slug with an agreed goal (exit 2 if none / WIP full)
 //   lane.js goal-set <slug> agreed|running|done --repo R
-//   lane.js incident --repo R --what "..." [--slug S] [--pr URL]   record a production incident for /retro --incident
+//   lane.js incident --repo R --what "..." [--slug S] [--pr URL]   record a production incident for /kit retro --incident
 //   lane.js merged <slug> --repo R [--pr URL] at merge time: verify in git, mark ROADMAP merged (idempotent)
 //   lane.js finish <slug> --repo R            after retro: remove worktree and local branch, mark roadmap merged
 // Exit 0 ok, 2 refused (reasons on stderr), 1 usage/git error.
@@ -37,7 +37,7 @@ import * as SB from './sandbox.js';
 
 const DOC = `lane: the mechanical half of the pipeline commands. Agents do the thinking; this does the git and file bookkeeping.
 
-  lane.js precheck <slug> --repo R          may /implement start? (spec valid + approved, no open questions, WIP, no file overlap)
+  lane.js precheck <slug> --repo R          may /kit implement start? (spec valid + approved, no open questions, WIP, no file overlap)
   lane.js start <slug> --repo R [--base B]  precheck, then worktree ../<repo>-lanes/<slug> on branch wt/<slug> from fresh base; lane.json; progress skeleton
   lane.js stage <slug> <stage> --repo R     set lane.json stage (research|plan|build|review) and reset its clock
   lane.js wip --repo R                      active lanes vs WIP limit
@@ -48,7 +48,7 @@ const DOC = `lane: the mechanical half of the pipeline commands. Agents do the t
   lane.js next-step <slug> --repo R         JSON: the next stage for this feature, derived from files and git
   lane.js next --repo R                     JSON: next queued slug with an agreed goal (exit 2 if none / WIP full)
   lane.js goal-set <slug> agreed|running|done --repo R
-  lane.js incident --repo R --what "..." [--slug S] [--pr URL]   record a production incident for /retro --incident
+  lane.js incident --repo R --what "..." [--slug S] [--pr URL]   record a production incident for /kit retro --incident
   lane.js merged <slug> --repo R [--pr URL] at merge time: verify in git, mark ROADMAP merged (idempotent)
   lane.js finish <slug> --repo R            after retro: remove worktree and local branch, mark roadmap merged
 Exit 0 ok, 2 refused (reasons on stderr), 1 usage/git error.`;
@@ -350,7 +350,7 @@ export function isReproFirst(prof) {
 export function goalPrecheck(root, slug) {
   const problems = [];
   const g = goalStatus(root, slug);
-  if (!['agreed', 'running'].includes(g ?? '')) problems.push(`goal docs/goals/${slug}.md is '${g ?? 'missing'}', needs 'agreed' (run /start)`);
+  if (!['agreed', 'running'].includes(g ?? '')) problems.push(`goal docs/goals/${slug}.md is '${g ?? 'missing'}', needs 'agreed' (run /kit start)`);
   const [n, limit, lanes] = wip(root);
   if (n >= limit) problems.push(`WIP limit reached: ${n}/${limit} in flight (${lanes.join(', ')}). Merge or escalate one first.`);
   return problems;
@@ -493,7 +493,7 @@ export function evidence(root, slug) {
 export function precheck(root, slug) {
   const problems = [];
   const sp = specPath(root, slug);
-  if (!K.isFile(sp)) return [`spec ${relativeTo(root, sp)} does not exist; run /plan ${slug}`];
+  if (!K.isFile(sp)) return [`spec ${relativeTo(root, sp)} does not exist; run /kit plan ${slug}`];
   const v = new V.Validator(root, null, K.loadKitJson(root));
   v.run(sp, 'spec');
   for (const x of v.v) problems.push(`spec invalid: ${x}`);
@@ -557,7 +557,7 @@ export function start(root, slug, base) {
   const work = K.workRoot(root);
   const wt = pjoin(lanesDir(root), slug);
   const branch = `wt/${slug}`;
-  if (fs.existsSync(wt)) return refuse([`worktree ${wt} already exists; resume with /implement ${slug} inside it, or run lane.js finish first`]);
+  if (fs.existsSync(wt)) return refuse([`worktree ${wt} already exists; resume with /kit implement ${slug} inside it, or run lane.js finish first`]);
   const hasOrigin = K.git(['remote'], root).split(/\s+/).filter(Boolean).includes('origin');
   let startPoint;
   if (hasOrigin) {
@@ -601,7 +601,7 @@ export function start(root, slug, base) {
     return refuse([
       `spec is high-risk: a high-risk lane requires the container sandbox runtime; ${why}.`,
       'Install docker (or podman), or record a waiver in .claude/kit.json: "sandbox": { "high_risk_waiver": { "by": "<name>", "reason": "<why this is acceptable>" } }.',
-      'The waiver is written to the lane and the events log and shown by /status.',
+      'The waiver is written to the lane and the events log and shown by /kit-status.',
     ]);
   }
   const creds = SB.credentialScan(wt);
@@ -688,7 +688,7 @@ export function launch(root, slug, { exec = false, prompt = null } = {}) {
   if (kget(data, 'risk', 'normal') === 'high' && cfg.runtime !== 'container' && !pyTruthy(kget(asDict(kget(recorded, 'high_risk_waiver', {})), 'by', ''))) return refuse(['high-risk lane without the container runtime and no recorded waiver']);
   const settingsPath = pjoin(wt, '.claude', 'session', 'sandbox.json');
   writeText(settingsPath, K.jsonDumps(SB.srtSettings(cfg), { indent: 2 }) + '\n');
-  const text = prompt ?? `/run ${slug}`;
+  const text = prompt ?? `/kit ${slug}`;
   const cmd = SB.launchCommand(cfg, { wt, settingsPath, prompt: text });
   // telemetry (KIT-SPEC 9.4): exporter on, records tagged with project, lane and stage; the collector runs on the host side
   const project = kget(asDict(K.loadKitJson(root)), 'project', path.basename(root));
@@ -763,7 +763,7 @@ export const MAX_UNKNOWNS = 3;
 
 /**
  * Count [unknown] tags in a draft spec and decide: none -> proceed; 1..3 -> resolve each (a researcher per item,
- * method required); over 3 -> research insufficient, back to /research. Open questions count as unknowns.
+ * method required); over 3 -> research insufficient, back to /kit research. Open questions count as unknowns.
  */
 export function unknowns(root, specOrDraft) {
   if (!K.isFile(specOrDraft)) return { count: 0, decision: 'missing', items: [], error: `${specOrDraft} not found` };
@@ -792,7 +792,7 @@ export function unknowns(root, specOrDraft) {
     message: {
       none: 'no unknowns; proceed to critique',
       resolve: `${count} unknown(s): spawn one researcher per item with its method, fold answers in, re-run`,
-      research: `${count} unknowns > ${MAX_UNKNOWNS}: research insufficient; stop planning and run /research`,
+      research: `${count} unknowns > ${MAX_UNKNOWNS}: research insufficient; stop planning and run /kit research`,
     }[decision],
   };
 }
@@ -895,7 +895,7 @@ export function goalStatus(root, slug) {
   return (h.has('status') ? h.get('status')[1] : '').toLowerCase() || 'agreed';
 }
 
-/** Decide the next stage for a feature from files and git only. Used by /run; never from an agent's claim. */
+/** Decide the next stage for a feature from files and git only. Used by /kit; never from an agent's claim. */
 export async function nextStep(root, slug) {
   const KS = await import('./kit_status.js');
   const kit = K.loadKitJson(root);
@@ -903,12 +903,12 @@ export async function nextStep(root, slug) {
   const rows = new Map(roadmapRows(root).map((r) => [r.slug, r]));
   const row = rows.get(slug);
   const g = goalStatus(root, slug);
-  if (g === null) return { slug, stage: 'start', reason: 'no agreed goal file; run /start' };
+  if (g === null) return { slug, stage: 'start', reason: 'no agreed goal file; run /kit start' };
   if (g === 'done') return { slug, stage: 'done', reason: 'goal file says done' };
   let fields = goalFields(root, slug);
   let prof = profileFor(fields.work_type);
   if (!prof) return { slug, stage: 'refused', reason: `unknown work_type '${fields.work_type}' in the goal; profiles: ${Object.keys(loadProfiles()).join(', ')}`, needs_human: true };
-  // /work routed provisionally; the debugger's cause line settles the kind (KIT-SPEC 10.12)
+  // /kit routed provisionally; the debugger's cause line settles the kind (KIT-SPEC 10.12)
   const rerouted = rerouteFromEvidence(root, slug, fields, prof);
   if (rerouted) {
     fields = goalFields(root, slug);
@@ -1029,7 +1029,7 @@ export function inLanePlanning(root, slug) {
 }
 
 async function nextStepFeature(root, slug, { KS, kit, rows, row, g }) {
-  if (row === undefined) return { slug, stage: 'start', reason: 'goal exists but no ROADMAP row; /start adds it' };
+  if (row === undefined) return { slug, stage: 'start', reason: 'goal exists but no ROADMAP row; /kit start adds it' };
   const st = KS.laneState(root, row, kit);
   const pos = st.position;
   const sp = specPath(root, slug);
@@ -1075,7 +1075,7 @@ export function nextInQueue(root) {
       return { slug, reason: 'next in queue with an agreed goal', in_flight: lanes };
     }
   }
-  return { slug: null, reason: 'queue has no item with an agreed goal (run /start)', in_flight: lanes };
+  return { slug: null, reason: 'queue has no item with an agreed goal (run /kit start)', in_flight: lanes };
 }
 
 // ---------------------------------------------------------------- incidents

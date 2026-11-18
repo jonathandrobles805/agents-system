@@ -47,7 +47,7 @@ export function check({ root, home, managed }) {
     ['project-local', path.join(root, '.claude', 'settings.local.json')],
   ];
   const project = readSettings(path.join(root, '.claude', 'settings.json'));
-  if (!project) return ['.claude/settings.json missing; run /bootstrap'];
+  if (!project) return ['.claude/settings.json missing; run /kit-setup'];
   if (project.__invalid) return ['.claude/settings.json is not valid JSON'];
 
   // 1. the project file carries every floor deny entry

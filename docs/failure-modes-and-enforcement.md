@@ -35,9 +35,9 @@ The agent's belief is never evidence. Evidence is the output of something that r
 |---|---|---|---|
 | Agent describes how existing code works from memory and is wrong | No `file:line` citation, or citation does not resolve | Provenance tags; citation checker resolves every path and line range and compares the quoted snippet to the file | `validate-docs` hook on write + CI |
 | Agent describes a library or API from memory and it changed | No version, no docs link | Version read from the lockfile; behavior checked against installed source or docs for that version | `validate-docs` requires `@ version` on every `[docs]` tag |
-| Research is stale by the time it's used | Written against an older commit | Each research file records date and `git rev-parse HEAD`. Planner refuses research from a different commit on the files it cites unless re-verified | `/plan` command checks commit hash before reading |
+| Research is stale by the time it's used | Written against an older commit | Each research file records date and `git rev-parse HEAD`. Planner refuses research from a different commit on the files it cites unless re-verified | `/kit plan` command checks commit hash before reading |
 | Random, unfocused output | No single question | One question per agent, fixed template, hard length cap, mandatory `Confidence` and `What I could not verify` sections | Template + `validate-docs` |
-| Two agents answer the same question differently | Overlapping questions | `/research` names the questions and the output files up front; one file per question; conflicts surface in the planner's "contradictions" check | `/research` command |
+| Two agents answer the same question differently | Overlapping questions | `/kit research` names the questions and the output files up front; one file per question; conflicts surface in the planner's "contradictions" check | `/kit research` command |
 | Agent says "should work", "probably", "likely" as if fact | Hedge words without an `[unknown]` tag | Hedge-word lint on findings: either verify it or tag it unknown | `validate-docs` |
 
 ---
@@ -48,13 +48,13 @@ The agent's belief is never evidence. Evidence is the output of something that r
 |---|---|---|---|
 | Spec built on a wrong model of the code | Files to change are listed without evidence of what calls them | **Impact analysis section**: for every symbol to be changed, the planner runs `grep`/LSP references and lists every caller with `file:line`. If a caller is missed, the type checker and tests catch it in Build | Template requires the section; `validate-docs` checks it is non-empty when any existing symbol is modified |
 | Feature never ends | Done-criteria are vague ("billing works") | Each done-criterion maps to a named test that does not exist yet. Spec is invalid without the mapping | `validate-docs` |
-| Hidden assumptions | Decisions rest on unstated beliefs | Mandatory `Assumptions` section. Each is either verified (becomes a tagged fact) or moved to `Open questions`. `/implement` refuses to start while `Open questions` is non-empty | `/implement` command check |
-| Two features touch the same files | Not checked | Planner reads every open spec's file list; overlap → spec is refused and you are told which specs collide | `/plan` command |
+| Hidden assumptions | Decisions rest on unstated beliefs | Mandatory `Assumptions` section. Each is either verified (becomes a tagged fact) or moved to `Open questions`. `/kit implement` refuses to start while `Open questions` is non-empty | `/kit implement` command check |
+| Two features touch the same files | Not checked | Planner reads every open spec's file list; overlap → spec is refused and you are told which specs collide | `/kit plan` command |
 | Plan violates architecture | Planner never read the invariants | Spec has an `Architecture checklist` copied from `ARCHITECTURE.md`, each item answered; import-boundary lint catches it again in Build and CI | Template + import-linter / dependency-cruiser in CI |
 | Over- or under-building | No boundary | Mandatory `Non-goals` section | Template |
 | New dependency slipped in | Not declared | Spec lists every new dependency with reason. Lockfile diff in CI fails if a dep appears that no spec declares | CI script |
 | Destructive data changes | Migration not thought through | Spec has `Data changes` with reversibility stated; reviewer blocks irreversible migrations without your explicit sign-off | Template + reviewer checklist |
-| Too many features in flight | No limit | `ROADMAP.md` has a WIP limit; `/plan` refuses to create a new spec past it | `/plan` command |
+| Too many features in flight | No limit | `ROADMAP.md` has a WIP limit; `/kit plan` refuses to create a new spec past it | `/kit plan` command |
 
 ---
 
@@ -64,7 +64,7 @@ The agent's belief is never evidence. Evidence is the output of something that r
 |---|---|---|
 | You rubber-stamp because the spec is long | Spec has a one-screen summary at the top: goal, files changed, risks, open questions, done-criteria. Details below | Template |
 | You miss the risky part | Spec has a `Risks` section ranked; anything touching auth, payments, data deletion, or public APIs is flagged `high-risk` automatically by a keyword and path check | `validate-docs` |
-| Approval is ambiguous | Approval is a line in the spec: `Approved by <you> on <date> at commit <hash>`. `/implement` refuses without it | `/implement` command |
+| Approval is ambiguous | Approval is a line in the spec: `Approved by <you> on <date> at commit <hash>`. `/kit implement` refuses without it | `/kit implement` command |
 
 ---
 
@@ -80,9 +80,9 @@ The agent's belief is never evidence. Evidence is the output of something that r
 | Weakens or deletes tests to go green | Assertion count drops, test skipped | Post-edit hook flags any removed `expect`/`assert`/test case and any added `skip`/`only`. CI compares test count against `main` and fails if it drops without a spec note | Hook + CI script |
 | Tests pass trivially (they never could fail) | No red run recorded | **Red-then-green evidence**: tests are written first and run; the hook records the failing run to `docs/specs/<f>.log`. Reviewer requires a red run before the green one for every done-criterion | Hook log + reviewer checklist |
 | Agent claims "all tests pass" without running them | Claim with no log | Agents' summaries are never trusted. The hook writes real test output to the log file; reviewer reads the log, not the summary | Hook + reviewer rule |
-| Loops forever on a failing test | No limit | Retry limit (3 fix attempts per failure). Then stop, write the state, and escalate to you with the fail list | `/implement` command |
-| Loses context mid-feature and starts over or drifts | Long session | Implementer writes `docs/specs/<f>.progress.md` after each done-criterion: what is done, what is next, what is uncertain. A fresh session resumes from it | Implementer agent rules + `/implement` resume mode |
-| Branch drifts from `main` | Days without sync | `/sync` runs at the start of every `/implement` session and daily; GitHub branch protection requires the branch to be up to date before merge | Command + branch protection |
+| Loops forever on a failing test | No limit | Retry limit (3 fix attempts per failure). Then stop, write the state, and escalate to you with the fail list | `/kit implement` command |
+| Loses context mid-feature and starts over or drifts | Long session | Implementer writes `docs/specs/<f>.progress.md` after each done-criterion: what is done, what is next, what is uncertain. A fresh session resumes from it | Implementer agent rules + `/kit implement` resume mode |
+| Branch drifts from `main` | Days without sync | `/kit sync` runs at the start of every `/kit implement` session and daily; GitHub branch protection requires the branch to be up to date before merge | Command + branch protection |
 | Commits secrets | Not scanned | Pre-commit secret scan (`gitleaks` or equivalent); CI again | Pre-commit hook + CI |
 | Hardcoded colors, spacing, strings outside the design system | No lint | Tokens in code; lint rule against raw values in UI files | Lint in hook + CI |
 | Finishes early and says done | Checklist not complete | Done-criteria checklist in the progress file: every item needs the test name and a pointer to the green run in the log | Reviewer checklist |
@@ -96,7 +96,7 @@ The agent's belief is never evidence. Evidence is the output of something that r
 | Reviewer is anchored by the builder's reasoning | Reviewer is a separate agent with fresh context. It receives only: spec, diff, test log, `ARCHITECTURE.md`, `DESIGN.md`, `LESSONS.md`. Never the builder's conversation | Reviewer agent definition (tool and input restrictions) |
 | Reviewer skims and says "looks good" | Mandatory checklist output: each item `PASS`/`FAIL` with evidence (`file:line` or log line). Output is validated like a research file | Template + `validate-docs` |
 | Reviewer trusts the builder's test claims | Reviewer re-runs the test suite itself and compares to the log | Reviewer agent rules |
-| Same model, same blind spot | Partial mitigation only: reviewer runs independent checks (tests, lints, grep for callers) rather than re-reading reasoning. For `high-risk` specs, a second reviewer with a different checklist (security, data) runs too | `/review` command on `high-risk` flag |
+| Same model, same blind spot | Partial mitigation only: reviewer runs independent checks (tests, lints, grep for callers) rather than re-reading reasoning. For `high-risk` specs, a second reviewer with a different checklist (security, data) runs too | `/kit review` command on `high-risk` flag |
 | Scope creep passes | Reviewer compares changed files to spec allow-list; any extra is `FAIL` unless the spec was amended and re-approved | Reviewer checklist + CI script |
 | Architecture boundary crossed | Import-boundary lint fails in CI regardless of what the reviewer thinks | CI |
 | Fail list is vague | Each `FAIL` must name the file, the line, the rule violated, and what passing looks like. Builder receives only this list | Template |
@@ -107,7 +107,7 @@ The agent's belief is never evidence. Evidence is the output of something that r
 
 | Failure | Mechanism | Enforced by |
 |---|---|---|
-| Merging red or out of date | Branch protection: required status checks, branch must be up to date with `main`, no force push, no direct commits to `main` | GitHub settings, set by `/bootstrap` |
+| Merging red or out of date | Branch protection: required status checks, branch must be up to date with `main`, no force push, no direct commits to `main` | GitHub settings, set by `/kit-setup` |
 | Reviewer pass is faked or skipped | Reviewer writes its report to `docs/specs/<f>.review.md`; CI check requires a report with all `PASS` for the current diff hash | CI script |
 | `ROADMAP.md` goes stale | `/merge` flips the status and commits it; CI fails if a merged spec is not marked done | Command + CI |
 | Big PRs come back | PR size check: warn over N files or N lines; the spec should have been split into slices | CI script (warning) |
@@ -118,11 +118,11 @@ The agent's belief is never evidence. Evidence is the output of something that r
 
 | Failure | Mechanism | Enforced by |
 |---|---|---|
-| Same mistake twice | `/retro` writes each lesson with an `Enforced by` column: hook / lint / test / CI / **text-only**. Text-only lessons are listed at the top of `LESSONS.md` as debt until they are turned into a check | `/retro` template |
+| Same mistake twice | `/kit retro` writes each lesson with an `Enforced by` column: hook / lint / test / CI / **text-only**. Text-only lessons are listed at the top of `LESSONS.md` as debt until they are turned into a check | `/kit retro` template |
 | `CLAUDE.md` bloats until it's ignored | Hard size cap checked in CI. When a rule becomes enforced by code, its text is removed from `CLAUDE.md` and only the pointer stays | CI script |
 | Hooks or CI get disabled quietly | Hook config lives in the repo (`.claude/settings.json`), not in personal settings. CI verifies the config file is present and unchanged from the kit's template hash | CI script |
-| Kit drifts across projects | `/bootstrap` stamps the kit version into the project. `/bootstrap --upgrade` diffs and applies changes. A kit changelog records every change | Kit repo + version stamp |
-| A rule exists but nobody knows why | Every rule and every structural decision has a file in `docs/decisions/` with context and the alternative rejected | `/retro` and `/plan` templates |
+| Kit drifts across projects | `/kit-setup` stamps the kit version into the project. `/kit-setup --upgrade` diffs and applies changes. A kit changelog records every change | Kit repo + version stamp |
+| A rule exists but nobody knows why | Every rule and every structural decision has a file in `docs/decisions/` with context and the alternative rejected | `/kit retro` and `/kit plan` templates |
 | The kit itself was built by guessing | The kit has its own spec, acceptance tests, and a **planted-fault test**: a repo seeded with known mistakes (an unread-file edit, a scope-creep file, a weakened test, a boundary violation, a missing caller). The kit is not done until every planted fault is caught at the gate that owns it | Kit acceptance suite |
 | A kit test passes or fails depending on the machine, or launches a real app (#52) | Tests build paths with `fileURLToPath`, never `URL.pathname` (a path with a space becomes `%20`), and control every tool they rely on being absent or present (the dashboard test strips `claude` from PATH and records any terminal launcher instead of running it) | Kit test suite |
 | An agent routes around a guard false positive instead of reporting it (#40) | A false positive is filed as a kit issue with the blocked command and the guard rule that matched; the agent does not rephrase, re-encode, or move the write elsewhere to get past the guard | Text-only until #40 is fixed |

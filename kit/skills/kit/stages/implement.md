@@ -1,10 +1,9 @@
 ---
 description: Build an approved spec in its own worktree with the implementer agent under lane hooks. Refuses without an approval line, with open questions, past the WIP limit, or on file overlap. Resumes an existing lane.
 argument-hint: <feature slug>
-allowed-tools: Bash, Read, Agent
 ---
 
-Implement feature: $ARGUMENTS
+Implement feature: the arguments
 
 ## Step 1: start or resume the lane
 ```
@@ -48,6 +47,6 @@ gh pr create --title "<slug>: <feature>" --body-file docs/specs/<slug>.progress.
 node "$HOME/.claude/kit/scripts/lane.js" roadmap-set <slug> in-review --repo <main repo> --pr <PR url>
 node "$HOME/.claude/kit/scripts/lane.js" stage <slug> review --repo <main repo>
 ```
-Then run `/review <slug>`.
+Then run `/kit review <slug>`.
 
 Never edit code yourself in this command. Never mark anything done that the Stop hook did not accept.

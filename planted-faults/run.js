@@ -199,7 +199,7 @@ export function main(argv) {
     const orig = read(sp);
     write(sp, orig.replaceAll('## Open questions\n\n- none', '## Open questions\n\n- is refund idempotent?'));
     r = run('lane.js', ['precheck', 'refund-route', '--repo', root]);
-    record(7, 'spec with an unresolved unknown / open question', 'lane precheck before /implement', r.returncode === 2 && r.stderr.includes('open-questions'), r.stderr);
+    record(7, 'spec with an unresolved unknown / open question', 'lane precheck before /kit implement', r.returncode === 2 && r.stderr.includes('open-questions'), r.stderr);
     write(sp, orig);
 
     // 8 undeclared dependency
@@ -290,7 +290,7 @@ export function main(argv) {
     write(laneRoutes, '// lane side\n' + read(laneRoutes));
     F.commitAll(wt, 'lane change');
     c = sh('bash', ['scripts/sync.sh', 'main'], { cwd: wt, env: { ...process.env, ...F.GIT_ENV } });
-    record(17, '/sync hits a merge conflict', 'sync.sh exit 3; second conflict escalates (command rule)', c.returncode === 3, c.stderr, 'mechanical + command-level');
+    record(17, '/kit sync hits a merge conflict', 'sync.sh exit 3; second conflict escalates (command rule)', c.returncode === 3, c.stderr, 'mechanical + command-level');
     sh('git', ['merge', '--abort'], { cwd: wt });
 
     // 18 a kit script is broken -> kit's own CI (node --test) blocks release
@@ -354,7 +354,7 @@ export function main(argv) {
     r = run('lane.js', ['start', 'refund-route', '--repo', root23]);
     record(24, 'lane can read a value matching a floor credential pattern', 'lane.js start credential scan', r.returncode === 2 && r.stderr.includes('credential-looking content') && r.stderr.includes('src/db.ts:1') && !fs.existsSync(path.join(tmp, 'node-api-23-lanes', 'refund-route')), r.stderr);
 
-    // 26 /bootstrap on a repo that already has a decisions folder -> adopted, never duplicated; a re-run writes nothing new
+    // 26 /kit-setup on a repo that already has a decisions folder -> adopted, never duplicated; a re-run writes nothing new
     const root26 = path.join(tmp, 'node-api-26');
     F.nodeApi(root26);
     fs.mkdirSync(path.join(root26, 'docs', 'adr'), { recursive: true });
@@ -392,7 +392,7 @@ export function main(argv) {
     F.commitAll(root34, 'security goal');
     const n38 = JSON.parse(run('lane.js', ['next-step', 'refund-route', '--repo', root34]).stdout);
     record(38, 'security goal without high risk in the header', 'profile force_risk', n38.risk === 'high' && n38.work_type === 'security', `risk=${n38.risk}`);
-    // 37 /work: provisional fix, cause line re-routes
+    // 37 /kit: provisional fix, cause line re-routes
     write(goal34, goalText('fix (provisional)'));
     const spec34 = path.join(root34, 'docs', 'specs', 'refund-route.md');
     write(spec34, SPEC({ commit: F.commitAll(root34, 'provisional').slice(0, 7) }).replace(/^- Risk:.*$/m, '- Risk: low').replaceAll('src/domain/payment.ts', 'src/util/f.ts').replaceAll('src/api/routes.ts', 'src/util/f.ts'));
@@ -404,7 +404,7 @@ export function main(argv) {
     const prog37 = path.join(wt37, 'docs', 'specs', 'refund-route.progress.md');
     write(prog37, read(prog37) + '\n## Reproduction\n\ncause: boot failure\n');
     const n37 = JSON.parse(run('lane.js', ['next-step', 'refund-route', '--repo', root34]).stdout);
-    record(37, '/work given a symptom with no type', "provisional fix; the debugger's cause line re-routes (controller, logged)", n37.work_type === 'incident' && n37.rerouted && n37.rerouted.to === 'incident' && read(goal34).includes('- Work type: incident') && read(path.join(wt37, '.claude', 'session', 'events.jsonl')).includes('"event": "reroute"'), `rerouted ${n37.rerouted?.from} → ${n37.rerouted?.to}`);
+    record(37, '/kit given a symptom with no type', "provisional fix; the debugger's cause line re-routes (controller, logged)", n37.work_type === 'incident' && n37.rerouted && n37.rerouted.to === 'incident' && read(goal34).includes('- Work type: incident') && read(path.join(wt37, '.claude', 'session', 'events.jsonl')).includes('"event": "reroute"'), `rerouted ${n37.rerouted?.from} → ${n37.rerouted?.to}`);
     // 36 kill switch with a live lane
     hookEnv: {
       const edit36 = () => hook('hook_guard_edit.js', { hook_event_name: 'PreToolUse', tool_name: 'Write', cwd: wt37, tool_input: { file_path: prog37, content: 'x' } });

@@ -28,13 +28,13 @@ export function main(argv) {
   const kit = K.realResolve(a.kit);
   const problems = [];
   const settingsP = C.joinPath(root, '.claude', 'settings.json');
-  if (!K.isFile(settingsP)) return C.fail('guards-present: .claude/settings.json missing; run /bootstrap');
+  if (!K.isFile(settingsP)) return C.fail('guards-present: .claude/settings.json missing; run /kit-setup');
   const settings = readJson(settingsP);
   if (C.truthy(C.dictGet(settings, 'disableAllHooks', null))) problems.push('disableAllHooks is set');
   const frag = readJson(C.joinPath(kit, 'hooks', 'settings.project.json'));
   const stale = K.staleHookScripts(settings, kit);
   if (stale.length) {
-    problems.push(`hooks point at kit scripts that do not exist in this kit (${stale.join(', ')}): this project was set up by an older kit version; run /bootstrap --upgrade`);
+    problems.push(`hooks point at kit scripts that do not exist in this kit (${stale.join(', ')}): this project was set up by an older kit version; run /kit-setup --upgrade`);
   }
   // Every kit hook must be present and unchanged; the project's own hooks may sit next to them (field test #10).
   // An entry that runs a kit script but matches no fragment entry is a modified kit hook and fails.
@@ -43,7 +43,7 @@ export function main(argv) {
   for (const [ev, entries] of Object.entries(frag.hooks)) {
     const got = Array.isArray(have[ev]) ? have[ev] : [];
     const missing = entries.filter((e) => !got.some((g) => isDeepStrictEqual(g, e)));
-    if (missing.length) problems.push(`hooks.${ev}: ${missing.length} kit hook entr${missing.length === 1 ? 'y is' : 'ies are'} missing or changed (run /bootstrap --upgrade)`);
+    if (missing.length) problems.push(`hooks.${ev}: ${missing.length} kit hook entr${missing.length === 1 ? 'y is' : 'ies are'} missing or changed (run /kit-setup --upgrade)`);
   }
   for (const [ev, entries] of Object.entries(have)) {
     if (!Array.isArray(entries)) continue;
@@ -65,12 +65,12 @@ export function main(argv) {
     for (const [rel, h] of Object.entries(C.dictGet(man, 'files', {}))) {
       const p = C.joinPath(root, rel);
       if (!K.isFile(p)) problems.push(`${rel} missing`);
-      else if (C.sha256File(p) !== h) problems.push(`${rel} changed since bootstrap (edit through /bootstrap --upgrade)`);
+      else if (C.sha256File(p) !== h) problems.push(`${rel} changed since bootstrap (edit through /kit-setup --upgrade)`);
     }
     for (const [name, h] of Object.entries(C.dictGet(man, 'kit_scripts', {}))) {
       const p = C.joinPath(kit, 'scripts', name);
       if (K.isFile(p) && C.sha256File(p) !== h) {
-        problems.push(`kit script ${name} differs from the version this project was bootstrapped with; run /bootstrap --upgrade`);
+        problems.push(`kit script ${name} differs from the version this project was bootstrapped with; run /kit-setup --upgrade`);
       }
     }
   } else {

@@ -1,5 +1,5 @@
 {
-  "command": "/architecture",
+  "command": "/kit architecture",
   "description": "A change to the declared architecture or design model. Research, propose, critique, human approval, then implement as lanes.",
   "stages": [
     "start",

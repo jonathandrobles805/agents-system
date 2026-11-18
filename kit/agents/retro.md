@@ -1,6 +1,6 @@
 ---
 name: retro
-description: After a merge, finds what went wrong in a lane, states the rule that would have prevented it, and proposes the hook, lint, or test that enforces it. Use for /retro. Writes a lesson entry only after human approval.
+description: After a merge, finds what went wrong in a lane, states the rule that would have prevented it, and proposes the hook, lint, or test that enforces it. Use for /kit retro. Writes a lesson entry only after human approval.
 tools: Read, Grep, Glob, Bash
 model: opus
 hooks:
@@ -36,6 +36,6 @@ Fill `~/.claude/kit/templates/lesson.md`:
 - If the lesson applies to every project, say `scope: global`; it goes to the kit as an issue.
 
 ## Do not
-- Write to `LESSONS.md` yourself. Print the proposed entries and stop. A human approves, and `/retro` writes them.
+- Write to `LESSONS.md` yourself. Print the proposed entries and stop. A human approves, and `/kit retro` writes them.
 - Propose a reminder in `CLAUDE.md` when a hook or test is possible. Text is the weakest level.
 - Blame the model. Name the gap in the system that let the mistake through.

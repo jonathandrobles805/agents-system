@@ -1,10 +1,9 @@
 ---
 description: Research a topic with one researcher agent per question, reusing or re-verifying existing research from docs/research/INDEX.md. Writes tagged research files only.
 argument-hint: <topic or feature slug> [question 1; question 2; ...]
-allowed-tools: Bash, Read, Agent
 ---
 
-Research for: $ARGUMENTS
+Research for: the arguments
 
 ## Step 1: questions
 If the arguments contain `;`-separated questions, use them. Otherwise derive 2–4 concrete questions that a planner would need answered before writing a spec for this topic: how the relevant existing code works (name the module), how any external API or library behaves at the pinned version, what calls what, what tests exist. Each question must be answerable with evidence; no "is it a good idea" questions.

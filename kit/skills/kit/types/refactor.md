@@ -1,10 +1,9 @@
 ---
 description: Behaviour-preserving restructuring: start it as work type `refactor` and carry it through the `refactor` workflow profile (kit/workflows/refactor.json). The controller decides every stage from files; this command only classifies and hands off.
 argument-hint: <what you want, in one sentence>
-allowed-tools: Read, Write, Bash, AskUserQuestion
 ---
 
-Behaviour-preserving restructuring. The human said: $ARGUMENTS
+Behaviour-preserving restructuring. The human said: the arguments
 
 ## What this kind of work is
 
@@ -14,7 +13,7 @@ Profile `refactor`: `start → research → plan → approve → lane → test �
 
 ## Step 1: classify, then start
 
-Follow `/start` exactly (understand before anything else; agree the goal; write `docs/goals/<slug>.md`), with these header fields set:
+Follow `/kit start` exactly (understand before anything else; agree the goal; write `docs/goals/<slug>.md`), with these header fields set:
 
 ```
 - Work type: refactor
@@ -29,4 +28,4 @@ Run `node "$HOME/.claude/kit/scripts/validate_docs.js" docs/goals/<slug>.md --re
 
 ## Step 2: hand off
 
-`/run <slug>`. The loop asks `lane.js next-step`, which reads the profile and names the one agent allowed for each stage (`lane.js agent-for refactor <stage>`). Spawn only that agent. If `next-step` returns `refused`, stop and show its reason; never pick a stage yourself.
+Run the loop in SKILL.md for `<slug>` (what `/kit <slug>` does). The loop asks `lane.js next-step`, which reads the profile and names the one agent allowed for each stage (`lane.js agent-for refactor <stage>`). Spawn only that agent. If `next-step` returns `refused`, stop and show its reason; never pick a stage yourself.

@@ -27,6 +27,7 @@ import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { ArgumentParser } from '../kit/scripts/args.js';
 import * as K from '../kit/scripts/kitlib.js';
+import { skillFiles } from '../kit/scripts/arch_manifest.js';
 
 const ROOT = path.dirname(path.dirname(K.realResolve(fileURLToPath(import.meta.url))));
 const KIT = path.join(ROOT, 'kit');
@@ -101,7 +102,7 @@ export function shippedRules() {
 
 /**
  * Executables a claim can name, each with the words a spec sentence might call it by. Discovered, not listed:
- * the scripts on disk, the tools package.json runs, and the slash commands in the kit.
+ * the scripts on disk, the tools package.json runs, and the skills in the kit (decision 0017).
  */
 export function executables() {
   const out = [];
@@ -116,15 +117,19 @@ export function executables() {
     const m = /(?:^|\s)((?:\w|[./-])+\.js)/.exec(cmd);
     if (m) add(m[1], name);
   }
-  // A slash command is a Markdown file, not a parser; it is an ALIAS for whatever script it runs, so `/bootstrap`
-  // grades against bootstrap.js. Without this a claim about a command would be checked against prose.
-  for (const n of fs.readdirSync(path.join(KIT, 'commands')).filter((x) => x.endsWith('.md'))) {
-    const body = readIf(path.join(KIT, 'commands', n));
-    const m = /kit\/scripts\/([\w.-]+\.js)/.exec(body);
+  // A skill is a Markdown file, not a parser; it is an ALIAS for whatever script it runs, so `/kit-setup` (and the
+  // short name `/bootstrap` that KIT-SPEC still uses for it, decision 0017) grades against bootstrap.js. Without this
+  // a claim about a skill would be checked against prose.
+  const SHORT = { kit: 'run', 'kit-status': 'status', 'kit-dashboard': 'dashboard', 'kit-setup': 'bootstrap' };
+  for (const { name, abs } of skillFiles(path.join(KIT, 'skills'))) {
+    const body = readIf(abs);
+    const m = /kit\/scripts\/([\w.-]+\.js)/.exec(body ?? '');
     const target = m ? out.find((t) => t.file === `kit/scripts/${m[1]}`) : null;
     if (target) {
-      // remembered apart: resolveInvocationClaim must not take a command's name for the script's (see there)
-      const viaCommand = [`/${n.replace(/\.md$/, '')}`, n.replace(/\.md$/, '')].filter((a) => !target.aliases.includes(a));
+      const typed = name.replace(/\/(stages|types)\//, ' ');
+      const short = SHORT[name] ?? name.split('/').pop();
+      // remembered apart: resolveInvocationClaim must not take a skill's name for the script's (see there)
+      const viaCommand = [...new Set([`/${typed}`, typed, `/${short}`, short])].filter((a) => !target.aliases.includes(a));
       target.aliases.push(...viaCommand);
       target.commandAliases = [...(target.commandAliases ?? []), ...viaCommand];
     }
@@ -262,7 +267,7 @@ export function resolveInvocationClaim(claim, ctx) {
   // Graded only where the spec is DESCRIBING this tool -- its heading names it. A tool mentioned inside a list
   // ("jobs on every PR: ... validate-docs") is not the subject of the sentence, and grading those made the
   // resolver fire on any sentence that happened to share a word with an option. And it names the tool ITSELF: a
-  // command alias only says the command runs the script, so `## reviewer` (/review runs validate_docs) is not a
+  // command alias only says the command runs the script, so `## reviewer` (/kit review runs validate_docs) is not a
   // description of validate_docs, and "every changed file" there is not its --changed option.
   const own = ctx.tools.map((t) => ({ ...t, aliases: t.aliases.filter((a) => !(t.commandAliases ?? []).includes(a)) }));
   const tool = namedTool('', claim.heading, own);

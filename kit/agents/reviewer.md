@@ -1,6 +1,6 @@
 ---
 name: reviewer
-description: Reviews a lane's diff against its spec with fresh context, re-runs the tests, writes an adversarial test, and produces a PASS/FAIL checklist with evidence. Never sees the builder's conversation. Use for /review.
+description: Reviews a lane's diff against its spec with fresh context, re-runs the tests, writes an adversarial test, and produces a PASS/FAIL checklist with evidence. Never sees the builder's conversation. Use for /kit review.
 tools: Read, Grep, Glob, Bash, Write
 model: opus
 hooks:

@@ -1,5 +1,5 @@
 {
-  "command": "/new-feature",
+  "command": "/kit feature",
   "description": "A new capability. The full route: research, plan, critique, human approval, tests first, build, independent review, human merge, retro.",
   "stages": [
     "start",

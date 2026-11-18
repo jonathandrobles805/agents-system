@@ -1,5 +1,5 @@
 {
-  "command": "/ui",
+  "command": "/kit ui",
   "description": "A user-interface change against the design model. No research at S or M; at L it takes the feature shape.",
   "stages": [
     "start",

@@ -22,7 +22,7 @@ import * as K from './kitlib.js';
 
 export const SCHEMA = 1;
 /** Kinds that kit/manifest.json must declare, one entry each. Other kinds are observed only. */
-export const DECLARED_KINDS = ['command', 'agent', 'hook', 'ci', 'script', 'ci-job'];
+export const DECLARED_KINDS = ['skill', 'agent', 'hook', 'ci', 'script', 'ci-job'];
 export const DECLARED_FILE = 'manifest.json';
 export const SNAPSHOT_FILE = 'architecture.json';
 /** Edge kinds that mean "the source needs the target to work" (a test covering a script does not make the script used). */
@@ -201,7 +201,21 @@ const TOOL_REFS = [
 const TEMPLATE_REF = /templates\/([a-z0-9-]+)\.md/g;
 const SETTINGS_REF = /hooks\/settings\.project\.json/g;
 const SPAWN_REFS = [/[Ss]pawn(?:\s+(?:the|a|an|all))*\s+`([a-z][a-z-]*)`/g, /`([a-z][a-z-]*)`\s+agent\b/g];
-const FOLLOW_REF = /`\/([a-z][a-z-]*)\b[^`]*`/g;
+const FOLLOW_REF = /`\/([a-z][a-z-]*)(?:\s+([a-z][a-z-]*))?\b[^`]*`/g;
+
+/**
+ * The skill a `/name ...` reference follows (decision 0017): `/kit plan <slug>` is the plan stage file of /kit,
+ * `/kit fix ...` its fix work-type file, `/kit <slug>` the /kit loop itself, `/kit-status` that skill. Null when the
+ * name is not a kit skill.
+ */
+export function followTarget(m, skills) {
+  const [, name, word] = m;
+  if (name === 'kit' && word) {
+    if (skills.has(`kit/stages/${word}`)) return `kit/stages/${word}`;
+    if (skills.has(`kit/types/${word}`)) return `kit/types/${word}`;
+  }
+  return skills.has(name) ? name : null;
+}
 
 function* matches(re, line) {
   re.lastIndex = 0;
@@ -211,7 +225,7 @@ function* matches(re, line) {
 
 /**
  * Add the edges that the lines `from..to` of one markdown/yaml/shell source make, using the references above.
- * `kind` is the edge kind for scripts it runs; agents and commands also get spawn / follow / uses edges.
+ * `kind` is the edge kind for scripts it runs; agents and skills also get spawn / follow / uses edges.
  */
 function scanLines(g, ctx, id, filePath, lines, first, last, opts = {}) {
   const { kinds = {}, stepAt = () => undefined } = opts;
@@ -256,7 +270,10 @@ function scanLines(g, ctx, id, filePath, lines, first, last, opts = {}) {
       }
     }
     if (kinds.follows) {
-      for (const m of matches(FOLLOW_REF, line)) if (ctx.commands.has(m[1])) g.edge(id, `command:${m[1]}`, 'follows', at(i));
+      for (const m of matches(FOLLOW_REF, line)) {
+        const t = followTarget(m, ctx.skills);
+        if (t && `skill:${t}` !== id) g.edge(id, `skill:${t}`, 'follows', at(i));
+      }
     }
     if (kinds.npm) {
       for (const m of matches(/\bnpm\s+(?:run\s+)?([A-Za-z0-9:_-]+)/g, line)) {
@@ -325,11 +342,26 @@ function addTests(g, base, kitDir) {
   }
 }
 
+/** Kit skills (decision 0017): each folder `kit/skills/<name>/` (not `domains/` or `workflows/`) as [{name, abs}]: its SKILL.md
+ * as `<name>`, and each Markdown file one folder down (the /kit stages and work types) as `<name>/<folder>/<file>`. */
+export function skillFiles(skillsDir) {
+  const out = [];
+  for (const name of list(skillsDir, (n) => !['domains', 'workflows'].includes(n) && K.isFile(path.join(skillsDir, n, 'SKILL.md')))) {
+    out.push({ name, abs: path.join(skillsDir, name, 'SKILL.md') });
+    for (const sub of list(path.join(skillsDir, name), (n) => fs.statSync(path.join(skillsDir, name, n)).isDirectory())) {
+      for (const file of list(path.join(skillsDir, name, sub), (n) => n.endsWith('.md'))) {
+        out.push({ name: `${name}/${sub}/${file.replace(/\.md$/, '')}`, abs: path.join(skillsDir, name, sub, file) });
+      }
+    }
+  }
+  return out;
+}
+
 function addMarkdown(g, base, dir, kind, ctx) {
-  const set = kind === 'agent' ? ctx.agents : ctx.commands;
-  for (const file of list(dir, (n) => n.endsWith('.md'))) {
-    const abs = path.join(dir, file);
-    const name = file.replace(/\.md$/, '');
+  const set = kind === 'agent' ? ctx.agents : ctx.skills;
+  const files = kind === 'agent' ? list(dir, (n) => n.endsWith('.md')).map((file) => ({ name: file.replace(/\.md$/, ''), abs: path.join(dir, file) })) : skillFiles(dir);
+  for (const { name, abs } of files) {
+    const file = path.basename(abs);
     const lines = splitLines(read(abs));
     const fm = frontmatter(lines);
     const attrs = { description: fm.fields.description ?? '' };
@@ -337,9 +369,12 @@ function addMarkdown(g, base, dir, kind, ctx) {
       Object.assign(attrs, { tools: csv(fm.fields.tools), model: fm.fields.model ?? '' });
       if (fm.fields.name && fm.fields.name !== name) g.problem('agent-name-mismatch', 'error', `agent:${name}`, `${rel(base, abs)} declares name "${fm.fields.name}" but the file is ${file}`);
     } else {
+      if (file === 'SKILL.md' && fm.fields.name !== name) g.problem('skill-name-mismatch', 'error', `skill:${name}`, `${rel(base, abs)} declares name "${fm.fields.name ?? ''}" but the folder is ${name}`);
       Object.assign(attrs, { argument_hint: fm.fields['argument-hint'] ?? '', allowed_tools: csv(fm.fields['allowed-tools']) });
     }
-    g.node({ id: `${kind}:${name}`, kind, label: name, path: rel(base, abs), abs, attrs, stats: { lines: lines.length }, lines, close: fm.close });
+    // a /kit stage or work-type file reads as what the human types: kit/stages/plan -> "kit plan"
+    const label = kind === 'skill' ? name.replace(/\/(stages|types)\//, ' ') : name;
+    g.node({ id: `${kind}:${name}`, kind, label, path: rel(base, abs), abs, attrs, stats: { lines: lines.length }, lines, close: fm.close });
     set.add(name);
   }
 }
@@ -375,7 +410,7 @@ function addExtras(g, base, kitDir) {
 
 function addWorkflows(g, base, kitDir) {
   const sources = [
-    ['template', path.join(kitDir, 'ci', 'github.yml'), 'the project CI that /bootstrap installs (kit/ci/github.yml)'],
+    ['template', path.join(kitDir, 'ci', 'github.yml'), 'the project CI that /kit-setup installs (kit/ci/github.yml)'],
     ['kit', path.join(base, '.github', 'workflows', 'kit.yml'), "this repository's own CI (.github/workflows/kit.yml)"],
   ];
   const out = [];
@@ -393,10 +428,10 @@ function addWorkflows(g, base, kitDir) {
 }
 
 /**
- * Stages in the table of the /run command, in order: [{id, line, agents, commands, pause}].
- * `agents` are the agents the row names plus those spawned by the commands it tells /run to follow (`spawnsOf(command)`).
+ * Stages in the table of the /kit skill, in order: [{id, line, agents, skills, pause}].
+ * `agents` are the agents the row names plus those spawned by the stage files it tells /kit to follow (`spawnsOf(skill)`).
  */
-export function runStages(lines, agentNames, commandNames, spawnsOf = () => []) {
+export function runStages(lines, agentNames, skillNames, spawnsOf = () => []) {
   const head = lines.findIndex((l) => /^\|\s*stage\s*\|/.test(l));
   if (head < 0) return [];
   const out = [];
@@ -405,10 +440,10 @@ export function runStages(lines, agentNames, commandNames, spawnsOf = () => []) 
     if (!m) continue;
     const text = m[2];
     const named = [...agentNames].filter((a) => new RegExp(`(^|[^A-Za-z-])${a}([^A-Za-z-]|$)`).test(text));
-    const commands = [...new Set([...matches(FOLLOW_REF, text)].map((x) => x[1]).filter((c) => commandNames.has(c)))].sort(byText);
-    const agents = [...new Set([...named, ...commands.flatMap((c) => spawnsOf(c))])].sort(byText);
+    const skills = [...new Set([...matches(FOLLOW_REF, text)].map((x) => followTarget(x, skillNames)).filter((c) => c && c !== 'kit'))].sort(byText);
+    const agents = [...new Set([...named, ...skills.flatMap((c) => spawnsOf(c))])].sort(byText);
     const pause = /\*\*Pause (\d)/.exec(text);
-    out.push({ id: m[1], line: i + 1, agents, commands, pause: pause ? Number(pause[1]) : null });
+    out.push({ id: m[1], line: i + 1, agents, skills, pause: pause ? Number(pause[1]) : null });
   }
   return out;
 }
@@ -416,7 +451,7 @@ export function runStages(lines, agentNames, commandNames, spawnsOf = () => []) 
 /** Stage names `lane.js next-step` can answer, read from the source of nextStep(). */
 export function laneStages(laneText) {
   // next-step is the entry point; since step 7 it delegates the position derivation to nextStepFeature and maps the
-  // result onto the goal's profile, so both bodies carry stages the /run table must document
+  // result onto the goal's profile, so both bodies carry stages the /kit table must document
   const stages = new Set();
   for (const fn of ['export async function nextStep', 'async function nextStepFeature', 'async function nextStepRepro', 'export function inLanePlanning']) {
     const at = laneText.indexOf(fn);
@@ -463,12 +498,12 @@ export function buildManifest(kitDirIn) {
   const kitDir = K.realResolve(kitDirIn);
   const base = path.dirname(kitDir);
   const g = new Graph();
-  const ctx = { agents: new Set(), commands: new Set(), tests: [], npmScripts: {} };
+  const ctx = { agents: new Set(), skills: new Set(), tests: [], npmScripts: {} };
 
   addScripts(g, base, kitDir);
   addTests(g, base, kitDir);
   addMarkdown(g, base, path.join(kitDir, 'agents'), 'agent', ctx);
-  addMarkdown(g, base, path.join(kitDir, 'commands'), 'command', ctx);
+  addMarkdown(g, base, path.join(kitDir, 'skills'), 'skill', ctx);
   addTemplates(g, base, kitDir);
   addExtras(g, base, kitDir);
   const jobs = addWorkflows(g, base, kitDir);
@@ -499,9 +534,9 @@ export function buildManifest(kitDirIn) {
     else for (const h of hooks) hookEdge(settings.id, settings.path, h);
   }
 
-  // agents and commands: scripts they run, agents they spawn, commands they follow, templates they use
-  for (const n of [...g.nodes.values()].filter((x) => x.kind === 'agent' || x.kind === 'command')) {
-    scanLines(g, ctx, n.id, n.path, n.lines, n.close + 1, n.lines.length, { kinds: { spawns: true, follows: n.kind === 'command' } });
+  // agents and skills: scripts they run, agents they spawn, skills they follow, templates they use
+  for (const n of [...g.nodes.values()].filter((x) => x.kind === 'agent' || x.kind === 'skill')) {
+    scanLines(g, ctx, n.id, n.path, n.lines, n.close + 1, n.lines.length, { kinds: { spawns: true, follows: n.kind === 'skill' } });
   }
 
   // CI jobs and shell scripts
@@ -551,10 +586,10 @@ export function buildManifest(kitDirIn) {
     }
   }
 
-  // pipeline: the stages of /run, checked against the stages lane.js can answer
-  const run = g.nodes.get('command:run');
-  const spawnsOf = (command) => [...g.edges.values()].filter((e) => e.from === `command:${command}` && e.kind === 'spawns').map((e) => e.to.slice('agent:'.length));
-  const pipeline = run ? runStages(run.lines, ctx.agents, ctx.commands, spawnsOf) : [];
+  // pipeline: the stages of /kit, checked against the stages lane.js can answer
+  const run = g.nodes.get('skill:kit');
+  const spawnsOf = (skill) => [...g.edges.values()].filter((e) => e.from === `skill:${skill}` && e.kind === 'spawns').map((e) => e.to.slice('agent:'.length));
+  const pipeline = run ? runStages(run.lines, ctx.agents, ctx.skills, spawnsOf) : [];
   const lane = g.nodes.get('script:lane');
   const fromLane = lane ? laneStages(read(lane.abs)) : null;
   if (run && fromLane) {
@@ -562,7 +597,7 @@ export function buildManifest(kitDirIn) {
     const missingInRun = fromLane.filter((s) => !documented.includes(s));
     const missingInLane = documented.filter((s) => !fromLane.includes(s));
     if (missingInRun.length || missingInLane.length) {
-      g.problem('stage-mismatch', 'error', 'command:run', `stages of lane.js next-step and of the /run table differ: only in lane.js [${missingInRun.join(', ')}], only in /run [${missingInLane.join(', ')}]`);
+      g.problem('stage-mismatch', 'error', 'skill:kit', `stages of lane.js next-step and of the /kit table differ: only in lane.js [${missingInRun.join(', ')}], only in /kit [${missingInLane.join(', ')}]`);
     }
   }
 
@@ -643,7 +678,7 @@ export function snapshotOf(m) {
     kit_version: m.kit_version,
     nodes: m.nodes.map(({ id, kind, label, path: p, declared, purpose, writes, attrs }) => ({ id, kind, label, path: p, ...(declared === undefined ? {} : { declared }), ...(purpose ? { purpose } : {}), ...(writes ? { writes } : {}), attrs })),
     edges: m.edges.map(({ from, to, kind, event, matcher, step, args, timeout, via, evidence }) => ({ from, to, kind, ...(event ? { event } : {}), ...(matcher ? { matcher } : {}), ...(step ? { step } : {}), ...(args ? { args } : {}), ...(timeout ? { timeout } : {}), ...(via ? { via } : {}), file: evidence.file })),
-    pipeline: m.pipeline.map(({ id, agents, commands, pause }) => ({ id, agents, commands, pause })),
+    pipeline: m.pipeline.map(({ id, agents, skills, pause }) => ({ id, agents, skills, pause })),
     problems: m.problems.map(({ id, severity, component, message }) => ({ id, severity, component, message })),
   };
 }

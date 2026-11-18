@@ -2,7 +2,7 @@
 # Install the agent kit into ~/.claude. Idempotent. Re-run after pulling a new kit version.
 #
 # Usage: ./install.sh [--copy]
-#   default: symlink kit/agents/* and kit/commands/* into ~/.claude, and symlink kit/ as ~/.claude/kit
+#   default: symlink kit/agents/* and the skill folders kit/skills/<name>/ into ~/.claude, and symlink kit/ as ~/.claude/kit
 #   --copy : copy instead of symlink (for machines where ~/.claude must not point outside itself)
 set -euo pipefail
 shopt -s nullglob
@@ -12,7 +12,7 @@ CLAUDE_HOME="${CLAUDE_HOME:-$HOME/.claude}"
 MODE="link"
 [[ "${1:-}" == "--copy" ]] && MODE="copy"
 
-mkdir -p "$CLAUDE_HOME/agents" "$CLAUDE_HOME/commands"
+mkdir -p "$CLAUDE_HOME/agents" "$CLAUDE_HOME/skills"
 
 place() {
   local src="$1" dst="$2"
@@ -29,9 +29,39 @@ place() {
 for f in "$KIT_ROOT"/kit/agents/*.md; do
   place "$f" "$CLAUDE_HOME/agents/$(basename "$f")"
 done
-for f in "$KIT_ROOT"/kit/commands/*.md; do
-  place "$f" "$CLAUDE_HOME/commands/$(basename "$f")"
+# Skills (decision 0017). kit/skills/domains/ and kit/skills/workflows/ are reserved for domain and workflow
+# skills (OPERATING-MODEL §3), which /kit-setup copies into projects; they are never installed per machine.
+for d in "$KIT_ROOT"/kit/skills/*/; do
+  name="$(basename "$d")"
+  [[ "$name" == "domains" || "$name" == "workflows" ]] && continue
+  place "${d%/}" "$CLAUDE_HOME/skills/$name"
 done
+
+# Up to kit 0.2.0 the kit installed 23 slash commands into ~/.claude/commands/. Remove the kit's own copies only:
+# a symlink that points into a kit's commands folder is removed; a regular file of the same name (a --copy install)
+# that matches the old kit copy or calls the kit's scripts is moved to ~/.claude/kit-backup/, never deleted.
+# Anything else is left alone. This runs before ~/.claude/kit is replaced, so the old copy can still be compared.
+OLD_COMMANDS=(architecture bootstrap dashboard docs fix implement incident investigate migrate new-feature new-skill
+  plan refactor research retro review run security start status sync ui work)
+moved=0
+for n in "${OLD_COMMANDS[@]}"; do
+  f="$CLAUDE_HOME/commands/$n.md"
+  if [[ -L "$f" ]]; then
+    case "$(readlink "$f")" in */kit/commands/"$n".md) rm -f "$f"; moved=$((moved + 1)) ;; esac
+  elif [[ -f "$f" ]] && { cmp -s "$f" "$CLAUDE_HOME/kit/commands/$n.md" || grep -Eq '\.claude/kit/|lane\.js|scripts/sync\.sh' "$f"; }; then
+    backup="$CLAUDE_HOME/kit-backup/commands-$(date +%Y%m%d-%H%M%S)"
+    mkdir -p "$backup"; mv "$f" "$backup/"; moved=$((moved + 1))
+  fi
+done
+if (( moved > 0 )); then
+  cat <<'MAP'
+The kit's slash commands are now four skills (decision 0017):
+  /run <slug>, /start, /work, /new-feature, /fix, ... -> /kit <slug> | /kit <what you want> | /kit fix <what>
+  /research, /plan, /implement, /review, /sync, /retro -> /kit research | /kit plan <slug> | ... (stages of /kit)
+  /status -> /kit-status    /dashboard -> /kit-dashboard    /bootstrap -> /kit-setup
+MAP
+  echo "removed $moved old kit command file(s) from $CLAUDE_HOME/commands"
+fi
 place "$KIT_ROOT/kit" "$CLAUDE_HOME/kit"
 
 # Scripts need Node.js 20 or newer (no npm packages); verify once.
@@ -48,4 +78,4 @@ node "$KIT_ROOT/kit/scripts/check_projects.js" --kit "$KIT_ROOT/kit" || true
 
 echo "agent-kit $(cat "$KIT_ROOT/VERSION") installed into $CLAUDE_HOME ($MODE)"
 echo "agents:   $(ls "$KIT_ROOT"/kit/agents/*.md 2>/dev/null | wc -l | tr -d ' ')"
-echo "commands: $(ls "$KIT_ROOT"/kit/commands/*.md 2>/dev/null | wc -l | tr -d ' ')"
+echo "skills:   $(for d in "$KIT_ROOT"/kit/skills/*/; do n="$(basename "$d")"; [[ "$n" == domains || "$n" == workflows ]] || echo "$n"; done | wc -l | tr -d ' ')"
