@@ -1283,8 +1283,9 @@ test('#32 the tester\'s red runs are not fix attempts', () => {
   // before spawning the tester and only move to build afterwards
   const md = read(KIT, 'skills', 'zi-implement', 'SKILL.md');
   const testerAt = md.indexOf('Spawn the `tester`');
-  const stageTest = md.indexOf('stage <slug> test');
-  const stageBuild = md.indexOf('stage <slug> build');
+  // decision 0017 step 7: the skill names its argument `$slug`
+  const stageTest = md.indexOf('stage $slug test');
+  const stageBuild = md.indexOf('stage $slug build');
   assert.ok(stageTest > 0, 'implement.md sets the test stage');
   assert.ok(stageTest < testerAt, 'before the tester runs');
   assert.ok(stageBuild > testerAt, `and only reaches build after it: test@${stageTest} tester@${testerAt} build@${stageBuild}`);
@@ -1366,8 +1367,8 @@ test('#35 no kit prompt names a lane log path other than the real one', () => {
   for (const [dir, n] of [...prompts('skills'), ...prompts('agents')]) {
     {
       for (const [i, line] of K.splitlines(read(KIT, dir, n)).entries()) {
-        // any <slug>.log reference that is not under .claude/session/ and not the committed copy
-        for (const m of line.matchAll(/([\w./<>{}-]*[<{]?slug[}>]?[\w./-]*\.log)\b/g)) {
+        // any <slug>.log (or $slug.log) reference that is not under .claude/session/ and not the committed copy
+        for (const m of line.matchAll(/([\w./<>{}$-]*[<{$]?slug[}>]?[\w./-]*\.log)\b/g)) {
           const p = m[1];
           if (p.includes('.claude/session/') || p.endsWith('.checks.txt')) continue;
           bad.push(`${dir}/${n}:${i + 1}: ${p}`);

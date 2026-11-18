@@ -79,6 +79,16 @@ test('only the human starts the skills no other kit skill hands work to', () => 
   }
 });
 
+test('a skill that takes one feature slug names it, so Claude Code fills it in', () => {
+  // probe F6: arguments: [slug] substitutes $slug in a SKILL.md
+  for (const n of ['zi-implement', 'zi-plan', 'zi-review']) {
+    const text = read(path.join(SKILLS, n, 'SKILL.md'));
+    assert.match(/^---\n([\s\S]*?)\n---\n/.exec(text)[1], /^arguments: \[slug\]$/m, n);
+    assert.ok(text.includes('$slug'), `${n} uses $slug`);
+    assert.ok(!text.includes('<slug>') && !text.includes('$ARGUMENTS'), `${n}: one name for the feature, not <slug> or $ARGUMENTS`);
+  }
+});
+
 test('no kit skill strips tools from the agents it spawns', () => {
   // probe F2, F3 (docs/research/claude-code-skill-probe.md): disallowed-tools also removes the tool from subagents and
   // stays in force after the skill
