@@ -19,9 +19,10 @@ Write the goal through `/kit start` with:
 - Work type: fix (provisional)
 - Risk: {{normal|high}}
 - Size: M
+- Domain: {{comma-separated domains this touches}}
 ```
 
-Size is M, never S, when the scope is unknown (KIT-SPEC 10.12). Then run the loop in SKILL.md for `<slug>` (what `/kit <slug>` does).
+Size is M, never S, when the scope is unknown: S promises one domain and no interface, schema, data or dependency change, which nobody can promise before the debugger has looked. Then run the loop in SKILL.md for `<slug>` (what `/kit <slug>` does).
 
 ## Step 3: the evidence decides
 

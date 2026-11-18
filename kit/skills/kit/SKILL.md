@@ -27,7 +27,7 @@ You orchestrate. You never write application code, tests, specs, reviews, or les
 ```
 node "$HOME/.claude/kit/scripts/lane.js" next-step <slug> --repo "$PWD"
 ```
-Read `stage` and act as below, then run `next-step` again. Repeat until `done`, or until a stage below says stop. Since step 7 the answer also carries `work_type`, `size`, `risk` and `agent`: the one agent the workflow profile allows for this stage (`kit/workflows/<work_type>.json`). Spawn that agent and no other; when `agent` is null the stage is the human's or a script's. A `rerouted` field means the controller changed the work type from the debugger's evidence; continue under the new profile. A stage below that the profile lacks will never be returned for that work type.
+Read `stage` and act as below, then run `next-step` again. Repeat until `done`, or until a stage below says stop. The answer also carries `work_type`, `size`, `risk` and `agent`: the one agent the workflow profile allows for this stage (`kit/workflows/<work_type>.json`). Spawn that agent and no other; when `agent` is null the stage is the human's or a script's. A `rerouted` field means the controller changed the work type from the debugger's evidence; continue under the new profile. A stage below that the profile lacks will never be returned for that work type.
 
 | stage | what you do |
 |---|---|

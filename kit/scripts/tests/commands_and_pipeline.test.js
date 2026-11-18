@@ -55,6 +55,18 @@ test('every description says when to use it first', () => {
   }
 });
 
+test('every work type writes the same four goal fields the goal template has', () => {
+  // field test: /work's goal block lacked Domain:, which the other ten had (decision 0016 E.5)
+  for (const p of COMMANDS.filter((x) => rel(x).startsWith('kit/types/'))) {
+    for (const f of ['- Work type:', '- Risk:', '- Size:', '- Domain:']) assert.ok(read(p).includes(f), `${rel(p)} ${f}`);
+  }
+});
+
+test('the installed prompts cite nothing that is not installed with them', () => {
+  // KIT-SPEC, OPERATING-MODEL and the decisions live in the kit repo's docs/, which install.sh does not place
+  for (const p of COMMANDS) assert.doesNotMatch(read(p), /KIT-SPEC|OPERATING-MODEL|[Ss]ince step \d/, rel(p));
+});
+
 test('/kit names every stage and work type it can be given, and each has its file', () => {
   const text = read(path.join(SKILLS, 'kit', 'SKILL.md'));
   for (const f of EXPECTED) {
