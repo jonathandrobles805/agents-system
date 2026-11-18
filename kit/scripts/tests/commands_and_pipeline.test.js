@@ -47,6 +47,19 @@ test('every description and argument-hint is one double-quoted YAML string', () 
   }
 });
 
+test('no kit skill strips tools from the agents it spawns', () => {
+  // probe Q1b, Q2: disallowed-tools also removes the tool from subagents and stays in force after the skill
+  for (const p of COMMANDS) assert.doesNotMatch(/^---\n([\s\S]*?)\n---\n/.exec(read(p))[1], /^disallowed-tools:/m, rel(p));
+});
+
+test('no allowed-tools pattern relies on a $variable or quotes, which Claude Code does not match', () => {
+  // probe Q6d: a pattern containing "$PWD" did not approve the same literal command, so such a pattern only looks safe
+  for (const p of COMMANDS) {
+    const tools = /^allowed-tools:(.*)$/m.exec(read(p))?.[1] ?? '';
+    assert.doesNotMatch(tools, /\$|"/, rel(p));
+  }
+});
+
 test('every description says when to use it first', () => {
   // Claude and the / menu show the description; the use case comes first (Anthropic's guidance for skills)
   for (const p of COMMANDS) {
