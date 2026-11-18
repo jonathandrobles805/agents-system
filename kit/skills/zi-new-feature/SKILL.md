@@ -1,7 +1,7 @@
 ---
 name: zi-new-feature
-description: A new capability: start it as work type `feature` and carry it through the `feature` workflow profile (kit/workflows/feature.json). The controller decides every stage from files; this command only classifies and hands off.
-argument-hint: <what you want, in one sentence>
+description: "A new capability: start it as work type `feature` and carry it through the `feature` workflow profile (kit/workflows/feature.json). The controller decides every stage from files; this command only classifies and hands off."
+argument-hint: "<what you want, in one sentence>"
 allowed-tools: Read, Write, Bash, AskUserQuestion
 ---
 

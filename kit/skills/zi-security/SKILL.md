@@ -1,7 +1,7 @@
 ---
 name: zi-security
-description: A security finding or review: start it as work type `security` and carry it through the `security` workflow profile (kit/workflows/security.json). The controller decides every stage from files; this command only classifies and hands off.
-argument-hint: <what you want, in one sentence>
+description: "A security finding or review: start it as work type `security` and carry it through the `security` workflow profile (kit/workflows/security.json). The controller decides every stage from files; this command only classifies and hands off."
+argument-hint: "<what you want, in one sentence>"
 allowed-tools: Read, Write, Bash, AskUserQuestion
 ---
 

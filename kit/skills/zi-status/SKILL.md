@@ -1,7 +1,7 @@
 ---
 name: zi-status
-description: Show where every feature is (derived from files and git, never from agent claims), what needs the human, lane drift, debt, and research staleness.
-argument-hint: [--all]
+description: "Show where every feature is (derived from files and git, never from agent claims), what needs the human, lane drift, debt, and research staleness."
+argument-hint: "[--all]"
 allowed-tools: Bash
 ---
 

@@ -1,7 +1,7 @@
 ---
 name: zi-plan
-description: Write the spec for a feature from existing research: planner agent, unknown resolution, spec-critic, validation. Refuses when WIP limit is hit, files overlap another active spec, or research is insufficient. Human approval happens after.
-argument-hint: <feature slug>
+description: "Write the spec for a feature from existing research: planner agent, unknown resolution, spec-critic, validation. Refuses when WIP limit is hit, files overlap another active spec, or research is insufficient. Human approval happens after."
+argument-hint: "<feature slug>"
 allowed-tools: Bash, Read, Agent
 ---
 

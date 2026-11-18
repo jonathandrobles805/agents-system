@@ -105,6 +105,16 @@ test('agent hooks are read with event, matcher and timeout', () => {
   assert.equal(M.hookTarget(hooks[1].command).args, '--hook');
 });
 
+test('front matter values are unquoted and lists are read, so quoting a value never changes what the map shows', () => {
+  const fm = M.frontmatter(['---', 'description: "Use when: a \\"quoted\\" word, and a \\\\ backslash"', "single: 'it''s'", 'plain: Read, Write', 'arguments: [slug, "two"]', 'tools:', '  - Read', '  - "Bash"', 'hooks:', '  PreToolUse:', '---'].join('\n').split('\n'));
+  assert.equal(fm.fields.description, 'Use when: a "quoted" word, and a \\ backslash');
+  assert.equal(fm.fields.single, "it's");
+  assert.equal(fm.fields.plain, 'Read, Write');
+  assert.deepEqual(fm.fields.arguments, ['slug', 'two']);
+  assert.deepEqual(fm.fields.tools, ['Read', 'Bash']);
+  assert.equal(fm.fields.hooks, '', 'a nested block is not a list');
+});
+
 test('settings hooks keep document order and find their lines; invalid JSON gives null', () => {
   const text = JSON.stringify({ hooks: { Stop: [{ hooks: [{ type: 'command', command: 'node "$HOME/.claude/kit/scripts/a.js"' }, { type: 'command', command: 'node "$HOME/.claude/kit/scripts/b.js"', timeout: 5 }] }] } }, null, 2);
   const hooks = M.settingsHooks(text);

@@ -46,6 +46,15 @@ test('commands reference real scripts and subcommands', () => {
   }
 });
 
+test('every description and argument-hint is one double-quoted YAML string', () => {
+  // unquoted, a `: ` or a leading `[` makes the line invalid YAML; Claude Code then loads the skill with no metadata
+  const DQ = /^"(?:[^"\\]|\\.)*"$/;
+  for (const p of COMMANDS) {
+    const head = /^---\n([\s\S]*?)\n---\n/.exec(read(p))[1];
+    for (const m of head.matchAll(/^(description|argument-hint):[ \t]*(.*)$/gm)) assert.match(m[2], DQ, `${rel(p)} ${m[1]}`);
+  }
+});
+
 test('commands never merge or approve for the human', () => {
   for (const p of COMMANDS) {
     assert.ok(!read(p).toLowerCase().includes('gh pr merge'), path.basename(p));

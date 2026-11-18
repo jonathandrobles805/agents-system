@@ -1,7 +1,7 @@
 ---
 name: zi-fix
-description: A defect with a symptom you can describe: start it as work type `fix` and carry it through the `fix` workflow profile (kit/workflows/fix.json). The controller decides every stage from files; this command only classifies and hands off.
-argument-hint: <what you want, in one sentence>
+description: "A defect with a symptom you can describe: start it as work type `fix` and carry it through the `fix` workflow profile (kit/workflows/fix.json). The controller decides every stage from files; this command only classifies and hands off."
+argument-hint: "<what you want, in one sentence>"
 allowed-tools: Read, Write, Bash, AskUserQuestion
 ---
 
