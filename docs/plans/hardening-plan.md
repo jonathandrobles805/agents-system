@@ -140,7 +140,8 @@ Issues #29, #30 and #41 are still open; check what's left in each before closing
 
 **What the App may do:**
 
-- Write contents and pull requests, on the repos you install it on.
+- Write contents, pull requests and workflows, on the repos you install it on. Workflows lets it change `.github/workflows/` ([GitHub docs](https://docs.github.com/en/apps/creating-github-apps/registering-a-github-app/choosing-permissions-for-a-github-app)).
+- Because a pull request from a branch in the same repo runs its own workflow file with the repo's secrets ([GitHub Security Lab](https://securitylab.github.com/research/github-actions-preventing-pwn-requests)), the two Anthropic keys `kit.yml` uses move into a GitHub environment limited to `main` ([GitHub docs](https://docs.github.com/en/actions/reference/workflows-and-actions/deployments-and-environments)). The step that needs them runs with them only on `main`.
 - A ruleset lets it push only to `wt/*` branches, the kit's lane branches ([lane.js L559](https://github.com/jonathandrobles805/agents-system/blob/3a34247f08515ed8f3b328f01bb9531970cbb222/kit/scripts/lane.js#L559)), and `spec/*` branches, where specs are proposed ([plan.md L42](https://github.com/jonathandrobles805/agents-system/blob/3a34247f08515ed8f3b328f01bb9531970cbb222/kit/commands/plan.md#L42)). The ruleset restricts creating, updating and deleting every other branch, a tag ruleset stops it creating tags, and only you are on the bypass list. These rules sit in their own ruleset, apart from the approval rules.
 - It cannot approve its own PR, because GitHub never lets an author approve.
 
@@ -217,7 +218,7 @@ Steps 1–9 of the skills work are done on branch `commands-to-skills`: 23 `zi-`
 
 ### Step 1. Judge: GitHub enforces you (0016 step 1, plus D1)
 
-- [ ] Put a test project on GitHub. Create the GitHub App (contents and pull requests: write), and install it on the test project and this repo.
+- [ ] Put a test project on GitHub. Create the GitHub App (contents, pull requests and workflows: write), and install it on the test project and this repo. Move the Anthropic keys into an environment limited to `main`.
 - [ ] Add a ruleset so the App may push only `wt/*` and `spec/*` branches.
 - [ ] Set protection as in D1. Build the required checks from the real job names (`kit-checks`, not its 7 steps; [bootstrap.js L1578](https://github.com/jonathandrobles805/agents-system/blob/3a34247f08515ed8f3b328f01bb9531970cbb222/kit/scripts/bootstrap.js#L1578)). Read the settings back from GitHub.
 - [ ] The push-and-open-PR step runs on your machine with an App token; `lane.js` records your approving review of the spec PR.
@@ -294,10 +295,10 @@ Steps 1–9 of the skills work are done on branch `commands-to-skills`: 23 `zi-`
 
 ### Step 8. Wall: the container (0016 step 7, extended by Q1)
 
-- [ ] **Every lane that pushes** runs in the container, attended or not: only the worktree and scratch space mounted, none of your credentials inside, and network access limited.
+- [ ] **Every lane that pushes** runs in the container, attended or not: only the worktree and scratch space mounted, plus the main repo's `.git` with `hooks/` and `config` read-only, none of your credentials inside, and network access limited.
 - [ ] Run E.4's probes P4 and P2-full.
-- [ ] Settle 0016 open question 5 first: how a lane's git, image, network, hooks and Claude's own credential work inside the container, and how `/zi-run`'s lane agents move from subagents in your session to contained runs.
-- **Done when:** four attempts from inside a lane fail: edit a guard, read the `gh` token, push to `main`, merge without approval. This also covers #55.
+- [ ] Build it as 0016 open question 5 answers: keep worktrees, and mount the main repo's `.git` at its own path with `hooks/` and `config` read-only; start the image from Anthropic's reference dev container and its default-deny firewall ([Anthropic docs](https://code.claude.com/docs/en/sandbox-environments)); build the kit into the image, read-only; give Claude Code an Anthropic API key, the only secret inside; run each lane as its own headless `claude -p` through `lane.js launch`, with `/zi-run` on your machine only coordinating.
+- **Done when:** four attempts from inside a lane fail: edit a guard, read the `gh` token, push to `main`, merge without approval; and a lane cannot write the main repo's `.git/hooks` or `.git/config`. This also covers #55.
 
 ### Step 9. Specialist reviewers (D5; 0016 E.6)
 
@@ -383,6 +384,7 @@ A control counts only when a planted fault shows it catching a deliberate bypass
 | App merges without your approval | GitHub refuses | Test project | 1 |
 | App pushes to `main`, or to a branch outside `wt/*` and `spec/*` | GitHub refuses (protection, ruleset) | Test project | 1 |
 | Required check name that no job reports | Bootstrap read-back fails | Test project | 1 |
+| A workflow on an App branch reads the Anthropic keys | The environment limited to `main` withholds them | Test project | 1 |
 | Agent writes the spec's approval line | `lane.js` ignores it; only your GitHub review counts | Kit CI | 1 |
 | Fix or incident lane runs `lane.js scope` before its `spec/<slug>` PR is approved and merged | `lane.js scope` refuses | Kit CI | 1 |
 | Illegal stage move | `advance` refuses with a reason | Kit CI | 2 |
@@ -400,6 +402,7 @@ A control counts only when a planted fault shows it catching a deliberate bypass
 | PR widens its own scope list | CI reads the base spec and fails | Kit CI | 5 |
 | New test already passes on the base | CI flags it | Kit CI | 5 |
 | From inside a lane: edit a guard, read the `gh` token, push to `main`, merge without approval | All four fail | Test project | 8 |
+| From inside a lane: write the main repo's `.git/hooks` or `.git/config` | Refused by the read-only mounts | Test project | 8 |
 | Feature the spec didn't ask for | `code-reviewer: FAIL` with a rule ID | Eval | 9 |
 | SQL injection | `security-reviewer: FAIL` with a rule ID | Eval | 9 |
 | Text below the contrast minimum | `ui-reviewer: FAIL` with a rule ID | Eval | 9 |
@@ -422,11 +425,11 @@ A control counts only when a planted fault shows it catching a deliberate bypass
 
 **Known limits after the plan is built:**
 
-- **Sessions outside the container.** The orchestrator, planning and retro still run as you and can reach your `gh` login and the App's key. Approving, merging and changing protection or the ruleset are denied by permission rules (Step 2), which are a guardrail, not a wall. Until Step 8 settles open question 5, `/zi-run`'s lane agents are among these sessions.
+- **Sessions outside the container.** The orchestrator, planning and retro still run as you and can reach your `gh` login and the App's key. Approving, merging and changing protection or the ruleset are denied by permission rules (Step 2), which are a guardrail, not a wall. Until Step 8 is built, `/zi-run`'s lane agents are among these sessions.
 - **No second human.** You approve the App's PRs yourself. Copilot also blocks the person who asked for a PR from approving it, and a one-person project can't match that (Q2).
 - **#46** (`rm -rf` parsing) persists while the Bash guard keeps that rule. It is a guardrail, not a wall (0016 C.1).
 - **#33, #34 and #49** (spec and review quality): the `spec-critic` is judgment, not a test. Specialist reviewers (Step 9) reduce these misses but can't remove them, which is why your spec approval stays.
-- **Still open in 0016:** open question 6 (the App cannot push `.github/workflows/` changes without the `workflows` permission: grant it or route those changes another way), open question 2 (Claude Code's own read check, before Step 7) and open question 3 (CI re-checking the red run in every language, in Step 5). Open question 4 (the Keychain under `srt`) no longer matters once every pushing lane uses the container.
+- **Still open in 0016:** open question 2 (Claude Code's own read check, before Step 7) and open question 3 (CI re-checking the red run in every language, in Step 5). Open question 4 (the Keychain under `srt`) no longer matters once every pushing lane uses the container.
 - **#56's output contract S2 and S4–S8** stay undecided. S3 is picked up in Step 9.
 
 **Cost and speed:**
