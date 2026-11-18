@@ -1,24 +1,24 @@
 # agents-system: hardening plan, built on decision 0016
 
-2026-11-17 · Jonathan Robles
+2026-11-17, revised 2026-11-18 · Jonathan Robles
 
 ## Summary
 
-This is the work order for [decision 0016](https://github.com/jonathandrobles805/agents-system/blob/3a34247f08515ed8f3b328f01bb9531970cbb222/docs/decisions/0016-direction-vs-reference-factory.md) (accepted) and [decision 0017](https://github.com/jonathandrobles805/agents-system/blob/3a34247f08515ed8f3b328f01bb9531970cbb222/docs/decisions/0017-commands-to-skills.md) (accepted; 23 `zi-` skills). It follows 0016's migration in full and adds what today's reviews found it doesn't cover. Those additions are recorded in 0016 as amendments E.6–E.9. Additions are marked **(this plan)**.
+This is the work order for [decision 0016](https://github.com/jonathandrobles805/agents-system/blob/main/docs/decisions/0016-direction-vs-reference-factory.md) (accepted) and [decision 0017](https://github.com/jonathandrobles805/agents-system/blob/3a34247f08515ed8f3b328f01bb9531970cbb222/docs/decisions/0017-commands-to-skills.md) (accepted; 23 `zi-` skills). It follows 0016's migration in full and adds what today's reviews found it doesn't cover. Those additions are recorded in 0016 as amendments E.6–E.9. Additions are marked **(this plan)**.
 
 **The model:** agents do the work; scripts decide what happens next; GitHub enforces your approval; CI re-checks what matters. The pipeline runs on its own up to a merge-ready PR. **Only you merge.**
 
 **Your touchpoints:**
 
 - Agree the goal with `/zi-start`.
-- Approve the spec PR.
+- Approve and merge the spec PR.
 - Approve and merge the code PR.
 
 Agents push and open PRs through a GitHub App, never your account.
 
 **What this plan adds to 0016:**
 
-1. **A GitHub App as the agents' identity.** It is used only to push branches and open PRs, and may push only to `wt/*`.
+1. **A GitHub App as the agents' identity.** It is used only to push branches and open PRs, and may push only to `wt/*` (lane) and `spec/*` (spec) branches.
 2. **A container for every lane that pushes,** attended or not, with limited network access.
 3. **This repo follows the same merge rule as projects.**
 4. **The spec's approval line is written from your GitHub approval.**
@@ -28,7 +28,7 @@ Agents push and open PRs through a GitHub App, never your account.
 8. **One watched real run, early.**
 9. **Specialist reviewers** (0016 E.6), with a fixed first-line verdict.
 
-**Settled today:**
+**Settled on 2026-11-17:**
 
 - automatic spec approval stays dropped;
 - the license question is closed (personal, private use);
@@ -40,9 +40,9 @@ All five were settled by you in chat on 2026-11-17. Each is compared with GitHub
 
 | # | Decision | GitHub or enterprise practice | Where this plan stands |
 | --- | --- | --- | --- |
-| Q1 | **Agents' identity: a GitHub App,** used only to push lane branches and open PRs. **Every lane that pushes runs in the container,** attended or not. | GitHub recommends a GitHub App for long-lived integrations, and its tokens are short-lived. Copilot's agent has its own identity, can push to one branch only, has restricted internet, and cannot approve or merge. | **Matches**, once the App is limited to `wt/*` branches by a ruleset and the container limits network access. Both are in Steps 1 and 8. |
+| Q1 | **Agents' identity: a GitHub App,** used only to push lane branches and open PRs. **Every lane that pushes runs in the container,** attended or not. | GitHub recommends a GitHub App for long-lived integrations, and its tokens are short-lived. Copilot's agent has its own identity, can push to one branch only, has restricted internet, and cannot approve or merge. | **Matches**, once the App is limited to `wt/*` and `spec/*` branches by a ruleset and the container limits network access. Both are in Steps 1 and 8. |
 | Q2 | **This repo follows the same rule as projects.** The App opens its PRs; you approve and merge. GitHub's "most recent push must be approved by someone else" rule stays **off**. | GitHub: the author of a pull request cannot approve it. Copilot goes further: the person who asked for the PR cannot approve it either, which needs a second human. | **Below Copilot, by necessity.** A one-person project can't have a second reviewer. You approving the App's PR is the strongest solo setup. Protecting this private, personally owned repo needs GitHub Pro. |
-| Q3 | **Automatic spec approval: dropped.** Every spec pauses for you. | ITIL pre-approves only named, low-risk change types, through a catalogue of templates with a track record, never by a per-case score. | **Stricter than ITIL.** If it ever returns, model it as a short list of change types you pre-approve. |
+| Q3 | **Automatic spec approval: dropped.** Every spec pauses for you. | ITIL pre-approves only named, low-risk change types, through a catalogue of templates with a track record. | **Stricter than ITIL.** If it ever returns, model it as a short list of change types you pre-approve. |
 | Q4 | **License: closed.** The kit is personal and private, and is not shared. | The GPL's duties apply when you convey copies to others; running the program or modifying a private copy is not conveying. Copyright protects expression, not ideas. | **Settled.** Revisit only before publishing or sharing the kit. Nothing is copied from Factory v2 anyway. |
 | Q5 | **Output contract: pick up #56 S3 now.** Each reviewer's report starts with a fixed line, `<reviewer>: PASS` or `FAIL`, which the scripts check. The rest of S2–S8 stays open. | Factory v2's scripts refuse to advance without a fixed first line. Anthropic's structured outputs constrain a response to a schema, so the format is guaranteed. | **Matches Factory.** Structured output is the upgrade if misreads ever happen. |
 
@@ -95,9 +95,9 @@ Repo links point to `main` at [`3a34247`](https://github.com/jonathandrobles805/
 
 Fifteen holes are open on `main`.
 
-- **0016 and 0017 close 7:** holes 1, 3, 7, 8, 11, 12 (the gate) and 14.
+- **0016 and 0017 close 6:** holes 1, 3, 7, 8, 11 and 14.
 - **This plan closes 5:** holes 2, 4, 5, 13 and 15.
-- **Both together close 3:** this plan adds #56's rules to hole 12, the GitHub App to holes 6 and 9, and the #63 fix to hole 10.
+- **Both together close 4:** this plan adds #56's rules to hole 12 (the gate), the GitHub App to holes 6 and 9, and the #63 fix to hole 10.
 
 | # | Open hole | Evidence | Closed by | Step |
 | --- | --- | --- | --- | --- |
@@ -115,7 +115,7 @@ Fifteen holes are open on `main`.
 | 12 | No gate exists; #56 adds rules for it: fail on protected-file changes, and run contained with a time limit | Issue #56 S1.3, S1.4 | 0016 E.1 Add 2, plus #56 | 3 |
 | 13 | One reviewer, plus a second security-focused pass at high risk | [review.md L17–18](https://github.com/jonathandrobles805/agents-system/blob/3a34247f08515ed8f3b328f01bb9531970cbb222/kit/commands/review.md#L17-L18) | E.6 (this plan) | 9 |
 | 14 | 23 commands, not skills | 0017; draft PR #62 | 0017 | 0 |
-| 15 | On macOS, searches run through Bash, so the read guard never sees secret reads | Issue #55 | This plan: a container for every lane that pushes | 8 |
+| 15 | On macOS, Claude Code's docs say searches run through Bash, so the read guard may never see secret reads (not yet observed) | Issue #55 | This plan: a container for every lane that pushes | 8 |
 
 **Already fixed on `main`:**
 
@@ -130,7 +130,7 @@ Issues #29, #30 and #41 are still open; check what's left in each before closing
 
 ### D1. GitHub enforces you, through a GitHub App (0016 E.1 Add 4 and 5, plus Q1 and Q2)
 
-**Where the App is used.** In exactly one layer: pushing a lane's branch and opening its PR.
+**Where the App is used.** In exactly one layer: pushing a lane or spec branch and opening its PR.
 
 - That step runs on your machine, outside the lane's container, with a short-lived App token. This follows 0016's "the push done host-side".
 - **Not used for:**
@@ -141,7 +141,7 @@ Issues #29, #30 and #41 are still open; check what's left in each before closing
 **What the App may do:**
 
 - Write contents and pull requests, on the repos you install it on.
-- A ruleset lets it push only to `wt/*` branches, the kit's lane branches ([lane.js L559](https://github.com/jonathandrobles805/agents-system/blob/3a34247f08515ed8f3b328f01bb9531970cbb222/kit/scripts/lane.js#L559)).
+- A ruleset lets it push only to `wt/*` branches, the kit's lane branches ([lane.js L559](https://github.com/jonathandrobles805/agents-system/blob/3a34247f08515ed8f3b328f01bb9531970cbb222/kit/scripts/lane.js#L559)), and `spec/*` branches, where specs are proposed ([plan.md L42](https://github.com/jonathandrobles805/agents-system/blob/3a34247f08515ed8f3b328f01bb9531970cbb222/kit/commands/plan.md#L42)). The ruleset restricts creating and updating every other branch, with only you on the bypass list.
 - It cannot approve its own PR, because GitHub never lets an author approve.
 
 **Branch protection, for projects and this repo alike:**
@@ -154,7 +154,9 @@ Issues #29, #30 and #41 are still open; check what's left in each before closing
 - The "most recent push must be approved by someone else" rule stays off, because you are the only human.
 - This needs GitHub Pro, because the repo is private and personally owned.
 
-**The approval line.** Today `lane.js` needs `Status: approved` and an approval line before a lane starts ([L375-L376](https://github.com/jonathandrobles805/agents-system/blob/3a34247f08515ed8f3b328f01bb9531970cbb222/kit/scripts/lane.js#L375-L376), [L502-L506](https://github.com/jonathandrobles805/agents-system/blob/3a34247f08515ed8f3b328f01bb9531970cbb222/kit/scripts/lane.js#L502-L506)). `lane.js` will write that line from your approving review on the spec PR, read through the GitHub API. No agent writes it.
+**The approval line.** Today `lane.js` needs `Status: approved` and an approval line before a lane starts ([L375-L376](https://github.com/jonathandrobles805/agents-system/blob/3a34247f08515ed8f3b328f01bb9531970cbb222/kit/scripts/lane.js#L375-L376), [L502-L506](https://github.com/jonathandrobles805/agents-system/blob/3a34247f08515ed8f3b328f01bb9531970cbb222/kit/scripts/lane.js#L502-L506)). That changes: `lane.js` reads your approving review of the merged spec PR through the GitHub API and records the reviewer, date and commit in the store, so the spec file no longer needs the line. No agent writes an approval.
+
+**Fix and incident lanes.** Their planner writes the spec inside the lane. It is pushed the same way, as a `spec/<slug>` PR, and `lane.js scope` refuses until you have approved and merged it.
 
 **Limit.** Copilot's model also blocks the person who asked for the PR from approving it. That needs a second human, which a one-person project doesn't have.
 
@@ -163,7 +165,7 @@ Issues #29, #30 and #41 are still open; check what's left in each before closing
 - **The store:** `lane.js advance` is the only writer of a store in the main checkout, using one table of allowed moves. The dashboard reads the store.
 - **Rounds and time:** rounds and wall time replace tool-call budgets. A round is one build, gate and review cycle; a gate FAIL or a review FAIL ends it.
 - **Who can call it (E.4):** lanes are no longer allowed to run the scripts that change state (`advance`, `gate`, `start`, merges).
-- **#63 comes first.** The kit's permission rules name scripts through `"$HOME"`, and a probe showed such a rule doesn't match. So the narrowing needs #63's way out: a `kit` launcher on `PATH`, so rules can name exact commands. Each rule must be proven to match by a probe or a planted fault (#63's own rule).
+- **#63 comes first.** The kit's permission rules name scripts through `"$HOME"`. A probe found that a skill rule naming a command through `"$PWD"` did not match, and the `"$HOME"` rule is untested and may not match either. So the narrowing needs #63's way out: a `kit` launcher on `PATH`, so rules can name exact commands. Each rule must be proven to match by a probe or a planted fault (#63's own rule).
 
 ### D3. The lane start stops if it can't fetch the base (this plan)
 
@@ -176,7 +178,7 @@ Issues #29, #30 and #41 are still open; check what's left in each before closing
 
 On top of 0016's `lane.js gate` ([E.1 Add 2](https://github.com/jonathandrobles805/agents-system/blob/3a34247f08515ed8f3b328f01bb9531970cbb222/docs/decisions/0016-direction-vs-reference-factory.md#L195)):
 
-- **Protected files (#56 S1.3):** the gate fails if the lane changed the spec, `kit.json`, `.claude/`, CI config, `package.json` scripts or test config.
+- **Protected files (#56 S1.3, plus `package.json` scripts and test config from 0016 E.1 Add 4):** the gate fails if the lane changed the spec after its approved commit, `kit.json`, `.claude/`, CI config, `package.json` scripts or test config.
 - **Containment (#56 S1.4):** the checks run contained, with a time limit and stdin closed.
 - **Risk re-check:** high-risk paths are matched against the actual diff. Today they are matched only by substring against the spec's file bullets ([validate_docs.js L494–500](https://github.com/jonathandrobles805/agents-system/blob/3a34247f08515ed8f3b328f01bb9531970cbb222/kit/scripts/validate_docs.js#L494-L500); defaults in [kitlib.js L27](https://github.com/jonathandrobles805/agents-system/blob/3a34247f08515ed8f3b328f01bb9531970cbb222/kit/scripts/kitlib.js#L27)), so a glob like `src/**` hides a billing change. A low-risk lane that touches a high-risk path is stopped for you.
 
@@ -208,19 +210,19 @@ Two rules hold throughout:
 Steps 1–9 of the skills work are done on branch `commands-to-skills`: 23 `zi-` skills, install, version 0.3.0, and a tested rollback. The probe showed that a skill with `disable-model-invocation` does start under `claude -p`.
 
 - [ ] Run one real feature on a canary project (PR #62, its Step 10).
-- [ ] Check that a flagged skill also starts when you type it (probe item U3).
+- [ ] Check that a flagged skill also starts when you type it (probe item U3 in PR #62's plan).
 - [ ] You review and merge PR #62, and the PR that adds 0016 E.6–E.9 (PR #65, branch docs/0016-amendments-e6-e8).
-- **Done when:** the canary run finishes, and the launcher starts `claude -p "/zi-run <slug>"` headless.
+- **Done when:** the canary run finishes, and 0017's headless launcher starts `claude -p "/zi-run <slug>"`.
 
 ### Step 1. Judge: GitHub enforces you (0016 step 1, plus D1)
 
 - [ ] Put a test project on GitHub. Create the GitHub App (contents and pull requests: write), and install it on the test project and this repo.
-- [ ] Add a ruleset so the App may push only `wt/*` branches.
+- [ ] Add a ruleset so the App may push only `wt/*` and `spec/*` branches.
 - [ ] Set protection as in D1. Build the required checks from the real job names (`kit-checks`, not its 7 steps; [bootstrap.js L1578](https://github.com/jonathandrobles805/agents-system/blob/3a34247f08515ed8f3b328f01bb9531970cbb222/kit/scripts/bootstrap.js#L1578)). Read the settings back from GitHub.
-- [ ] The push-and-open-PR step runs on your machine with an App token; `lane.js` writes the approval line from your GitHub review.
-- **Done when, tested on the test project:**
+- [ ] The push-and-open-PR step runs on your machine with an App token; `lane.js` records your approving review of the spec PR.
+- **Done when, tested on the test project (and, for the last item, on this repo):**
     - the App can't merge without your approval;
-    - the App can't push to `main`, or to any branch outside `wt/*`;
+    - the App can't push to `main`, or to any branch outside `wt/*` and `spec/*`;
     - every required check reports on a test PR;
     - a required name that no job reports fails the read-back;
     - you can approve and merge the App's PR, on the test project and on this repo.
@@ -235,7 +237,8 @@ Steps 1–9 of the skills work are done on branch `commands-to-skills`: 23 `zi-`
 - **Done when:**
     - an illegal move is refused with a reason;
     - a round past the limit parks the lane;
-    - a lane agent calling `advance` is denied, as proven by a planted fault;
+    - a lane agent calling `advance`, `gate`, `start` or a merge is denied, as proven by a planted fault;
+    - every shipped permission rule matches its command, as proven by a probe;
     - the reproductions in #57–#59 behave as their issues require;
     - a lane start with a failed fetch is refused, and one with no `origin` is refused unless `local_only` is set.
 
@@ -349,7 +352,7 @@ This assumes all 12 steps are done. You act three times: agree the goal, approve
 
 1. **Goal.** `/zi-start refunds for app users`. You and the agent agree the goal, and `/zi-run` takes over.
 2. **Spec.** Agents research the code. The planner writes the spec, and the `spec-critic` challenges it. The planner answers each point, for up to two rounds. `validate_docs` and `lane.js precheck` check the spec. It lists `src/billing`, a high-risk path, so it is marked high-risk.
-3. **You approve the spec.** The App opens the spec PR. GitHub waits for you, because `docs/specs/` has you as code owner. You approve and merge, and `lane.js` writes the approval line from your review.
+3. **You approve the spec.** The App opens the spec PR. GitHub waits for you, because `docs/specs/` has you as code owner. You approve and merge, and `lane.js` records your review.
 4. **Lane start.** `advance` moves the lane on. `lane.js start` fetches the base, stopping if it can't, and records the base commit. The lane runs in the container, with none of your credentials inside.
 5. **Tests first.** The tester writes one test per criterion, for example "a refund over the order total is rejected".
 6. **Round 1.** The implementer makes the tests pass. It also edits a `package.json` test script and leaves a lint error. The gate fails on the protected-file change and on lint, so no reviewer starts.
@@ -357,7 +360,7 @@ This assumes all 12 steps are done. You act three times: agree the goal, approve
     - Routing picks `code-reviewer` and `security-reviewer`.
     - `security-reviewer` returns `security-reviewer: FAIL`, citing `SEC-3` at `refunds.js:42`: a refund can be submitted twice.
 8. **Round 3.** The implementer fixes it. The gate passes, and both reports start with `PASS` on the same commit. Had the round limit been hit first, `advance` would have parked the lane and told you why.
-9. **Ready.** The gate re-runs after updating from the base. On your machine, the push step pushes `wt/refunds` with the App token and marks the PR ready.
+9. **Ready.** The gate re-runs after updating from the base. On your machine, the push step pushes `wt/refunds` with the App token and opens the PR.
 10. **CI** reads the scope list from the base spec, and checks the new tests fail on the base and pass on the head.
 11. **You approve and merge.** The App can't merge without you, and admin enforcement binds everyone.
 12. **Retro.** Lessons are proposed, and you accept or edit them. A recurring finding becomes a gate or CI check.
@@ -375,12 +378,12 @@ A control counts only when a planted fault shows it catching a deliberate bypass
 | Planted fault | Must be caught by | Runs in | Step |
 | --- | --- | --- | --- |
 | App merges without your approval | GitHub refuses | Test project | 1 |
-| App pushes to `main`, or to a branch outside `wt/*` | GitHub refuses (protection, ruleset) | Test project | 1 |
-| Required check name that no job reports | Bootstrap read-back fails | Kit CI | 1 |
+| App pushes to `main`, or to a branch outside `wt/*` and `spec/*` | GitHub refuses (protection, ruleset) | Test project | 1 |
+| Required check name that no job reports | Bootstrap read-back fails | Test project | 1 |
 | Agent writes the spec's approval line | `lane.js` ignores it; only your GitHub review counts | Kit CI | 1 |
 | Illegal stage move | `advance` refuses with a reason | Kit CI | 2 |
 | Round past the limit | `advance` parks the lane | Kit CI | 2 |
-| Lane agent runs `advance`, `gate` or a merge | Denied by the narrowed permission rules | Kit CI | 2 |
+| Lane agent runs `advance`, `gate`, `start` or a merge | Denied by the narrowed permission rules | Kit CI | 2 |
 | Kit permission rule that doesn't match its command | Probe fails (#63) | Kit CI | 2 |
 | Reproductions in #57, #58 and #59 | Refused as the issues require | Kit CI | 2 |
 | Lane start with a failed fetch, or with no `origin` and no `local_only` | Refused | Kit CI | 2 |
@@ -396,6 +399,7 @@ A control counts only when a planted fault shows it catching a deliberate bypass
 | SQL injection | `security-reviewer: FAIL` with a rule ID | Eval | 9 |
 | Text below the contrast minimum | `ui-reviewer: FAIL` with a rule ID | Eval | 9 |
 | Flow with no keyboard path | `ux-reviewer: FAIL` with a rule ID | Eval | 9 |
+| Call across a forbidden boundary (when `architecture-reviewer` is enabled) | `architecture-reviewer: FAIL` with a rule ID | Eval | 9 |
 | Report without a verdict line | Refused by the script | Kit CI | 9 |
 | UI review with no browser | Report says it didn't run; lane parks | Kit CI | 9 |
 
@@ -403,7 +407,7 @@ A control counts only when a planted fault shows it catching a deliberate bypass
 
 - Only `advance` moves the stage, and lanes can't call it.
 - No reviewer runs on a failing gate.
-- GitHub requires your approval for every merge, admins included, and the App can push only `wt/*`.
+- GitHub requires your approval for every merge, admins included, and the App can push only `wt/*` and `spec/*`.
 - CI recomputes scope and the red run.
 - Every lane that pushes runs in the container and passes the four bypass attempts.
 - Every fault above is caught.
@@ -413,6 +417,7 @@ A control counts only when a planted fault shows it catching a deliberate bypass
 
 **Known limits after the plan is built:**
 
+- **Sessions outside the container.** The orchestrator, and planning before a lane exists, still run as you and can reach your `gh` login, so they could approve as you. Until those sessions also run without your credentials, that part rests on the permission-rule guardrail (Step 2).
 - **No second human.** You approve the App's PRs yourself. Copilot also blocks the person who asked for a PR from approving it, and a one-person project can't match that (Q2).
 - **#46** (`rm -rf` parsing) persists while the Bash guard keeps that rule. It is a guardrail, not a wall (0016 C.1).
 - **#33, #34 and #49** (spec and review quality): the `spec-critic` is judgment, not a test. Specialist reviewers (Step 9) reduce these misses but can't remove them, which is why your spec approval stays.
@@ -450,7 +455,7 @@ Repo links point to `main` at `3a34247`.
 
 **Decisions:**
 
-- [0016 Direction: the kit against a working reference factory](https://github.com/jonathandrobles805/agents-system/blob/3a34247f08515ed8f3b328f01bb9531970cbb222/docs/decisions/0016-direction-vs-reference-factory.md)
+- [0016 Direction: the kit against a working reference factory](https://github.com/jonathandrobles805/agents-system/blob/main/docs/decisions/0016-direction-vs-reference-factory.md)
 - [0017 Commands become 23 skills, each named zi- plus its old name](https://github.com/jonathandrobles805/agents-system/blob/3a34247f08515ed8f3b328f01bb9531970cbb222/docs/decisions/0017-commands-to-skills.md)
 
 **Code:**

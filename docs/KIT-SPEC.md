@@ -596,7 +596,7 @@ See `docs/decisions/`:
 - 0011 Quality gates are ratchets, CI configuration needs the owner, merges go through a queue
 - 0012 Agent, skill, template and workflow changes are measured by the eval harness before release
 - 0013 One workflow table routes every kind of work; the goal carries work type, risk and size; the kill switch is checked at every entry point
-- 0016 Direction against a reference factory; E.5: commands become skills (one orchestrator skill reversed by the owner)
+- 0016 Direction against a reference factory; E.5: commands become skills (one orchestrator skill reversed by the owner); E.6–E.9 (PR #65): specialist reviewers, GitHub App and container, gate and lane additions, proof
 - 0017 Commands become 23 skills named `zi-` plus the old name, installed per machine
 
 ---
