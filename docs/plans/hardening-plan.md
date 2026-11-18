@@ -21,9 +21,9 @@ Agents push and open PRs through a GitHub App, never your account.
 1. **A GitHub App as the agents' identity.** It is used only to push branches and open PRs, and may push only to `wt/*` (lane) and `spec/*` (spec) branches.
 2. **A container for every lane that pushes,** attended or not, with limited network access.
 3. **This repo follows the same merge rule as projects.**
-4. **The spec's approval line is written from your GitHub approval.**
+4. **Your spec approval is read from your GitHub review and recorded in the store;** the spec file no longer needs an approval line.
 5. **The required checks use the real CI job names.**
-6. **The lane start stops if it can't fetch the base.**
+6. **The lane start stops if it can't fetch the base** (a repo with no remote must set `"local_only": true`).
 7. **Extra gate checks:** protected files, containment, and a risk re-check against the actual diff.
 8. **One watched real run, early.**
 9. **Specialist reviewers** (0016 E.6), with a fixed first-line verdict.
@@ -40,11 +40,11 @@ All five were settled by you in chat on 2026-11-17. Each is compared with GitHub
 
 | # | Decision | GitHub or enterprise practice | Where this plan stands |
 | --- | --- | --- | --- |
-| Q1 | **Agents' identity: a GitHub App,** used only to push lane branches and open PRs. **Every lane that pushes runs in the container,** attended or not. | GitHub recommends a GitHub App for long-lived integrations, and its tokens are short-lived. Copilot's agent has its own identity, can push to one branch only, has restricted internet, and cannot approve or merge. | **Matches**, once the App is limited to `wt/*` and `spec/*` branches by a ruleset and the container limits network access. Both are in Steps 1 and 8. |
-| Q2 | **This repo follows the same rule as projects.** The App opens its PRs; you approve and merge. GitHub's "most recent push must be approved by someone else" rule stays **off**. | GitHub: the author of a pull request cannot approve it. Copilot goes further: the person who asked for the PR cannot approve it either, which needs a second human. | **Below Copilot, by necessity.** A one-person project can't have a second reviewer. You approving the App's PR is the strongest solo setup. Protecting this private, personally owned repo needs GitHub Pro. |
+| Q1 | **Agents' identity: a GitHub App,** used only to push lane and spec branches and open PRs. **Every lane that pushes runs in the container,** attended or not. | GitHub recommends a GitHub App for long-lived integrations, and its tokens are short-lived. Copilot's agent has its own identity, can push to one branch only, has restricted internet, and cannot approve or merge. | **Matches**, once the App is limited to `wt/*` and `spec/*` branches by a ruleset and the container limits network access. Both are in Steps 1 and 8. |
+| Q2 | **This repo follows the same rule as projects.** The App opens its PRs; you approve and merge. GitHub's "most recent push must be approved by someone else" rule stays **off**, because you sometimes update a PR branch yourself. | GitHub: the author of a pull request cannot approve it. Copilot goes further: the person who asked for the PR cannot approve it either, which needs a second human. | **Below Copilot, by necessity.** A one-person project can't have a second reviewer. You approving the App's PR is the strongest solo setup. Protecting this private, personally owned repo needs GitHub Pro. |
 | Q3 | **Automatic spec approval: dropped.** Every spec pauses for you. | ITIL pre-approves only named, low-risk change types, through a catalogue of templates with a track record. | **Stricter than ITIL.** If it ever returns, model it as a short list of change types you pre-approve. |
 | Q4 | **License: closed.** The kit is personal and private, and is not shared. | The GPL's duties apply when you convey copies to others; running the program or modifying a private copy is not conveying. Copyright protects expression, not ideas. | **Settled.** Revisit only before publishing or sharing the kit. Nothing is copied from Factory v2 anyway. |
-| Q5 | **Output contract: pick up #56 S3 now.** Each reviewer's report starts with a fixed line, `<reviewer>: PASS` or `FAIL`, which the scripts check. The rest of S2–S8 stays open. | Factory v2's scripts refuse to advance without a fixed first line. Anthropic's structured outputs constrain a response to a schema, so the format is guaranteed. | **Matches Factory.** Structured output is the upgrade if misreads ever happen. |
+| Q5 | **Output contract: pick up #56 S3 now.** Each reviewer's report starts with a fixed line, `<reviewer>: PASS` or `FAIL`, which the scripts check. The rest of S2–S8 stays open. | Factory v2's scripts refuse to advance without a fixed first line. Anthropic's structured outputs constrain a response to a schema. | **Matches Factory.** Structured output is the upgrade if misreads ever happen. |
 
 ## Evidence baseline
 
@@ -141,7 +141,7 @@ Issues #29, #30 and #41 are still open; check what's left in each before closing
 **What the App may do:**
 
 - Write contents and pull requests, on the repos you install it on.
-- A ruleset lets it push only to `wt/*` branches, the kit's lane branches ([lane.js L559](https://github.com/jonathandrobles805/agents-system/blob/3a34247f08515ed8f3b328f01bb9531970cbb222/kit/scripts/lane.js#L559)), and `spec/*` branches, where specs are proposed ([plan.md L42](https://github.com/jonathandrobles805/agents-system/blob/3a34247f08515ed8f3b328f01bb9531970cbb222/kit/commands/plan.md#L42)). The ruleset restricts creating and updating every other branch, with only you on the bypass list.
+- A ruleset lets it push only to `wt/*` branches, the kit's lane branches ([lane.js L559](https://github.com/jonathandrobles805/agents-system/blob/3a34247f08515ed8f3b328f01bb9531970cbb222/kit/scripts/lane.js#L559)), and `spec/*` branches, where specs are proposed ([plan.md L42](https://github.com/jonathandrobles805/agents-system/blob/3a34247f08515ed8f3b328f01bb9531970cbb222/kit/commands/plan.md#L42)). The ruleset restricts creating, updating and deleting every other branch, a tag ruleset stops it creating tags, and only you are on the bypass list. These rules sit in their own ruleset, apart from the approval rules.
 - It cannot approve its own PR, because GitHub never lets an author approve.
 
 **Branch protection, for projects and this repo alike:**
@@ -149,12 +149,13 @@ Issues #29, #30 and #41 are still open; check what's left in each before closing
 - 1 required approval.
 - "Do not allow bypassing the above settings" (`enforce_admins: true`).
 - No force push and no deletion.
+- Stale approvals are dismissed when new commits are pushed (`dismiss_stale_reviews`, as bootstrap sets today).
 - The required checks use the real job names.
-- CODEOWNERS adds `docs/specs/`, `.claude/kit.json`, `package.json` and the test config ([0016 L197](https://github.com/jonathandrobles805/agents-system/blob/3a34247f08515ed8f3b328f01bb9531970cbb222/docs/decisions/0016-direction-vs-reference-factory.md#L197)).
-- The "most recent push must be approved by someone else" rule stays off, because you are the only human.
+- CODEOWNERS names you for every path (`*`), and code-owner review is required, so an approval by the App never counts. CODEOWNERS adds `docs/specs/`, `.claude/kit.json`, `package.json` and the test config ([0016 L197](https://github.com/jonathandrobles805/agents-system/blob/3a34247f08515ed8f3b328f01bb9531970cbb222/docs/decisions/0016-direction-vs-reference-factory.md#L197)).
+- The "most recent push must be approved by someone else" rule stays off: the App is the pusher, so your approval already satisfies it, and it would block you when you update a PR branch yourself.
 - This needs GitHub Pro, because the repo is private and personally owned.
 
-**The approval line.** Today `lane.js` needs `Status: approved` and an approval line before a lane starts ([L375-L376](https://github.com/jonathandrobles805/agents-system/blob/3a34247f08515ed8f3b328f01bb9531970cbb222/kit/scripts/lane.js#L375-L376), [L502-L506](https://github.com/jonathandrobles805/agents-system/blob/3a34247f08515ed8f3b328f01bb9531970cbb222/kit/scripts/lane.js#L502-L506)). That changes: `lane.js` reads your approving review of the merged spec PR through the GitHub API and records the reviewer, date and commit in the store, so the spec file no longer needs the line. No agent writes an approval.
+**The approval line.** Today `lane.js` needs `Status: approved` and an approval line before a lane starts ([L375-L376](https://github.com/jonathandrobles805/agents-system/blob/3a34247f08515ed8f3b328f01bb9531970cbb222/kit/scripts/lane.js#L375-L376), [L502-L506](https://github.com/jonathandrobles805/agents-system/blob/3a34247f08515ed8f3b328f01bb9531970cbb222/kit/scripts/lane.js#L502-L506)). That changes: `lane.js` reads your approving review of the merged spec PR through the GitHub API and records the reviewer, date and commit in the store, so the spec file no longer needs the line, and `/zi-plan`'s instruction to fill it changes too ([plan.md L42](https://github.com/jonathandrobles805/agents-system/blob/3a34247f08515ed8f3b328f01bb9531970cbb222/kit/commands/plan.md#L42)). No agent writes an approval.
 
 **Fix and incident lanes.** Their planner writes the spec inside the lane. It is pushed the same way, as a `spec/<slug>` PR, and `lane.js scope` refuses until you have approved and merged it.
 
@@ -167,7 +168,7 @@ Issues #29, #30 and #41 are still open; check what's left in each before closing
 - **Who can call it (E.4):** lanes are no longer allowed to run the scripts that change state (`advance`, `gate`, `start`, merges).
 - **#63 comes first.** The kit's permission rules name scripts through `"$HOME"`. A probe found that a skill rule naming a command through `"$PWD"` did not match, and the `"$HOME"` rule is untested and may not match either. So the narrowing needs #63's way out: a `kit` launcher on `PATH`, so rules can name exact commands. Each rule must be proven to match by a probe or a planted fault (#63's own rule).
 
-### D3. The lane start stops if it can't fetch the base (this plan)
+### D3. The lane start stops if it can't fetch the base, unless the repo is local-only (this plan)
 
 `lane.js start` refuses when the fetch fails or there is no `origin`, and records the base commit.
 
@@ -231,7 +232,7 @@ Steps 1–9 of the skills work are done on branch `commands-to-skills`: 23 `zi-`
 
 - [ ] Add `lane.js advance`, the table of allowed moves and the store. The dashboard reads the store.
 - [ ] Rounds and wall time move into the store. `lane.js stage` becomes a call to `advance`.
-- [ ] Fix #63 first: add a `kit` launcher on `PATH`, prove with a probe that the new permission rules match, then narrow the lanes' rules (E.4) and the skills' `Bash` so lanes can't call `advance`, `gate`, `start` or a merge.
+- [ ] Fix #63 first: add a `kit` launcher on `PATH`, prove with a probe that the new permission rules match, then narrow the lanes' rules (E.4) and the skills' `Bash` so lanes can't call `advance`, `gate`, `start` or a merge. Sessions outside the container keep `advance`, `gate` and `start`, but are denied an approving review, a merge, and changes to protection or the ruleset (`gh pr review --approve`, `gh pr merge` and their `gh api` forms).
 - [ ] Fix #57 (stages a profile lacks are refused, not mapped to done), #58 (listed stages are produced or removed, and `requires` blocks) and #59 (`skill-development` is refused until its agent exists).
 - [ ] Make the lane start fail closed, with `local_only` (D3), and update the `lane.test.js` fixtures.
 - **Done when:**
@@ -239,6 +240,7 @@ Steps 1–9 of the skills work are done on branch `commands-to-skills`: 23 `zi-`
     - a round past the limit parks the lane;
     - a lane agent calling `advance`, `gate`, `start` or a merge is denied, as proven by a planted fault;
     - every shipped permission rule matches its command, as proven by a probe;
+    - a session outside the container is denied an approval, a merge, or a change to protection or the ruleset, as proven by a planted fault;
     - the reproductions in #57–#59 behave as their issues require;
     - a lane start with a failed fetch is refused, and one with no `origin` is refused unless `local_only` is set.
 
@@ -294,6 +296,7 @@ Steps 1–9 of the skills work are done on branch `commands-to-skills`: 23 `zi-`
 
 - [ ] **Every lane that pushes** runs in the container, attended or not: only the worktree and scratch space mounted, none of your credentials inside, and network access limited.
 - [ ] Run E.4's probes P4 and P2-full.
+- [ ] Settle 0016 open question 5 first: how a lane's git, image, network, hooks and Claude's own credential work inside the container, and how `/zi-run`'s lane agents move from subagents in your session to contained runs.
 - **Done when:** four attempts from inside a lane fail: edit a guard, read the `gh` token, push to `main`, merge without approval. This also covers #55.
 
 ### Step 9. Specialist reviewers (D5; 0016 E.6)
@@ -359,7 +362,7 @@ This assumes all 12 steps are done. You act three times: agree the goal, approve
 7. **Round 2.** The implementer fixes both, and the gate passes. The risk re-check sees billing files, which matches the spec.
     - Routing picks `code-reviewer` and `security-reviewer`.
     - `security-reviewer` returns `security-reviewer: FAIL`, citing `SEC-3` at `refunds.js:42`: a refund can be submitted twice.
-8. **Round 3.** The implementer fixes it. The gate passes, and both reports start with `PASS` on the same commit. Had the round limit been hit first, `advance` would have parked the lane and told you why.
+8. **Round 3.** The implementer fixes it. The gate passes, and the reports' first lines read `code-reviewer: PASS` and `security-reviewer: PASS` on the same commit. Had the round limit been hit first, `advance` would have parked the lane and told you why.
 9. **Ready.** The gate re-runs after updating from the base. On your machine, the push step pushes `wt/refunds` with the App token and opens the PR.
 10. **CI** reads the scope list from the base spec, and checks the new tests fail on the base and pass on the head.
 11. **You approve and merge.** The App can't merge without you, and admin enforcement binds everyone.
@@ -381,9 +384,11 @@ A control counts only when a planted fault shows it catching a deliberate bypass
 | App pushes to `main`, or to a branch outside `wt/*` and `spec/*` | GitHub refuses (protection, ruleset) | Test project | 1 |
 | Required check name that no job reports | Bootstrap read-back fails | Test project | 1 |
 | Agent writes the spec's approval line | `lane.js` ignores it; only your GitHub review counts | Kit CI | 1 |
+| Fix or incident lane runs `lane.js scope` before its `spec/<slug>` PR is approved and merged | `lane.js scope` refuses | Kit CI | 1 |
 | Illegal stage move | `advance` refuses with a reason | Kit CI | 2 |
 | Round past the limit | `advance` parks the lane | Kit CI | 2 |
 | Lane agent runs `advance`, `gate`, `start` or a merge | Denied by the narrowed permission rules | Kit CI | 2 |
+| Session outside the container approves or merges a PR, or changes protection or the ruleset | Denied by the permission rules | Kit CI | 2 |
 | Kit permission rule that doesn't match its command | Probe fails (#63) | Kit CI | 2 |
 | Reproductions in #57, #58 and #59 | Refused as the issues require | Kit CI | 2 |
 | Lane start with a failed fetch, or with no `origin` and no `local_only` | Refused | Kit CI | 2 |
@@ -411,17 +416,17 @@ A control counts only when a planted fault shows it catching a deliberate bypass
 - CI recomputes scope and the red run.
 - Every lane that pushes runs in the container and passes the four bypass attempts.
 - Every fault above is caught.
-- The two field runs in Step 11 finish clean.
+- The two field runs in Step 11 finish within their approved specs, with no new enforcement issue.
 
 ## Known limits, cost and speed
 
 **Known limits after the plan is built:**
 
-- **Sessions outside the container.** The orchestrator, and planning before a lane exists, still run as you and can reach your `gh` login, so they could approve as you. Until those sessions also run without your credentials, that part rests on the permission-rule guardrail (Step 2).
+- **Sessions outside the container.** The orchestrator, planning and retro still run as you and can reach your `gh` login and the App's key. Approving, merging and changing protection or the ruleset are denied by permission rules (Step 2), which are a guardrail, not a wall. Until Step 8 settles open question 5, `/zi-run`'s lane agents are among these sessions.
 - **No second human.** You approve the App's PRs yourself. Copilot also blocks the person who asked for a PR from approving it, and a one-person project can't match that (Q2).
 - **#46** (`rm -rf` parsing) persists while the Bash guard keeps that rule. It is a guardrail, not a wall (0016 C.1).
 - **#33, #34 and #49** (spec and review quality): the `spec-critic` is judgment, not a test. Specialist reviewers (Step 9) reduce these misses but can't remove them, which is why your spec approval stays.
-- **Still open in 0016:** open question 2 (Claude Code's own read check, before Step 7) and open question 3 (CI re-checking the red run in every language, in Step 5). Open question 4 (the Keychain under `srt`) no longer matters once every pushing lane uses the container.
+- **Still open in 0016:** open question 6 (the App cannot push `.github/workflows/` changes without the `workflows` permission: grant it or route those changes another way), open question 2 (Claude Code's own read check, before Step 7) and open question 3 (CI re-checking the red run in every language, in Step 5). Open question 4 (the Keychain under `srt`) no longer matters once every pushing lane uses the container.
 - **#56's output contract S2 and S4–S8** stay undecided. S3 is picked up in Step 9.
 
 **Cost and speed:**
