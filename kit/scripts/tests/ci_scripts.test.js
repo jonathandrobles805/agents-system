@@ -195,6 +195,70 @@ test('review report on a pull_request run uses the PR head, not the synthetic me
   assert.match(wf, /- name: review-report\n(?:\s+#.*\n)?\s+env:\n\s+PR_HEAD_SHA: \$\{\{ github\.event\.pull_request\.head\.sha \}\}\n\s+run: node "\$KIT_DIR\/scripts\/ci_review_report\.js"/);
 });
 
+/** The `run: |` script of a named step in the generated workflow. */
+function stepScript(wf, name) {
+  const lines = wf.split('\n');
+  let i = lines.findIndex((l) => l.trim() === `- name: ${name}`);
+  assert.ok(i >= 0, `no step '${name}' in the workflow`);
+  while (!/^\s+run: \|$/.test(lines[i])) i += 1;
+  const indent = lines[i + 1].match(/^\s*/)[0].length;
+  const body = [];
+  for (let j = i + 1; j < lines.length && (lines[j].trim() === '' || lines[j].match(/^\s*/)[0].length >= indent); j++) body.push(lines[j].slice(indent));
+  return body.join('\n');
+}
+
+test('secrets change range resolves from the checkout, never from a commit it does not have (#77)', (t) => {
+  const root = laneRepo(t);
+  const script = stepScript(read(root, '.github', 'workflows', 'kit.yml'), 'change range');
+  assert.ok(!script.includes('pull_request.base') && !script.includes('PR_BASE'), 'the range must not use the event base.sha');
+  const envFile = path.join(tmpPath(t), 'github_env');
+  const run = (vars) => {
+    fs.writeFileSync(envFile, '');
+    const r = spawnSync('bash', ['-c', script], { cwd: root, encoding: 'utf8', env: { ...process.env, GITHUB_ENV: envFile, EVENT: '', PR_HEAD: '', MG_BASE: '', BEFORE: '', GITHUB_SHA: '', ...vars } });
+    const m = /^RANGE=(.*)$/m.exec(fs.readFileSync(envFile, 'utf8'));
+    return { code: r.status, out: r.stdout + r.stderr, range: m ? m[1] : null };
+  };
+  // What gitleaks does with --log-opts: git log over the range.
+  const logCount = (range) => F.git(['log', '--format=%H', ...range.split(' ')], root).trim().split('\n').length;
+  // The PR: two commits on the lane branch; main moves on; CI checks out GitHub's detached merge commit.
+  write(root, 'src/a.ts', 'export const a = 1;\n');
+  F.commitAll(root, 'lane 1');
+  write(root, 'src/b.ts', 'export const b = 2;\n');
+  const prHead = F.commitAll(root, 'lane 2');
+  F.git(['checkout', '-q', 'main'], root);
+  write(root, 'NOTES.md', 'main moved on\n');
+  const mainTip = F.commitAll(root, 'main moves');
+  F.git(['checkout', '-q', '--detach', 'main'], root);
+  F.git(['merge', '-q', '--no-ff', '-m', 'synthetic merge', prHead], root);
+  const merge = F.git(['rev-parse', 'HEAD'], root).trim();
+  let r = run({ EVENT: 'pull_request', PR_HEAD: prHead, GITHUB_SHA: merge });
+  assert.equal(r.code, 0, r.out);
+  assert.equal(r.range, `${mainTip}..${prHead}`);
+  assert.equal(logCount(r.range), 2, 'exactly the two lane commits are scanned');
+  // A PR head the checkout lacks fails loudly (before: gitleaks scanned 0 bytes and reported "no leaks").
+  r = run({ EVENT: 'pull_request', PR_HEAD: 'f'.repeat(40), GITHUB_SHA: merge });
+  assert.ok(r.code === 1 && r.out.includes('::error::secrets: the PR head') && r.range === null, r.out);
+  // A checkout that is not the merge commit fails instead of guessing a base.
+  F.git(['checkout', '-q', '--detach', prHead], root);
+  r = run({ EVENT: 'pull_request', PR_HEAD: prHead, GITHUB_SHA: prHead });
+  assert.ok(r.code === 1 && r.out.includes('not GitHub'), r.out);
+  F.git(['checkout', '-q', '--detach', merge], root);
+  // Push: a valid before..after range; a before the checkout lacks (force push) fails; a new branch scans its head.
+  r = run({ EVENT: 'push', BEFORE: mainTip, GITHUB_SHA: merge });
+  assert.ok(r.code === 0 && r.range === `${mainTip}..${merge}`, r.out);
+  r = run({ EVENT: 'push', BEFORE: 'e'.repeat(40), GITHUB_SHA: merge });
+  assert.ok(r.code === 1 && r.out.includes('the commit before the push'), r.out);
+  r = run({ EVENT: 'push', BEFORE: '0'.repeat(40), GITHUB_SHA: merge });
+  assert.ok(r.code === 0 && r.range === `-1 ${merge}`, r.out);
+  // Merge queue: base present → range; base missing → fails.
+  r = run({ EVENT: 'merge_group', MG_BASE: mainTip, GITHUB_SHA: merge });
+  assert.ok(r.code === 0 && r.range === `${mainTip}..${merge}`, r.out);
+  r = run({ EVENT: 'merge_group', MG_BASE: 'd'.repeat(40), GITHUB_SHA: merge });
+  assert.ok(r.code === 1 && r.out.includes('the merge queue base'), r.out);
+  // The scan step reads the range the first step resolved.
+  assert.match(stepScript(read(root, '.github', 'workflows', 'kit.yml'), 'gitleaks (commits in this change)'), /--log-opts="\$RANGE"/);
+});
+
 test('pr size warning', (t) => {
   const root = laneRepo(t);
   for (let i = 0; i < 30; i++) write(root, `src/f${i}.ts`, 'export const x = 1;\n');

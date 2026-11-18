@@ -15,6 +15,10 @@ All notable changes to the kit. Each entry names the decision or lesson that cau
 - **Rollback:** revert the release commit, pull, delete the links `~/.claude/skills/zi-*`, and re-run `./install.sh`; the 23 old commands come back from `kit/commands/` (tested). Projects: `bootstrap.js --upgrade --all` again.
 
 
+### Fixed (#77, kit-test canary run)
+- The `secrets` CI job failed on a pull request with `Invalid revision range` and scanned 0 bytes: its range started at the event's `base.sha`, which can name a commit that no fetched branch holds. On a pull request the range is now the checkout's first parent (the base tip GitHub merged into) to the PR head, both always in the checkout. A new `change range` step resolves the range for every event and fails with a clear message when an end is missing, instead of letting gitleaks scan nothing. Test runs the generated step in real git repos for pull request, push and merge queue.
+- **Projects:** run `/zi-bootstrap --upgrade` to get the new workflow.
+
 ### Fixed (#69, kit-test canary run)
 - The `review-report` CI check failed on every pull request, whatever the review said: on a `pull_request` run the checkout is GitHub's synthetic merge commit, which no review can name. The CI step now passes the PR's head commit (`PR_HEAD_SHA`), and the check compares the review with it (or with `--head`); a PR head missing from the checkout fails with a clear message instead of falling back. Pushes and merge-queue runs still compare with HEAD. Test with a synthetic-merge fixture.
 - **Projects:** run `/zi-bootstrap --upgrade` (or `bootstrap.js --upgrade --all`) so their CI workflow passes the PR head.
