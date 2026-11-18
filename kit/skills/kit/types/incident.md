@@ -1,6 +1,6 @@
 ---
-description: Production is broken: start it as work type `incident` and carry it through the `incident` workflow profile (kit/workflows/incident.json). The controller decides every stage from files; this command only classifies and hands off.
-argument-hint: <what you want, in one sentence>
+description: "Production is broken: start it as work type `incident` and carry it through the `incident` workflow profile (kit/workflows/incident.json). The controller decides every stage from files; this command only classifies and hands off."
+argument-hint: "<what you want, in one sentence>"
 ---
 
 Production is broken. The human said: the arguments

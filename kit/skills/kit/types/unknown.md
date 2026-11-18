@@ -1,6 +1,6 @@
 ---
-description: Start work when you do not know what kind it is. Routes provisionally to `fix`; the debugger's evidence settles the real kind (fix, incident, refactor) and the controller re-routes. The user never has to classify.
-argument-hint: <the symptom or wish, in your own words>
+description: "Start work when you do not know what kind it is. Routes provisionally to `fix`; the debugger's evidence settles the real kind (fix, incident, refactor) and the controller re-routes. The user never has to classify."
+argument-hint: "<the symptom or wish, in your own words>"
 ---
 
 Work: the arguments

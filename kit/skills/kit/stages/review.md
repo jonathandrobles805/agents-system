@@ -1,6 +1,6 @@
 ---
-description: Review a lane with the fresh-context reviewer agent; second reviewer on high-risk specs. Writes docs/specs/<slug>.review.md and posts the fail list to the PR. The reviewer never sees the builder's conversation.
-argument-hint: <feature slug>
+description: "Review a lane with the fresh-context reviewer agent; second reviewer on high-risk specs. Writes docs/specs/<slug>.review.md and posts the fail list to the PR. The reviewer never sees the builder's conversation."
+argument-hint: "<feature slug>"
 ---
 
 Review feature: the arguments

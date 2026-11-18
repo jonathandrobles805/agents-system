@@ -1,6 +1,6 @@
 ---
-description: Build an approved spec in its own worktree with the implementer agent under lane hooks. Refuses without an approval line, with open questions, past the WIP limit, or on file overlap. Resumes an existing lane.
-argument-hint: <feature slug>
+description: "Build an approved spec in its own worktree with the implementer agent under lane hooks. Refuses without an approval line, with open questions, past the WIP limit, or on file overlap. Resumes an existing lane."
+argument-hint: "<feature slug>"
 ---
 
 Implement feature: the arguments

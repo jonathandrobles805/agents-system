@@ -1,5 +1,5 @@
 ---
-description: Bring the current worktree up to date with the default branch and run the tests. Conflicts are reported, not auto-resolved beyond one attempt.
+description: "Bring the current worktree up to date with the default branch and run the tests. Conflicts are reported, not auto-resolved beyond one attempt."
 ---
 
 Run in the current worktree:

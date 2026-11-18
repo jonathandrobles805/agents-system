@@ -74,7 +74,21 @@ class Graph {
 
 // ---------------------------------------------------------------------------------------------- parsing helpers
 
-/** Front matter of a markdown file: top-level `key: value` lines, and where the header ends (`close` is the closing --- line index). */
+/**
+ * A YAML scalar as written on one front matter line: "double" (with \" and \\ escapes) or 'single' (with '' for ')
+ * quotes are removed; anything else is returned trimmed.
+ */
+export function yamlScalar(raw) {
+  const v = raw.trim();
+  if (v.length >= 2 && v.startsWith('"') && v.endsWith('"')) return v.slice(1, -1).replace(/\\(["\\])/g, '$1');
+  if (v.length >= 2 && v.startsWith("'") && v.endsWith("'")) return v.slice(1, -1).replaceAll("''", "'");
+  return v;
+}
+
+/**
+ * Front matter of a markdown file: top-level `key: value` lines, and where the header ends (`close` is the closing ---
+ * line index). A quoted value is unquoted; a list (`key: [a, b]`, or `key:` followed by `  - a` lines) is an array.
+ */
 export function frontmatter(lines) {
   if (lines[0] !== '---') return { fields: {}, close: -1 };
   const close = lines.indexOf('---', 1);
@@ -82,12 +96,22 @@ export function frontmatter(lines) {
   const fields = {};
   for (let i = 1; i < close; i++) {
     const m = /^([A-Za-z][\w-]*):\s*(.*)$/.exec(lines[i]);
-    if (m) fields[m[1]] = m[2].trim();
+    if (!m) continue;
+    const raw = m[2].trim();
+    if (/^\[.*\]$/.test(raw)) {
+      fields[m[1]] = raw.slice(1, -1).split(',').map(yamlScalar).filter(Boolean);
+    } else if (raw === '' && /^\s+-\s/.test(lines[i + 1] ?? '')) {
+      const items = [];
+      for (let j = i + 1; j < close && /^\s+-\s/.test(lines[j]); j++) items.push(yamlScalar(lines[j].replace(/^\s+-\s/, '')));
+      fields[m[1]] = items;
+    } else {
+      fields[m[1]] = yamlScalar(raw);
+    }
   }
   return { fields, close };
 }
 
-const csv = (s) => (s ? s.split(',').map((x) => x.trim()).filter(Boolean) : []);
+const csv = (s) => (Array.isArray(s) ? s : s ? s.split(',').map((x) => x.trim()).filter(Boolean) : []);
 
 /** Hook commands declared in an agent's front matter: [{event, matcher, command, timeout?, line}]. */
 export function agentHooks(lines, close) {

@@ -1,6 +1,6 @@
 ---
-description: A question about the codebase or a system; no code changes: start it as work type `investigation` and carry it through the `investigation` workflow profile (kit/workflows/investigation.json). The controller decides every stage from files; this command only classifies and hands off.
-argument-hint: <what you want, in one sentence>
+description: "A question about the codebase or a system; no code changes: start it as work type `investigation` and carry it through the `investigation` workflow profile (kit/workflows/investigation.json). The controller decides every stage from files; this command only classifies and hands off."
+argument-hint: "<what you want, in one sentence>"
 ---
 
 A question about the codebase or a system; no code changes. The human said: the arguments

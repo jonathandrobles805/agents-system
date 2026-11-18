@@ -1,7 +1,7 @@
 ---
 name: kit-setup
-description: Detect this repository's stack and generate the agent-kit project layer (CLAUDE.md, ROADMAP.md, ARCHITECTURE.md, DESIGN.md, LESSONS.md, docs/, hooks, CI, sync script). Asks the human the questions it must not guess. Use --upgrade to refresh kit-owned files.
-argument-hint: [--upgrade] [--protect]
+description: "Detect this repository's stack and generate the agent-kit project layer (CLAUDE.md, ROADMAP.md, ARCHITECTURE.md, DESIGN.md, LESSONS.md, docs/, hooks, CI, sync script). Asks the human the questions it must not guess. Use --upgrade to refresh kit-owned files."
+argument-hint: "[--upgrade] [--protect]"
 allowed-tools: Bash, Read, Write, AskUserQuestion
 ---
 

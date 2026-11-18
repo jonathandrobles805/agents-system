@@ -1,6 +1,6 @@
 ---
-description: Begin a feature the right way: a short discussion until the human and Claude agree on the end goal, then a goal file, a roadmap row, and a hand-off to /kit. Use this instead of describing a feature in plain chat.
-argument-hint: <what you want, in one sentence>
+description: "Begin a feature the right way: a short discussion until the human and Claude agree on the end goal, then a goal file, a roadmap row, and a hand-off to /kit. Use this instead of describing a feature in plain chat."
+argument-hint: "<what you want, in one sentence>"
 ---
 
 Start a feature. The human said: the arguments

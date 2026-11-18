@@ -1,6 +1,6 @@
 ---
-description: A user-interface change against the design model: start it as work type `ui` and carry it through the `ui` workflow profile (kit/workflows/ui.json). The controller decides every stage from files; this command only classifies and hands off.
-argument-hint: <what you want, in one sentence>
+description: "A user-interface change against the design model: start it as work type `ui` and carry it through the `ui` workflow profile (kit/workflows/ui.json). The controller decides every stage from files; this command only classifies and hands off."
+argument-hint: "<what you want, in one sentence>"
 ---
 
 A user-interface change against the design model. The human said: the arguments

@@ -1,6 +1,6 @@
 ---
-description: Behaviour-preserving restructuring: start it as work type `refactor` and carry it through the `refactor` workflow profile (kit/workflows/refactor.json). The controller decides every stage from files; this command only classifies and hands off.
-argument-hint: <what you want, in one sentence>
+description: "Behaviour-preserving restructuring: start it as work type `refactor` and carry it through the `refactor` workflow profile (kit/workflows/refactor.json). The controller decides every stage from files; this command only classifies and hands off."
+argument-hint: "<what you want, in one sentence>"
 ---
 
 Behaviour-preserving restructuring. The human said: the arguments

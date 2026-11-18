@@ -38,6 +38,15 @@ test('all skills exist with frontmatter; each SKILL.md names its folder and list
   }
 });
 
+test('every description and argument-hint is one double-quoted YAML string', () => {
+  // unquoted, a `: ` or a leading `[` makes the line invalid YAML; Claude Code then loads the skill with no metadata
+  const DQ = /^"(?:[^"\\]|\\.)*"$/;
+  for (const p of COMMANDS) {
+    const head = /^---\n([\s\S]*?)\n---\n/.exec(read(p))[1];
+    for (const m of head.matchAll(/^(description|argument-hint):[ \t]*(.*)$/gm)) assert.match(m[2], DQ, `${rel(p)} ${m[1]}`);
+  }
+});
+
 test('/kit names every stage and work type it can be given, and each has its file', () => {
   const text = read(path.join(SKILLS, 'kit', 'SKILL.md'));
   for (const f of EXPECTED) {
