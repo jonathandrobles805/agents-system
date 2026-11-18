@@ -2,6 +2,7 @@
 name: zi-sync
 description: "Bring the current worktree up to date with the default branch and run the tests. Conflicts are reported, not auto-resolved beyond one attempt."
 allowed-tools: Bash, Read
+disable-model-invocation: true
 ---
 
 Run in the current worktree:

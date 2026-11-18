@@ -55,6 +55,21 @@ test('every description and argument-hint is one double-quoted YAML string', () 
   }
 });
 
+test('only the human starts the skills no other kit skill hands work to', () => {
+  // decision 0017 item 3: these four have side effects and are never a hand-off target; probe F4: the flag still lets
+  // `claude -p "/name"` start them. Every other skill stays invocable, because one skill hands work to the next.
+  const MANUAL = ['zi-bootstrap', 'zi-dashboard', 'zi-implement', 'zi-sync'];
+  for (const p of COMMANDS) {
+    const name = path.basename(path.dirname(p));
+    const flagged = /^disable-model-invocation: true$/m.test(/^---\n([\s\S]*?)\n---\n/.exec(read(p))[1]);
+    assert.equal(flagged, MANUAL.includes(name), `${name} disable-model-invocation`);
+  }
+  // a hand-off ("follow", "invoke", "then" a skill) never targets a skill only the human may start
+  for (const p of COMMANDS) {
+    for (const m of read(p).matchAll(/\b(?:follow|invoke|then)\s+`\/(zi-[a-z-]+)/gi)) assert.ok(!MANUAL.includes(m[1]), `${rel(p)} hands off to ${m[1]}`);
+  }
+});
+
 test('no kit skill strips tools from the agents it spawns', () => {
   // probe F2, F3 (docs/research/claude-code-skill-probe.md): disallowed-tools also removes the tool from subagents and
   // stays in force after the skill

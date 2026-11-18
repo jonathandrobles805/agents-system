@@ -3,6 +3,7 @@ name: zi-bootstrap
 description: "Detect this repository's stack and generate the agent-kit project layer (CLAUDE.md, ROADMAP.md, ARCHITECTURE.md, DESIGN.md, LESSONS.md, docs/, hooks, CI, sync script). Asks the human the questions it must not guess. Use --upgrade to refresh kit-owned files."
 argument-hint: "[--upgrade] [--protect]"
 allowed-tools: Bash, Read, Write, AskUserQuestion
+disable-model-invocation: true
 ---
 
 Bootstrap this repository with agent-kit. Arguments: $ARGUMENTS
