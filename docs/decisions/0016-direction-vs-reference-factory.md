@@ -230,11 +230,13 @@ Between steps 1 and 6 the in-lane hooks and the new gates both run. Feedback ins
 - **§7 probes:** P4 (can a hook write outside `allowWrite` under `srt`) stays relevant to the wall; P2-full (launch, stdin) stays relevant to unattended lanes; P5, P6, P7 are no longer needed.
 - If 0016 is accepted, mark 0015 "superseded in part by 0016" and keep it for its probe results.
 
-### E.5 The orchestrator skill (amendment, 2026-11-17)
+### E.5 The orchestrator skill (amendment, 2026-11-17; reversed in part the same day)
 
-Issue #56 lists (c), "one orchestrator skill", as paused work that this decision must pick up or delete. **It is picked up.**
+Issue #56 lists (c), "one orchestrator skill", as paused work that this decision must pick up or delete.
 
-- **What.** The orchestration commands become one skill, `/kit`, with the stage steps and resume rules. The 11 work types are its options, not separate commands. Three tool skills stay beside it: `/kit-status`, `/kit-dashboard`, `/kit-setup`. All four set `disable-model-invocation: true`, so only a human or the kit's own launcher starts them. Names, install and the full old → new map are in decision 0017.
+**Reversed in part by the owner, 2026-11-17, in chat (decision 0017 as amended): one skill per job, not one orchestrator skill.** The 23 commands become 23 skills named `zi-` plus the old name (`/zi-run`, `/zi-plan`, `/zi-fix`, …). What stays from (c): the commands become skills, with names that cannot clash with Claude Code's own, and the skills that only a human should start set `disable-model-invocation: true`. What is dropped: folding the stages and work types into one skill. The text below is the original reasoning, kept as the record.
+
+- **What (original).** The orchestration commands become one skill, with the stage steps and resume rules. The 11 work types are its options, not separate commands.
 - **Why.** The stage steps are copied across 23 command files today [cmd: `ls kit/commands | wc -l` → 23], and the copies have drifted: `/plan` says both that the planner and that the command spawns the researchers, `/work`'s goal template lacks the `Domain:` line the other ten include, and `/implement` and `/run` disagreed on marking `test` before `build` (fixed in `e8f1115`). One skill holds one copy. The state script still holds the legal moves (E.1 Add 1); the skill only asks it, as `/run` does today.
 - **Where it sits in E.2.** Before step 1. It changes packaging and names only, not the spine, the gate or the hooks, so it adds no risk to the migration, and E.2's later steps then edit one skill instead of 23 files.
 - **Not changed by this.** The agents, the hooks, `lane.js` stage logic and the workflow profiles. Three controller defects found while reviewing it are filed for E.2 (#57, #58, #59).

@@ -60,7 +60,7 @@ agents-system/
   install.sh                   copies/symlinks kit/ into ~/.claude/, idempotent
   kit/
     agents/                    researcher, planner, spec-critic, implementer, reviewer, retro
-    skills/                    kit (stages/, types/), kit-status, kit-dashboard, kit-setup (0017); domains/ and workflows/ reserved
+    skills/                    one folder per skill, zi-<old command name> (23, decision 0017); domains/ and workflows/ reserved
     templates/                 research, spec, review, lesson, progress, roadmap, decision, index, claude-md, architecture, design
     scripts/                   validate-docs, citation-check, read-log, guard-edit, post-edit-check, scope-diff, test-count, dep-diff, claude-md-cap, guards-present, kit-status, event-log
     hooks/                     settings fragments per event, assembled by /bootstrap
@@ -81,7 +81,7 @@ agents-system/
 ```
 ~/.claude/
   agents/<kit agents>.md
-  skills/<kit skills>/         links to kit/skills/<name>/ (0017)
+  skills/zi-<name>/            links to kit/skills/zi-<name>/ (0017)
   kit/                         templates, scripts, hooks, ci, stacks, VERSION
 ```
 
@@ -204,21 +204,21 @@ Exit code 2 with the list of violations on stderr. Runs as a `SubagentStop` hook
 
 ## 6. Skills
 
-Amended by decision 0017. The kit ships four skills, each a folder `kit/skills/<name>/` with a `SKILL.md`, linked by `install.sh` into `~/.claude/skills/<name>/`: `/kit` (the orchestrator), `/kit-status`, `/kit-dashboard`, `/kit-setup`. Every kit skill is named `kit` or starts with `kit-`, so none can take the name of a Claude Code built-in command or bundled skill. Every kit skill sets `disable-model-invocation: true`: only a human, or the kit's launcher, starts one. In this document a short name (`/bootstrap`, `/status`, a stage such as `/plan`) refers to that skill or to that stage of `/kit`; 0017 has the full name map.
+Amended by decision 0017. Each kit command is a skill: a folder `kit/skills/zi-<old name>/` with a `SKILL.md`, linked by `install.sh` into `~/.claude/skills/`. `zi` is the kit's prefix; it keeps every kit skill clear of Claude Code's own names (`/plan`, `/review`, `/status` are built in, `/run` is bundled). The skills only a human starts (`/zi-bootstrap`, `/zi-implement`, `/zi-sync`, `/zi-dashboard`) set `disable-model-invocation: true`; the others stay invocable so one skill can hand work to the next. In this document a short name (`/bootstrap`, `/status`, `/plan`) refers to the `zi-` skill of that name.
 
-`/kit` asks `lane.js next-step` for the stage and acts on it. Each stage's steps live in `kit/skills/kit/stages/<stage>.md` and each work type's notes in `kit/skills/kit/types/<type>.md`; the skill reads only the one the next step names. Preconditions are checked by a script the stage calls first; if a precondition fails, the stage stops and prints why.
+Preconditions are checked by a script the skill calls first; if a precondition fails, the skill stops and prints why.
 
-| Skill or stage | Preconditions | Steps | Output |
+| Skill | Preconditions | Steps | Output |
 |---|---|---|---|
-| `/kit-setup [--upgrade]` | git repo; not bootstrapped unless `--upgrade` | detect stack → generate project layer from templates → draft ROADMAP, ARCHITECTURE, DESIGN from what it finds → ask you the questions in 7.3 → write `.claude/kit.json` → set branch protection via `gh` → run CI once | project layer, kit version stamp |
-| stage `research` | bootstrapped | read INDEX → for each question: reuse (same commit), re-verify (cited files changed), or spawn researcher → parallel spawn → update INDEX | research files |
-| stage `plan` | research exists; WIP limit not hit | run planner → resolve unknowns → run spec-critic → write spec with one-screen summary | spec, status `waiting-approval` in ROADMAP |
-| stage `lane`, `test`, `build` | approval line present; Open questions empty; `main` fetched | create worktree `wt/<feature>` from fresh `main` → `/sync` → run implementer with lane hooks → on `done-check` pass, push branch and open PR | PR, progress file, log, events |
-| stage `review` | PR exists | run reviewer → if `high-risk`, run second reviewer with a different model and the security/data checklist → write report → post fail list to PR | review report |
-| stage step `sync` (`scripts/sync.sh`) | in a worktree | `git fetch`, merge `main`, run tests, report | — |
-| stage `retro` | PR merged | run retro agent → show proposal → on your yes, write lesson and apply the proposed check | LESSONS entry, optional hook/lint/test change |
-| `/kit-status` | — | run `kit-status` → print ROADMAP, lanes, drift, waiting-on-you, debt | status.json and console summary |
-| `/kit-dashboard [--all] [--port N]` | — | start `kit/dashboard/server.js` in the background for this project or every registered project | local page (§9.3) |
+| `/zi-bootstrap [--upgrade]` | git repo; not bootstrapped unless `--upgrade` | detect stack → generate project layer from templates → draft ROADMAP, ARCHITECTURE, DESIGN from what it finds → ask you the questions in 7.3 → write `.claude/kit.json` → set branch protection via `gh` → run CI once | project layer, kit version stamp |
+| `/zi-research <topic or feature>` | bootstrapped | read INDEX → for each question: reuse (same commit), re-verify (cited files changed), or spawn researcher → parallel spawn → update INDEX | research files |
+| `/zi-plan <feature>` | research exists; WIP limit not hit | run planner → resolve unknowns → run spec-critic → write spec with one-screen summary | spec, status `waiting-approval` in ROADMAP |
+| `/zi-implement <feature>` | approval line present; Open questions empty; `main` fetched | create worktree `wt/<feature>` from fresh `main` → `/sync` → run implementer with lane hooks → on `done-check` pass, push branch and open PR | PR, progress file, log, events |
+| `/zi-review <feature>` | PR exists | run reviewer → if `high-risk`, run second reviewer with a different model and the security/data checklist → write report → post fail list to PR | review report |
+| `/zi-sync` | in a worktree | `git fetch`, merge `main`, run tests, report | — |
+| `/zi-retro <feature>` | PR merged | run retro agent → show proposal → on your yes, write lesson and apply the proposed check | LESSONS entry, optional hook/lint/test change |
+| `/zi-status` | — | run `kit-status` → print ROADMAP, lanes, drift, waiting-on-you, debt | status.json and console summary |
+| `/zi-dashboard [--all] [--port N]` | — | start `kit/dashboard/server.js` in the background for this project or every registered project | local page (§9.3) |
 
 Worktree creation also fires the `WorktreeCreate` hook, which copies the lane's `.claude/settings.json` and records the lane in `.claude/kit.json`.
 
@@ -382,7 +382,7 @@ The kit is done when all of the following hold:
 | 34 | Goal with an unknown `Work type` | `validate_docs`, `lane.js next-step`, `lane.js start` | violation; `refused`; start refused |
 | 35 | Agent requested for a stage its profile does not list | `lane.js agent-for` | refused with the profile's stages |
 | 36 | Kill switch set while a lane is live | `guard-edit`, `guard-bash`, `next-step`, `start` | every mutation and transition refused until `resume-all --by` |
-| 37 | `/kit` given a symptom with no type | provisional `fix`; debugger `cause:` line | boot failure → `incident`; design fault → `refactor`; single defect → `fix`, provisional dropped |
+| 37 | `/zi-work` given a symptom with no type | provisional `fix`; debugger `cause:` line | boot failure → `incident`; design fault → `refactor`; single defect → `fix`, provisional dropped |
 | 38 | `security` or `migration` goal without high risk | profile `force_risk` | risk is high regardless of the header; container sandbox required |
 | 46 | Broken doc committed on a branch | generated CI `validate-docs` (`ci_changed_docs`) | job fails; in a depth-1 checkout the base is fetched first, and a base that cannot be found fails the job |
 
@@ -475,27 +475,27 @@ Production credentials never enter a lane: the sandbox makes their paths unreada
 
 Routing is a version-controlled table: one profile per kind of work in `kit/workflows/<work_type>.json`, listing its stages in order, the one agent allowed per stage, the stages where a human must act, what size gates, what high risk adds, and (for `fix`) how the debugger's evidence re-routes. `lane.js next-step` derives the lane's position from files and git as before, then maps it onto the goal's profile; a position the profile lacks is skipped forward (a `fix` has no research or plan: it begins with the debugger). The controller refuses a goal whose `Work type` has no profile and refuses to name an agent for a stage the profile does not list (`lane.js agent-for`). No agent redefines the lifecycle.
 
-| Work type | Start with | Stages |
+| Work type | Skill | Stages |
 |---|---|---|
-| feature | `/kit feature` | start → research → plan → **approve** → lane → test → build → review → **wait-merge** → retro → done |
-| fix | `/kit fix` | start → lane (from the goal) → reproduce (debugger) → plan (planner, in the lane) → **approve** → scope → test → build → review → **wait-merge** → retro → done |
-| ui | `/kit ui` | start → inspect → lane → build → verify-ui → review → **wait-merge** → done; at size L, the feature shape |
-| refactor | `/kit refactor` | start → research → plan → **approve** → lane → test → build → review → **wait-merge** → done |
-| docs | `/kit docs` | start → inspect → lane → build → review → **wait-merge** → done |
-| investigation | `/kit investigation` | start → research → report → done |
-| security | `/kit security` | feature stages plus **security-signoff** before wait-merge; risk forced high |
-| architecture | `/kit architecture` | start → research → plan → **approve** → lane → build → review → **wait-merge** → done |
-| migration | `/kit migration` | feature stages without retro; risk forced high; requires backup and restore validation |
-| incident | `/kit incident` | the fix stages, with retro |
-| skill-development | `/kit skill-development` | start → research → plan (skill-smith) → **approve** → lane → build (skill-smith) → review → **wait-merge** → done; kit-level |
+| feature | `/zi-new-feature` | start → research → plan → **approve** → lane → test → build → review → **wait-merge** → retro → done |
+| fix | `/zi-fix` | start → lane (from the goal) → reproduce (debugger) → plan (planner, in the lane) → **approve** → scope → test → build → review → **wait-merge** → retro → done |
+| ui | `/zi-ui` | start → inspect → lane → build → verify-ui → review → **wait-merge** → done; at size L, the feature shape |
+| refactor | `/zi-refactor` | start → research → plan → **approve** → lane → test → build → review → **wait-merge** → done |
+| docs | `/zi-docs` | start → inspect → lane → build → review → **wait-merge** → done |
+| investigation | `/zi-investigate` | start → research → report → done |
+| security | `/zi-security` | feature stages plus **security-signoff** before wait-merge; risk forced high |
+| architecture | `/zi-architecture` | start → research → plan → **approve** → lane → build → review → **wait-merge** → done |
+| migration | `/zi-migrate` | feature stages without retro; risk forced high; requires backup and restore validation |
+| incident | `/zi-incident` | the fix stages, with retro |
+| skill-development | `/zi-new-skill` | start → research → plan (skill-smith) → **approve** → lane → build (skill-smith) → review → **wait-merge** → done; kit-level |
 
 **fix and incident open their lane from the goal (field test #32).** A defect has no spec until it is understood, so `lane.js start` opens a fix/incident lane from an agreed goal alone (WIP and kill switch still apply), at stage `reproduce`. In the lane, before a spec exists, the edit guard allows only the lane's progress file and the lane's own unapproved spec. The debugger writes its reproduction and `cause:` line to progress; the planner writes the spec from the goal and the reproduction; a human approves it; `lane.js scope` then checks it like `precheck` (valid, approved, files listed, no overlap with another lane), copies its done-criteria into progress, and moves the lane to `test`. From there the lane is a normal one. Planted fault 45.
 
 **Goal fields.** `docs/goals/<slug>.md` carries `Work type`, `Risk`, `Size` and `Domain`. Absent fields mean `feature`, `normal`, `M`, none, so every existing goal keeps today's route. `validate_docs` rejects an unknown work type, risk or size. `security` and `migration` force `Risk: high`.
 
-**Size.** `S`: one domain, no interface/schema/data change, no new dependency. `M`: two domains or one such change. `L`: more, or unknowns left after research. Size sets research width (§3.2 of the operating model) and whether the critic runs; it never removes a stage risk adds, and a human may raise it, never lower it below the derived value. `/kit` writes `Size: M` when the scope is unknown, never `S`.
+**Size.** `S`: one domain, no interface/schema/data change, no new dependency. `M`: two domains or one such change. `L`: more, or unknowns left after research. Size sets research width (§3.2 of the operating model) and whether the critic runs; it never removes a stage risk adds, and a human may raise it, never lower it below the derived value. `/zi-work` writes `Size: M` when the scope is unknown, never `S`.
 
-**No work type given.** When the user does not know the kind, `/kit` asks at most one question, writes `Work type: fix (provisional)`, and starts. The debugger's report ends with one `cause:` line; `next-step` reads it: a single defect confirms `fix` and drops `(provisional)`; `boot failure` or `suite cannot run` rewrites the goal to `incident`; `design fault` rewrites it to `refactor`. The rewrite is the controller's, logged as a `reroute` event; the command never classifies on its own.
+**`/zi-work`.** When the user does not know the kind, `/zi-work` asks at most one question, writes `Work type: fix (provisional)`, and starts. The debugger's report ends with one `cause:` line; `next-step` reads it: a single defect confirms `fix` and drops `(provisional)`; `boot failure` or `suite cannot run` rewrites the goal to `incident`; `design fault` rewrites it to `refactor`. The rewrite is the controller's, logged as a `reroute` event; the command never classifies on its own.
 
 ## 10.13 Kill switch (step 7)
 
@@ -596,8 +596,8 @@ See `docs/decisions/`:
 - 0011 Quality gates are ratchets, CI configuration needs the owner, merges go through a queue
 - 0012 Agent, skill, template and workflow changes are measured by the eval harness before release
 - 0013 One workflow table routes every kind of work; the goal carries work type, risk and size; the kill switch is checked at every entry point
-- 0016 Direction against a reference factory; E.5: one orchestrator skill
-- 0017 Commands become four `kit` skills, installed per machine
+- 0016 Direction against a reference factory; E.5: commands become skills (one orchestrator skill reversed by the owner)
+- 0017 Commands become 23 skills named `zi-` plus the old name, installed per machine
 
 ---
 
