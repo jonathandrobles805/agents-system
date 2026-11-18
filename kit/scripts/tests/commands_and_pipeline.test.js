@@ -1,4 +1,4 @@
-// Structural checks on the command files, plus a mechanical end-to-end run of the pipeline scripts on the Node fixture:
+// Structural checks on the skill files (decision 0017), plus a mechanical end-to-end run of the pipeline scripts on the Node fixture:
 // bootstrap -> research index -> spec -> approve -> lane start -> hooks during build -> done-check -> review report -> CI checks -> finish.
 // Agents are not run here (they need Claude Code); every script they call is.
 import test from 'node:test';
@@ -12,17 +12,22 @@ import { SCRIPTS, runScript, tmpPath } from './helpers.js';
 import { spec as makeSpec, review as makeReview } from './testdata.js';
 
 const KIT = path.dirname(SCRIPTS);
-const COMMANDS = fs.readdirSync(path.join(KIT, 'commands')).filter((f) => f.endsWith('.md')).sort().map((f) => path.join(KIT, 'commands', f));
-const EXPECTED = new Set(['bootstrap', 'dashboard', 'implement', 'plan', 'research', 'retro', 'review', 'run', 'start', 'status', 'sync',
-  // step 7: one command per kind of work plus the router (KIT-SPEC 10.12)
-  'work', 'new-feature', 'fix', 'ui', 'refactor', 'docs', 'investigate', 'security', 'architecture', 'migrate', 'incident', 'new-skill']);
+const SKILLS = path.join(KIT, 'skills');
+const NAMES = ['bootstrap', 'dashboard', 'implement', 'plan', 'research', 'retro', 'review', 'run', 'start', 'status', 'sync',
+  // step 7: one skill per kind of work plus the router (KIT-SPEC 10.12)
+  'work', 'new-feature', 'fix', 'ui', 'refactor', 'docs', 'investigate', 'security', 'architecture', 'migrate', 'incident', 'new-skill'];
+// decision 0017: each old command is the skill zi-<name>, one SKILL.md in its own folder
+const COMMANDS = fs.readdirSync(SKILLS, { recursive: true }).filter((f) => f.endsWith('.md')).sort().map((f) => path.join(SKILLS, f));
+const EXPECTED = new Set(NAMES.map((n) => `zi-${n}/SKILL.md`));
 const read = (p) => fs.readFileSync(p, 'utf8');
+const rel = (p) => path.relative(SKILLS, p).split(path.sep).join('/');
 
-test('all commands exist with frontmatter', () => {
-  assert.deepEqual(new Set(COMMANDS.map((p) => path.basename(p, '.md'))), EXPECTED);
+test('all 23 skills exist, each a SKILL.md named after its folder, with a description and its tools', () => {
+  assert.deepEqual(new Set(COMMANDS.map(rel)), EXPECTED);
   for (const p of COMMANDS) {
     const m = /^---\n([\s\S]*?)\n---\n/.exec(read(p));
     assert.ok(m, p);
+    assert.match(m[1], new RegExp(`^name: ${path.basename(path.dirname(p))}$`, 'm'), p);
     assert.match(m[1], /^description:\s*\S/m, p);
     assert.match(m[1], /^allowed-tools:\s*\S/m, p);
   }
@@ -45,8 +50,8 @@ test('commands never merge or approve for the human', () => {
   for (const p of COMMANDS) {
     assert.ok(!read(p).toLowerCase().includes('gh pr merge'), path.basename(p));
   }
-  assert.ok(read(path.join(KIT, 'commands', 'plan.md')).toLowerCase().includes('nothing is built before that'));
-  assert.ok(read(path.join(KIT, 'commands', 'review.md')).toLowerCase().includes('this command never merges'));
+  assert.ok(read(path.join(SKILLS, 'zi-plan', 'SKILL.md')).toLowerCase().includes('nothing is built before that'));
+  assert.ok(read(path.join(SKILLS, 'zi-review', 'SKILL.md')).toLowerCase().includes('this command never merges'));
 });
 
 const hook = (name, payload) => runScript(name, [], { stdin: jsonDumps(payload) });

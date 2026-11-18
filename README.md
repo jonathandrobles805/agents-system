@@ -30,11 +30,11 @@ npm test
 
 ## Bootstrap a project
 
-In the project, inside Claude Code: `/bootstrap`. It detects the stack, asks the questions it must not guess (roadmap, WIP limit, layers, high-risk paths, commands), and generates `CLAUDE.md`, `ROADMAP.md`, `ARCHITECTURE.md`, `DESIGN.md`, `LESSONS.md`, `docs/`, `.claude/settings.json` (hooks), `.claude/kit.json`, `scripts/sync.sh`, and the CI workflow. Without Claude: `node ~/.claude/kit/scripts/bootstrap.js --repo . --detect-only`.
+In the project, inside Claude Code: `/zi-bootstrap`. It detects the stack, asks the questions it must not guess (roadmap, WIP limit, layers, high-risk paths, commands), and generates `CLAUDE.md`, `ROADMAP.md`, `ARCHITECTURE.md`, `DESIGN.md`, `LESSONS.md`, `docs/`, `.claude/settings.json` (hooks), `.claude/kit.json`, `scripts/sync.sh`, and the CI workflow. Without Claude: `node ~/.claude/kit/scripts/bootstrap.js --repo . --detect-only`.
 
 ## The pipeline
 
-`/start` (we agree the goal) → `/run <slug>`. From there the system researches, plans, asks you to approve, writes tests (tester), builds (implementer), reviews (reviewer), waits for your merge, runs the retro, and picks the next feature. The next stage is always decided by `lane.js next-step` from files and git. The stage commands (`/research`, `/plan`, `/implement`, `/review`, `/retro`) still exist for running one stage by hand. `/status` and `/dashboard` show where everything is.
+`/zi-start` (we agree the goal) → `/zi-run <slug>`. From there the system researches, plans, asks you to approve, writes tests (tester), builds (implementer), reviews (reviewer), waits for your merge, runs the retro, and picks the next feature. The next stage is always decided by `lane.js next-step` from files and git. The stage commands (`/zi-research`, `/zi-plan`, `/zi-implement`, `/zi-review`, `/zi-retro`) still exist for running one stage by hand. `/zi-status` and `/zi-dashboard` show where everything is.
 
 ## Proof
 
@@ -45,9 +45,9 @@ Plants the 19 faults from the spec (unread edit, out-of-spec edit, deleted asser
 
 ## Dashboard
 
-`/dashboard` (or `node ~/.claude/kit/dashboard/server.js --all`) opens a live page with two tabs.
+`/zi-dashboard` (or `node ~/.claude/kit/dashboard/server.js --all`) opens a live page with two tabs.
 
-**Architecture Canvas** shows the kit and the open project as one map, in five views: *System* (every command, agent, hook, check, script and CI job in layers, with the real edges between them), *Agents* (what each agent may touch, which hooks guard it, where a human pause sits), *Pipeline* (the `/run` stages in order, which agents and commands run in each, and the pauses), *Dependencies* (pick any component and see everything a change to it can break, plus the test files and CI jobs that would run), and *Activity* (the hook event stream, this project's installed hooks against the kit's, and every map violation). Selecting a component opens an inspector with its purpose, its connections with the file and line behind each one, its tests, and its git history, and can link straight to the file on GitHub. The kit is shared; the state shown is per project, never mixed between projects.
+**Architecture Canvas** shows the kit and the open project as one map, in five views: *System* (every command, agent, hook, check, script and CI job in layers, with the real edges between them), *Agents* (what each agent may touch, which hooks guard it, where a human pause sits), *Pipeline* (the `/zi-run` stages in order, which agents and commands run in each, and the pauses), *Dependencies* (pick any component and see everything a change to it can break, plus the test files and CI jobs that would run), and *Activity* (the hook event stream, this project's installed hooks against the kit's, and every map violation). Selecting a component opens an inspector with its purpose, its connections with the file and line behind each one, its tests, and its git history, and can link straight to the file on GitHub. The kit is shared; the state shown is per project, never mixed between projects.
 
 **Worktrees** shows every feature's position on the pipeline, what needs you, each lane's criteria, drift, review state, and a button that opens Claude in a lane's worktree.
 

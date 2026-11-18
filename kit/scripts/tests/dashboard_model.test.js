@@ -27,15 +27,15 @@ test('layout places every component of a band once, inside the canvas, without o
 
 test('layout shows exactly the components of the declared kinds, in band order', () => {
   const layout = V.layoutBands(manifest);
-  assert.deepEqual(layout.bands.map((b) => b.key), ['commands', 'agents', 'hooks', 'scripts', 'ci', 'jobs']);
+  assert.deepEqual(layout.bands.map((b) => b.key), ['skills', 'agents', 'hooks', 'scripts', 'ci', 'jobs']);
   const shown = new Set(layout.bands.flatMap((b) => b.nodes.map((n) => n.id)));
-  for (const n of manifest.nodes.filter((x) => ['command', 'agent', 'hook', 'script', 'ci', 'ci-job'].includes(x.kind))) assert.ok(shown.has(n.id), `${n.id} is on the canvas`);
+  for (const n of manifest.nodes.filter((x) => ['skill', 'agent', 'hook', 'script', 'ci', 'ci-job'].includes(x.kind))) assert.ok(shown.has(n.id), `${n.id} is on the canvas`);
   const ys = layout.bands.map((b) => b.y);
   assert.deepEqual([...ys].sort((a, b) => a - b), ys);
 });
 
-test('/run comes first and agents follow the pipeline', () => {
-  assert.equal(V.orderedNodes(manifest, 'command')[0].id, 'command:run');
+test('/zi-run comes first and agents follow the pipeline', () => {
+  assert.equal(V.orderedNodes(manifest, 'skill')[0].id, 'skill:zi-run');
   assert.deepEqual(V.orderedNodes(manifest, 'agent').map((n) => n.label).slice(0, 4), ['researcher', 'planner', 'spec-critic', 'tester']);
 });
 

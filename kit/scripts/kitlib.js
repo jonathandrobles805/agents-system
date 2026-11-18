@@ -424,7 +424,7 @@ export function readHookInput() {
 }
 
 // ---------------------------------------------------------------------------
-// Lane state (one feature in one worktree). Created by /implement.
+// Lane state (one feature in one worktree). Created by /zi-implement.
 // ---------------------------------------------------------------------------
 
 export const LANE_FILE = path.join('.claude', 'lane.json');
@@ -788,7 +788,7 @@ export function changedDocs(root) {
  * and the decision records a lane is allowed to add.
  *
  * ONE list, because two consumers need it and the two hand-kept copies had already drifted. ci_scope_diff allowed
- * `<slug>.review.md` in a lane's diff and Lane.alwaysAllowed did not, so `/review` wrote the file CI was waiting
+ * `<slug>.review.md` in a lane's diff and Lane.alwaysAllowed did not, so `/zi-review` wrote the file CI was waiting
  * for and the edit guard refused the write. A lane could not produce the report its own merge gate required.
  *
  * The check log is deliberately NOT here. It lives at Lane.logPath -- `.claude/session/<slug>.log`, where field

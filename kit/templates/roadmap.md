@@ -20,6 +20,6 @@
 
 ## Queue
 
-<!-- Order in which /plan picks the next feature when a lane frees up. -->
+<!-- Order in which /zi-plan picks the next feature when a lane frees up. -->
 
 1. {{slug}}

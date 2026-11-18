@@ -1,5 +1,5 @@
 {
-  "command": "/refactor",
+  "command": "/zi-refactor",
   "description": "Behaviour-preserving restructuring. Dependency analysis, a plan with one caller per criterion, tests, incremental implementation, verify.",
   "stages": [
     "start",

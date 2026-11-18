@@ -1,6 +1,6 @@
 ---
 name: planner
-description: Turns research into an implementable spec with a file allow-list, impact analysis, tests per done-criterion, and no open questions. Use for /plan. Never edits source.
+description: Turns research into an implementable spec with a file allow-list, impact analysis, tests per done-criterion, and no open questions. Use for /zi-plan. Never edits source.
 tools: Read, Grep, Glob, Bash, Write, Agent
 model: opus
 hooks:

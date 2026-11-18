@@ -236,8 +236,8 @@ test('sandbox: the srt settings file has no environment section [inverts at Step
   assert.deepEqual(Object.keys(s).sort(), ['filesystem', 'network']);
   assert.ok(!('env' in s), 'DEFECT: nothing in the settings constrains the environment the lane inherits');
   // and the degraded launch is the bare command, so the lane is a child of the host process
-  assert.deepEqual(SB.launchCommand({ runtime: null, allowWrite: [] }, { wt: REPO, settingsPath: 'x', prompt: '/run x' }),
-    ['claude', '-p', '/run x', '--permission-mode', 'default']);
+  assert.deepEqual(SB.launchCommand({ runtime: null, allowWrite: [] }, { wt: REPO, settingsPath: 'x', prompt: '/zi-run x' }),
+    ['claude', '-p', '/zi-run x', '--permission-mode', 'default']);
 });
 
 test('sandbox: launch hands the lane the whole host environment [inverts at Step 4]', () => {
@@ -561,9 +561,9 @@ test('release.sh omits two of the four gates it exists to run [inverts at Step 7
   const sh = read(REPO, 'release.sh');
   assert.match(sh, /npm test/);
   assert.match(sh, /planted-faults\/run\.js/);
-  assert.doesNotMatch(sh, /architecture:check|arch_manifest/, 'DEFECT: a release can ship a stale architecture manifest');
+  assert.doesNotMatch(sh, /zi-architecture:check|arch_manifest/, 'DEFECT: a release can ship a stale architecture manifest');
   assert.doesNotMatch(sh, /eval/, 'DEFECT: and an unevaluated kit');
-  assert.doesNotMatch(sh, /status --porcelain|git diff --quiet/, 'DEFECT: and it tags a dirty tree without complaint');
+  assert.doesNotMatch(sh, /zi-status --porcelain|git diff --quiet/, 'DEFECT: and it tags a dirty tree without complaint');
 });
 
 test('LICENSE and the eval baseline are missing [inverts at Step 7]', () => {
@@ -613,7 +613,7 @@ test('wip: lane.js and kit_status report the same number, by sharing one derivat
   const { root } = laneProject(t);
   assert.deepEqual(wipOf(root), { in_flight: 1, limit: 2, lanes: ['refund-route'] });
   assert.deepEqual(statusOf(root).wip, { in_flight: 1, limit: 2 });
-  // they cannot drift: /status calls lane.js wip(), which calls laneWorktree() — the same check laneState makes
+  // they cannot drift: /zi-status calls lane.js wip(), which calls laneWorktree() — the same check laneState makes
   assert.match(read(SCRIPTS, 'kit_status.js'), /const \[inFlightCount, wipLimit\] = L\.wip\(root\);/);
   assert.match(read(SCRIPTS, 'lane.js'), /export function laneWorktree\(root, kit, slug\)/);
   assert.match(read(SCRIPTS, 'lane.js'), /\.filter\(\(slug\) => laneWorktree\(root, kit, slug\)\)/);
@@ -923,7 +923,7 @@ test('the claim grader is clean against the spec it grades today [Step 6]', asyn
 });
 
 test('the invocation resolver grades a heading that names a script, not one whose command runs it [S0]', async () => {
-  // KIT-SPEC 4.5 is headed `reviewer`; /review runs validate_docs.js (kit/commands/review.md), so the command alias
+  // KIT-SPEC 4.5 is headed `reviewer`; /zi-review runs validate_docs.js (kit/skills/zi-review/SKILL.md), so the command alias
   // made the heading "name" validate_docs, and the word "changed" in "every changed file" was graded as its --changed
   // option. It stayed hidden while kit/ci/github.yml passed --changed; S0 removed that call and the sentence read false.
   const C = await import('../../../audit/claims.js');
@@ -1033,7 +1033,7 @@ test('a project that pins its own node version keeps it [finding 2]', (t) => {
 
 // ===========================================================================================================
 // One list of lane artifacts. The edit guard (Lane.alwaysAllowed) and CI (ci_scope_diff) each kept their own
-// copy and they drifted: CI allowed <slug>.review.md in a lane's diff, the guard did not, so /review wrote the
+// copy and they drifted: CI allowed <slug>.review.md in a lane's diff, the guard did not, so /zi-review wrote the
 // file CI was waiting for and the hook refused the write.
 // ===========================================================================================================
 
@@ -1279,9 +1279,9 @@ test('#32 three identical failures escalate instead of recounting from one', (t)
 });
 
 test('#32 the tester\'s red runs are not fix attempts', () => {
-  // the lane is in the `test` stage while the tester writes failing tests, so /implement must set that stage
+  // the lane is in the `test` stage while the tester writes failing tests, so /zi-implement must set that stage
   // before spawning the tester and only move to build afterwards
-  const md = read(KIT, 'commands', 'implement.md');
+  const md = read(KIT, 'skills', 'zi-implement', 'SKILL.md');
   const testerAt = md.indexOf('Spawn the `tester`');
   const stageTest = md.indexOf('stage <slug> test');
   const stageBuild = md.indexOf('stage <slug> build');
@@ -1361,8 +1361,10 @@ test('#36 precheck notices a recorded lane that main does not show in flight', (
 
 test('#35 no kit prompt names a lane log path other than the real one', () => {
   const bad = [];
-  for (const dir of ['commands', 'agents']) {
-    for (const n of fs.readdirSync(path.join(KIT, dir)).filter((x) => x.endsWith('.md'))) {
+  // every prompt: the agents and the skills (decision 0017)
+  const prompts = (dir) => fs.readdirSync(path.join(KIT, dir), { recursive: true }).filter((x) => x.endsWith('.md')).map((x) => [dir, x]);
+  for (const [dir, n] of [...prompts('skills'), ...prompts('agents')]) {
+    {
       for (const [i, line] of K.splitlines(read(KIT, dir, n)).entries()) {
         // any <slug>.log reference that is not under .claude/session/ and not the committed copy
         for (const m of line.matchAll(/([\w./<>{}-]*[<{]?slug[}>]?[\w./-]*\.log)\b/g)) {

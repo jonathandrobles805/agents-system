@@ -17,7 +17,7 @@ export function main(argv) {
   const slug = C.laneSlug(root);
   if (!slug) return C.ok('review-report: not a lane branch; skipped');
   const rep = C.joinPath(root, K.workRoot(root), `${slug}.review.md`);
-  if (!K.isFile(rep)) return C.fail(`review-report: ${C.relativeTo(rep, root)} missing; run /review`);
+  if (!K.isFile(rep)) return C.fail(`review-report: ${C.relativeTo(rep, root)} missing; run /zi-review`);
   if (V.main([rep, '--repo', root])) return C.fail('review-report: report does not validate');
   const text = C.readText(rep);
   if (!VERDICT_PASS.test(text)) return C.fail('review-report: Verdict is not PASS');
@@ -25,7 +25,7 @@ export function main(argv) {
   const m = HEAD_LINE.exec(text);
   if (!m) return C.fail("review-report: no '- Head: <sha>' line; the report must name the commit it reviewed");
   if (!K.reviewHeadOk(root, m[1])) {
-    return C.fail(`review-report: report reviewed ${m[1]} but HEAD is ${head.slice(0, 12)}; code changed after review. Run /review again.`);
+    return C.fail(`review-report: report reviewed ${m[1]} but HEAD is ${head.slice(0, 12)}; code changed after review. Run /zi-review again.`);
   }
   return C.ok(`review-report: PASS for ${m[1]}`);
 }

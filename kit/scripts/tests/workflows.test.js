@@ -1,5 +1,5 @@
 // Step 7 (KIT-SPEC 10.12, 10.13): the workflow table is the only source of stages and agents; the goal carries
-// work type, risk and size; next-step maps the derived position onto the profile; /work routes provisionally and the
+// work type, risk and size; next-step maps the derived position onto the profile; /zi-work routes provisionally and the
 // debugger's evidence re-routes; the kill switch stops every transition and mutation until a named human lifts it.
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -142,7 +142,7 @@ test('security and migration force risk high; a high-risk lane needs the contain
   assert.ok(r.stderr.includes('requires the container sandbox runtime'));
 });
 
-test('/work: provisional fix; the debugger\'s cause line confirms or re-routes, recorded as an event (fault: /work routes a symptom)', (t) => {
+test('/zi-work: provisional fix; the debugger\'s cause line confirms or re-routes, recorded as an event (fault: /zi-work routes a symptom)', (t) => {
   const { root } = project(t);
   setGoal(root, 'refund-route', 'Work type', 'fix (provisional)');
   assert.equal(L.goalFields(root, 'refund-route').provisional, true);
@@ -197,11 +197,12 @@ test('kill switch: stop blocks next-step, lane start and every mutation hook in 
   assert.notEqual(next(root, 'refund-route').stage, 'stopped');
 });
 
-test('profiles and the goal template are consistent with the commands and agents that exist', () => {
+test('profiles and the goal template are consistent with the skills and agents that exist', () => {
   const kit = path.dirname(path.dirname(path.dirname(fileURLToPath(import.meta.url))));
-  const cmds = fs.readdirSync(path.join(kit, 'commands')).map((f) => '/' + f.replace(/\.md$/, ''));
-  for (const p of Object.values(L.loadProfiles())) assert.ok(cmds.includes(p.command), `command ${p.command} exists for ${p.work_type}`);
-  assert.ok(cmds.includes('/work'));
+  // each profile names the skill that starts it, and that skill exists (decision 0017)
+  const skills = fs.readdirSync(path.join(kit, 'skills')).map((f) => '/' + f);
+  for (const p of Object.values(L.loadProfiles())) assert.ok(skills.includes(p.command), `skill ${p.command} exists for ${p.work_type}`);
+  assert.ok(skills.includes('/zi-work'));
   const agents = fs.readdirSync(path.join(kit, 'agents')).map((f) => f.replace(/\.md$/, ''));
   assert.ok(agents.includes('debugger'));
   const tmpl = read(kit, 'templates', 'goal.md');

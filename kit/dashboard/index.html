@@ -338,7 +338,7 @@ function nodeSvg(n, pos, st, flags) {
       <text class="s" x="${x + 12}" y="${y + 60}">tools ${n.attrs.tools.length} · hooks ${hooks} · ${esc(n.attrs.model)}</text>`;
   } else if (n.kind === 'hook') {
     inner = `<text x="${x + 10}" y="${y + 20}">${esc(clip(n.label, 20))}</text><text class="s" x="${x + 10}" y="${y + 37}">${esc(clip((n.attrs.events || []).join(' · '), 21))}</text>`;
-  } else if (n.kind === 'command') {
+  } else if (n.kind === 'skill') {
     inner = `<text class="mono" x="${x + 10}" y="${y + 24}">${esc('/' + n.label)}</text>`;
   } else {
     inner = `<text x="${x + 10}" y="${y + 18}">${esc(clip(n.label, Math.floor(w / 7.4)))}</text><text class="s" x="${x + 10}" y="${y + 33}">${esc(n.kind === 'ci-job' ? clip(n.id.split('/')[0].replace('ci-job:', ''), 22) : n.stats && n.stats.lines ? n.stats.lines + ' lines' : '')}</text>`;
@@ -349,7 +349,7 @@ function nodeSvg(n, pos, st, flags) {
     ? `<text class="tag" x="${x + w - 8}" y="${y + 16}" text-anchor="end" style="fill:${tagColor}">${esc(tag.label.toUpperCase())}</text>`
     : `<circle cx="${x + w - 11}" cy="${y + 11}" r="4" style="fill:${tagColor}"/>`;
   const tip = [n.purpose || n.id, ...(st ? st.tags.map((t) => `${t.label}: ${t.detail}`) : [])].join('\n');
-  return `<g class="${cls}" ${ids}><title>${esc(tip)}</title><rect class="box" x="${x}" y="${y}" width="${w}" height="${h}" rx="${n.kind === 'command' ? 10 : 12}"/>${inner}${tagSvg}</g>`;
+  return `<g class="${cls}" ${ids}><title>${esc(tip)}</title><rect class="box" x="${x}" y="${y}" width="${w}" height="${h}" rx="${n.kind === 'skill' ? 10 : 12}"/>${inner}${tagSvg}</g>`;
 }
 
 // ------------------------------------------------------------------------------------------------ views
@@ -382,7 +382,7 @@ function viewSystem() {
 function viewAgents() {
   const m = S.arch.manifest, V = S.V, st = states();
   const humans = m.pipeline.filter((s) => s.pause).map((s) => `<div class="ac you"><div class="cap">YOU · pause ${s.pause}</div><h4>${s.pause === 1 ? 'Approve the spec' : 'Merge the pull request'}</h4>
-      <p>The ${esc(s.id)} stage of <code>/run</code> stops here until a human acts.</p><div class="src">${esc(S.idx.byId.get('command:run').path)}:${s.line}</div></div>`).join('');
+      <p>The ${esc(s.id)} stage of <code>/zi-run</code> stops here until a human acts.</p><div class="src">${esc(S.idx.byId.get('skill:zi-run').path)}:${s.line}</div></div>`).join('');
   const agents = V.orderedNodes(m, 'agent').map((a) => {
     const hooks = (S.idx.out.get(a.id) || []).filter((e) => e.kind === 'hook');
     const stages = m.pipeline.filter((s) => s.agents.includes(a.label));
@@ -404,10 +404,10 @@ function viewAgents() {
 function viewPipeline() {
   const m = S.arch.manifest, V = S.V;
   const stages = V.pipelineView(m, overlay());
-  const runPath = S.idx.byId.get('command:run').path;
+  const runPath = S.idx.byId.get('skill:zi-run').path;
   const box = (s) => `<div class="stg ${s.pause ? 'human' : ''} ${s.lanes.length ? 'here' : ''}">
       <h5>${esc(s.id)}</h5>${s.pause ? `<div class="chip a static">YOU · pause ${s.pause}</div>` : ''}
-      <div>${s.agents.map((a) => `<button class="chip" data-node="agent:${esc(a)}">${esc(a)}</button>`).join('')}${s.commands.map((c) => `<button class="chip" data-node="command:${esc(c)}">/${esc(c)}</button>`).join('')}</div>
+      <div>${s.agents.map((a) => `<button class="chip" data-node="agent:${esc(a)}">${esc(a)}</button>`).join('')}${s.skills.map((c) => `<button class="chip" data-node="skill:${esc(c)}">/${esc(c)}</button>`).join('')}</div>
       ${s.lanes.map((l) => `<span class="chip g static">${esc(l)}</span>`).join('')}
       <div class="evd">${esc(runPath)}:${s.line}</div></div>`;
   const loop = stages.filter((s) => !['escalated', 'done', 'start'].includes(s.id));
@@ -460,7 +460,7 @@ function viewActivity() {
   if (o) {
     if (o.settings !== true) drift.push(['error', 'no hooks', `${esc((project() || {}).project)} has no usable .claude/settings.json: none of the ${o.hooks.expected} kit hooks run there`]);
     if (o.hooks.missing.length && o.settings === true) drift.push(['error', 'missing hooks', `${o.hooks.missing.length} of ${o.hooks.expected} kit hooks are not registered: ${o.hooks.missing.slice(0, 4).map((h) => esc(h.node.replace('hook:', '') + '@' + h.event)).join(', ')}${o.hooks.missing.length > 4 ? '…' : ''}`]);
-    if (o.hooks.stale.length) drift.push(['error', 'stale hooks', `hooks name kit scripts that no longer exist: ${o.hooks.stale.map(esc).join(', ')}. Run /bootstrap --upgrade`]);
+    if (o.hooks.stale.length) drift.push(['error', 'stale hooks', `hooks name kit scripts that no longer exist: ${o.hooks.stale.map(esc).join(', ')}. Run /zi-bootstrap --upgrade`]);
     if (o.kit_version.project && o.kit_version.kit && o.kit_version.project !== o.kit_version.kit) drift.push(['warn', 'kit version', `project set up with kit ${esc(o.kit_version.project)}; installed kit is ${esc(o.kit_version.kit)}`]);
   }
   $('#vtitle').textContent = 'Live activity';
@@ -490,7 +490,7 @@ function renderInspector() {
     const attrs = [];
     if (n.kind === 'agent') attrs.push(['tools', n.attrs.tools.join(', ')], ['model', n.attrs.model]);
     if (n.kind === 'hook') attrs.push(['runs on', (n.attrs.events || []).join(', ') || 'no event'], ['registered by', (S.idx.inn.get(n.id) || []).filter((e) => e.kind === 'hook').map((e) => S.idx.byId.get(e.from).label).join(', ') || 'nothing']);
-    if (n.kind === 'command') attrs.push(['arguments', n.attrs.argument_hint || 'none'], ['allowed tools', (n.attrs.allowed_tools || []).join(', ') || 'default']);
+    if (n.kind === 'skill') attrs.push(['arguments', n.attrs.argument_hint || 'none'], ['allowed tools', (n.attrs.allowed_tools || []).join(', ') || 'default']);
     if (n.kind === 'ci-job') attrs.push(['pipeline', n.attrs.pipeline], ['steps', String(n.attrs.steps)]);
     if (n.kind === 'settings') attrs.push(['deny rules', String(n.attrs.deny_rules)]);
     const o = overlay();
