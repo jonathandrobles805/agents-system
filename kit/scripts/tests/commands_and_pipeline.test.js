@@ -47,6 +47,14 @@ test('every description and argument-hint is one double-quoted YAML string', () 
   }
 });
 
+test('only a human or the launcher starts a kit skill', () => {
+  // docs/research/claude-code-skill-probe.md (Claude Code 2.1.327, Q3): with disable-model-invocation,
+  // `claude -p "/kit <slug>"` (how lane.js launches a headless lane) still runs the skill
+  for (const p of COMMANDS.filter((x) => path.basename(x) === 'SKILL.md')) {
+    assert.match(/^---\n([\s\S]*?)\n---\n/.exec(read(p))[1], /^disable-model-invocation: true$/m, rel(p));
+  }
+});
+
 test('no kit skill strips tools from the agents it spawns', () => {
   // probe Q1b, Q2: disallowed-tools also removes the tool from subagents and stays in force after the skill
   for (const p of COMMANDS) assert.doesNotMatch(/^---\n([\s\S]*?)\n---\n/.exec(read(p))[1], /^disallowed-tools:/m, rel(p));

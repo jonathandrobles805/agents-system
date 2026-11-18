@@ -3,6 +3,7 @@ name: kit
 description: "Use when you want the kit to start a piece of work, continue one, or run one stage. `/kit fix the login bug` (or feature, ui, docs, ...) starts work; `/kit <slug>` continues it; `/kit plan <slug>` runs one stage; `/kit --queue` works through the roadmap. It stops only where you must act: approve the plan, merge, accept lessons."
 argument-hint: "[<work type>] <what you want> | <slug> | <stage> <slug> | --queue"
 allowed-tools: Bash, Read, Write, Edit, Agent, AskUserQuestion
+disable-model-invocation: true
 ---
 
 Started with: $ARGUMENTS

@@ -3,6 +3,7 @@ name: kit-dashboard
 description: "Use when you want to watch the kit live. Starts the dashboard for this project (or every project with --all): where each feature is, lane details, and hook events as they happen."
 argument-hint: "[--all] [--port 8765]"
 allowed-tools: Bash
+disable-model-invocation: true
 ---
 
 Start the dashboard server in the background and open it:

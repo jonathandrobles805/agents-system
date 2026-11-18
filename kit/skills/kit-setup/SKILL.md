@@ -3,6 +3,7 @@ name: kit-setup
 description: "Use when setting up a repository for the kit, or with --upgrade after updating the kit. Detects the stack, asks what it must not guess, and writes CLAUDE.md, ROADMAP.md, ARCHITECTURE.md, DESIGN.md, LESSONS.md, docs/, hooks, CI and the sync script."
 argument-hint: "[--upgrade] [--protect]"
 allowed-tools: Bash, Read, Write, AskUserQuestion
+disable-model-invocation: true
 ---
 
 Bootstrap this repository with agent-kit. Arguments: $ARGUMENTS

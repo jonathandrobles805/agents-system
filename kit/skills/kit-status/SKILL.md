@@ -3,6 +3,7 @@ name: kit-status
 description: "Use when you want to know where every feature stands and what is waiting for you. Shows positions, what needs you, lane drift, debt and stale research, all read from files and git."
 argument-hint: "[--all]"
 allowed-tools: Bash
+disable-model-invocation: true
 ---
 
 ```
