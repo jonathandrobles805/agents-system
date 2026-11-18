@@ -73,6 +73,7 @@
     "script:telemetry/collector": { "purpose": "Receives Claude Code's OpenTelemetry export (OTLP/HTTP JSON) and appends every record, tagged with its lane, to the kit telemetry store; stores, never interprets." },
     "script:sandbox": { "purpose": "Detects the lane sandbox runtime (srt, container, or none), builds a lane's sandbox configuration from the floor and its spec, scans the worktree for credential-looking content, and forms the host-side launch command." },
     "script:lane": { "purpose": "Mechanical half of the pipeline: worktrees, preconditions, roadmap status, and the next-step state machine." },
+    "script:pr_gate": { "purpose": "The merge gate: waits for every required job of the project workflow on a PR head and merges only when all passed; the same job list feeds branch protection." },
     "script:validate_docs": { "purpose": "Rejects research, specs, reviews and lessons that make untagged or unresolvable claims." },
     "script:kit_status": { "purpose": "Derives each feature's position and the project's health from files and git." },
     "script:bootstrap": { "purpose": "Detects the stack and generates or upgrades a project's kit layer." },

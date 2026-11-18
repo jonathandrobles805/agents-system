@@ -22,6 +22,8 @@
 //   lane.js next --repo R                     JSON: next queued slug with an agreed goal (exit 2 if none / WIP full)
 //   lane.js goal-set <slug> agreed|running|done --repo R
 //   lane.js incident --repo R --what "..." [--slug S] [--pr URL]   record a production incident for /zi-retro --incident
+//   lane.js ci [<slug>] --repo R [--pr N] [--wait]       CI on the PR head: exit 0 green, 1 red or timed out, 3 pending
+//   lane.js merge [<slug>] --repo R [--pr N] --by NAME  wait for every required check, then squash-merge pinned to that head
 //   lane.js merged <slug> --repo R [--pr URL] at merge time: verify in git, mark ROADMAP merged (idempotent)
 //   lane.js finish <slug> --repo R            after retro: remove worktree and local branch, mark roadmap merged
 // Exit 0 ok, 2 refused (reasons on stderr), 1 usage/git error.
@@ -32,6 +34,7 @@ import { spawn, spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { ArgumentParser } from './args.js';
 import * as K from './kitlib.js';
+import * as G from './pr_gate.js';
 import * as V from './validate_docs.js';
 import * as SB from './sandbox.js';
 
@@ -49,6 +52,8 @@ const DOC = `lane: the mechanical half of the pipeline commands. Agents do the t
   lane.js next --repo R                     JSON: next queued slug with an agreed goal (exit 2 if none / WIP full)
   lane.js goal-set <slug> agreed|running|done --repo R
   lane.js incident --repo R --what "..." [--slug S] [--pr URL]   record a production incident for /zi-retro --incident
+  lane.js ci [<slug>] --repo R [--pr N] [--wait]       CI on the PR head: exit 0 green, 1 red or timed out, 3 pending
+  lane.js merge [<slug>] --repo R [--pr N] --by NAME  wait for every required check, then squash-merge pinned to that head
   lane.js merged <slug> --repo R [--pr URL] at merge time: verify in git, mark ROADMAP merged (idempotent)
   lane.js finish <slug> --repo R            after retro: remove worktree and local branch, mark roadmap merged
 Exit 0 ok, 2 refused (reasons on stderr), 1 usage/git error.`;
@@ -286,6 +291,19 @@ export function roadmapSet(root, slug, status, cols = {}) {
     }
   }
   return false;
+}
+
+/** The mutation gate's rule: blocking once `mutation_blocking_after_features` (default 2) ROADMAP rows are merged. */
+export function mutationBlocking(root) {
+  const after = pyInt(kget(asDict(K.loadKitJson(root)), 'mutation_blocking_after_features', 2));
+  const merged = roadmapRows(root).filter((r) => r.status === 'merged').length;
+  return { blocking: merged >= after, merged, after };
+}
+
+/** The PR number for a lane: --pr, else the PR cell of its ROADMAP row. */
+export function lanePr(root, slug, prArg) {
+  const row = slug ? roadmapRows(root).find((r) => r.slug === slug) : undefined;
+  return G.resolvePr(prArg, row?.pr);
 }
 
 /** Specs that are approved or in flight, with the set of files each one touches. Returns [[slug, Set]]. */
@@ -1184,6 +1202,10 @@ export async function main(argv = process.argv.slice(2)) {
   s.addArgument('slug'); s.addArgument('criterion'); s.addArgument('command', { nargs: '*' }); s.addArgument('--repo', { default: '.' });
   s = sub.addParser('stage');
   s.addArgument('slug'); s.addArgument('stage', { choices: ['research', 'reproduce', 'plan', 'test', 'build', 'review'] }); s.addArgument('--repo', { default: '.' });
+  s = sub.addParser('ci');
+  s.addArgument('slug', { nargs: '?' }); s.addArgument('--repo', { default: '.' }); s.addArgument('--pr'); s.addArgument('--wait', { action: 'store_true' }); s.addArgument('--timeout-min', { type: parseInt, default: 30 });
+  s = sub.addParser('merge');
+  s.addArgument('slug', { nargs: '?' }); s.addArgument('--repo', { default: '.' }); s.addArgument('--pr'); s.addArgument('--by'); s.addArgument('--timeout-min', { type: parseInt, default: 30 });
   s = sub.addParser('merged');
   s.addArgument('slug'); s.addArgument('--repo', { default: '.' }); s.addArgument('--pr');
   s = sub.addParser('resume');
@@ -1271,6 +1293,17 @@ export async function main(argv = process.argv.slice(2)) {
   if (a.cmd === 'evidence') {
     const problems = evidence(root, a.slug);
     return problems.length ? refuse(problems) : 0;
+  }
+  if (a.cmd === 'ci' || a.cmd === 'merge') {
+    // The merge gate (#68): wait for every required check on the PR head; merge only when all passed.
+    const pr = lanePr(root, a.slug, a.pr);
+    if (!pr) return refuse([a.slug ? `no PR for '${a.slug}': pass --pr <number|url> or set the ROADMAP row's PR cell` : 'pass a slug or --pr <number|url>']);
+    const opts = { timeoutMin: a.timeout_min, mutationBlocking: mutationBlocking(root).blocking };
+    try {
+      return a.cmd === 'ci' ? G.ciCommand(root, pr, { ...opts, wait: !!a.wait }) : G.mergeCommand(root, pr, { ...opts, by: a.by });
+    } catch (e) {
+      return refuse([e.message]);
+    }
   }
   if (a.cmd === 'merged') {
     // Verify in git before writing the word: refuse to mark a lane merged that is not an ancestor of base.

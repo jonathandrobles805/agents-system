@@ -10,10 +10,7 @@ export function main(argv) {
   const ap = C.makeParser('ci_mutation_gate.js', [{ flag: '--repo', default: '.' }]);
   const a = C.parseArgs(ap, argv);
   const root = K.realResolve(a.repo);
-  const kit = K.loadKitJson(root);
-  const after = C.pyInt(C.dictGet(kit, 'mutation_blocking_after_features', 2));
-  const merged = L.roadmapRows(root).filter((r) => r.status === 'merged').length;
-  const blocking = merged >= after;
+  const { blocking, merged, after } = L.mutationBlocking(root); // one rule, shared with the merge gate (lane.js merge)
   process.stdout.write(`blocking=${blocking ? 'true' : 'false'}\n`);
   process.stderr.write(`# merged features: ${merged}, blocking after: ${after}\n`);
   return 0;

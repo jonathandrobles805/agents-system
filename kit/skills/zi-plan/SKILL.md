@@ -41,4 +41,4 @@ node "$HOME/.claude/kit/scripts/lane.js" precheck $slug --repo "$PWD"
 ```
 node "$HOME/.claude/kit/scripts/lane.js" roadmap-set $slug waiting-approval --repo "$PWD" --spec docs/specs/$slug.md
 ```
-Commit `docs/specs/$slug.md`, `docs/research/*`, `ROADMAP.md` on a branch `spec/$slug` and open a PR titled `spec: <feature>` whose body is the spec's Summary section. Tell the human: to approve, set `Status: approved`, fill `Approved by: <name> on <date> at <commit>`, and merge. Nothing is built before that.
+Commit `docs/specs/$slug.md`, `docs/research/*`, `ROADMAP.md` on a branch `spec/$slug` and open a PR titled `spec: <feature>` whose body is the spec's Summary section. Tell the human: to approve, set `Status: approved`, fill `Approved by: <name> on <date> at <commit>`, and merge, or say "merge" and you run `lane.js merge --pr <url> --by <name>`, which waits for CI. Nothing is built before that.

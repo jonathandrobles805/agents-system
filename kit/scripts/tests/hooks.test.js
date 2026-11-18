@@ -169,6 +169,23 @@ test('guard bash allows normal', (t) => {
   }
 });
 
+test('guard bash blocks merging a PR outside lane.js merge (#68)', (t) => {
+  const repo = makeRepo(t);
+  const bad = ['gh pr merge 4 --squash', 'cd /p && gh pr merge 4', 'x=$(gh pr merge 4)', 'echo ok\ngh pr merge 4 --auto',
+    'gh api -X PUT repos/o/r/pulls/4/merge', 'gh api --method PUT repos/o/r/pulls/4/merge -f merge_method=squash',
+    'gh api --method=PUT repos/{owner}/{repo}/pulls/4/merge', 'gh api graphql -f query="mutation { mergePullRequest(input: {}) { clientMutationId } }"'];
+  for (const c of bad) {
+    const r = run('hook_guard_bash.js', pre(repo, 'Bash', { command: c }));
+    assert.ok(r.returncode === 2 && r.stderr.includes('lane.js merge'), `${c}: ${r.stderr}`);
+  }
+  const ok = ['gh pr view 4 --json state', 'gh pr checks 4', 'gh api repos/o/r/pulls/4/merge', 'gh pr create --title x --body "after review, run gh pr merge"',
+    'node "$HOME/.claude/kit/scripts/lane.js" merge footer --repo "$PWD" --by Jonathan', 'git merge --no-ff main'];
+  for (const c of ok) {
+    const r = run('hook_guard_bash.js', pre(repo, 'Bash', { command: c }));
+    assert.equal(r.returncode, 0, `${c}: ${r.stderr}`);
+  }
+});
+
 test('guard bash lane rules', (t) => {
   const repo = makeRepo(t);
   makeLane(repo);
