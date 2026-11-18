@@ -55,6 +55,17 @@ test('every description and argument-hint is one double-quoted YAML string', () 
   }
 });
 
+test('no kit skill strips tools from the agents it spawns', () => {
+  // probe F2, F3 (docs/research/claude-code-skill-probe.md): disallowed-tools also removes the tool from subagents and
+  // stays in force after the skill
+  for (const p of COMMANDS) assert.doesNotMatch(/^---\n([\s\S]*?)\n---\n/.exec(read(p))[1], /^disallowed-tools:/m, rel(p));
+});
+
+test('no allowed-tools pattern relies on a $variable or quotes, which Claude Code does not match', () => {
+  // probe F9: a pattern containing "$PWD" did not approve the same literal command, so such a pattern only looks safe
+  for (const p of COMMANDS) assert.doesNotMatch(/^allowed-tools:(.*)$/m.exec(read(p))?.[1] ?? '', /\$|"/, rel(p));
+});
+
 test('commands never merge or approve for the human', () => {
   for (const p of COMMANDS) {
     assert.ok(!read(p).toLowerCase().includes('gh pr merge'), path.basename(p));
