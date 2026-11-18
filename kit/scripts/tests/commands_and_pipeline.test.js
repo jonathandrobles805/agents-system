@@ -79,6 +79,20 @@ test('only the human starts the skills no other kit skill hands work to', () => 
   }
 });
 
+test('every work type writes the same four goal fields the goal template has', () => {
+  // field test: /work's goal block lacked Domain:, which the other ten had
+  const types = ['zi-work', 'zi-new-feature', 'zi-fix', 'zi-ui', 'zi-refactor', 'zi-docs', 'zi-investigate', 'zi-security', 'zi-architecture', 'zi-migrate', 'zi-incident', 'zi-new-skill'];
+  for (const n of types) {
+    const text = read(path.join(SKILLS, n, 'SKILL.md'));
+    for (const f of ['- Work type:', '- Risk:', '- Size:', '- Domain:']) assert.ok(text.includes(f), `${n} ${f}`);
+  }
+});
+
+test('the installed prompts cite nothing that is not installed with them', () => {
+  // KIT-SPEC, OPERATING-MODEL and the decisions live in the kit repo's docs/, which install.sh does not place
+  for (const p of COMMANDS) assert.doesNotMatch(read(p), /KIT-SPEC|OPERATING-MODEL|[Ss]ince step \d/, rel(p));
+});
+
 test('a skill that takes one feature slug names it, so Claude Code fills it in', () => {
   // probe F6: arguments: [slug] substitutes $slug in a SKILL.md
   for (const n of ['zi-implement', 'zi-plan', 'zi-review']) {

@@ -17,7 +17,7 @@ If exit code is 2, stop: the WIP limit is reached. Say which lanes are in flight
 Confirm the slug has a row in `ROADMAP.md` and at least one research file in `docs/research/INDEX.md` whose keywords match. If there is no research, stop and tell the human to run `/zi-research $slug` first. Planning without research is guessing.
 
 ## Step 2: plan
-Spawn the `planner` agent with: the slug, the research slugs, the paths of `ARCHITECTURE.md`, `DESIGN.md`, `LESSONS.md`, `ROADMAP.md`, and the list of other specs under `docs/specs/`. It writes `docs/specs/$slug.md`. It resolves 1–3 unknowns itself by spawning researchers; it stops with "research insufficient" at more than 3. If it stops, relay the list to the human and end.
+Spawn the `planner` agent with: the slug, the research slugs, the paths of `ARCHITECTURE.md`, `DESIGN.md`, `LESSONS.md`, `ROADMAP.md`, and the list of other specs under `docs/specs/`. It writes `docs/specs/$slug.md`. It lists its unknowns; it does not resolve them itself. Step 2b decides what happens to them.
 
 ## Step 2b: unknown budget (script decides, not the planner)
 ```
