@@ -117,24 +117,46 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with: { fetch-depth: 0 }
-      - name: gitleaks (commits in this change)
+      - name: change range
+        # The commits this change adds. On pull_request: from the base tip GitHub merged into (the checkout's first
+        # parent) to the PR head. Not the event's base.sha: it can name a commit no fetched branch holds (#77).
+        # Every end must be in the checkout; a range that cannot be resolved fails here instead of scanning nothing.
         env:
           EVENT: ${{ github.event_name }}
-          PR_BASE: ${{ github.event.pull_request.base.sha }}
           PR_HEAD: ${{ github.event.pull_request.head.sha }}
           MG_BASE: ${{ github.event.merge_group.base_sha }}
           BEFORE: ${{ github.event.before }}
+        run: |
+          set -euo pipefail
+          have() { git cat-file -e "$1^{commit}" 2>/dev/null; }
+          missing() { echo "::error::secrets: $1 ($2) is not in this checkout, so the change cannot be scanned. The checkout needs fetch-depth: 0."; exit 1; }
+          case "$EVENT" in
+            pull_request)
+              FROM=$(git rev-parse -q --verify 'HEAD^2^{commit}' >/dev/null && git rev-parse HEAD^1 || true)
+              [ -n "$FROM" ] || { echo "::error::secrets: HEAD is not GitHub's pull request merge commit; check out the default ref."; exit 1; }
+              TO="$PR_HEAD"; have "$TO" || missing "the PR head" "$TO" ;;
+            merge_group)
+              FROM="$MG_BASE"; TO="$GITHUB_SHA"
+              have "$FROM" || missing "the merge queue base" "$FROM" ;;
+            *)
+              TO="$GITHUB_SHA"
+              if [ -n "$BEFORE" ] && [ "$BEFORE" != "0000000000000000000000000000000000000000" ]; then
+                FROM="$BEFORE"; have "$FROM" || missing "the commit before the push" "$FROM"
+              else
+                FROM=""
+              fi ;;
+          esac
+          have "$TO" || missing "the change head" "$TO"
+          if [ -n "$FROM" ]; then RANGE="$FROM..$TO"; else RANGE="-1 $TO"; fi
+          echo "secrets: scanning $RANGE ($(git rev-list --count ${FROM:+$FROM..}$TO) commit(s))"
+          echo "RANGE=$RANGE" >> "$GITHUB_ENV"
+      - name: gitleaks (commits in this change)
         run: |
           set -euo pipefail
           V={{gitleaks_version}}
           curl -sSfL -o gitleaks.tgz "https://github.com/gitleaks/gitleaks/releases/download/v${V}/gitleaks_${V}_linux_x64.tar.gz"
           echo "{{gitleaks_sha256}}  gitleaks.tgz" | sha256sum -c -
           tar -xzf gitleaks.tgz gitleaks
-          case "$EVENT" in
-            pull_request) RANGE="$PR_BASE..$PR_HEAD" ;;
-            merge_group)  RANGE="$MG_BASE..$GITHUB_SHA" ;;
-            *) if [ -n "$BEFORE" ] && [ "$BEFORE" != "0000000000000000000000000000000000000000" ]; then RANGE="$BEFORE..$GITHUB_SHA"; else RANGE="-1"; fi ;;
-          esac
           ./gitleaks git --redact --no-banner --log-opts="$RANGE" .
 
   audit:
