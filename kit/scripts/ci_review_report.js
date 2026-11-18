@@ -1,5 +1,6 @@
 #!/usr/bin/env node
-// CI: a lane branch needs docs/specs/<slug>.review.md that validates, has Verdict PASS, and names the current HEAD.
+// CI: a lane branch needs docs/specs/<slug>.review.md that validates, has Verdict PASS, and names the branch's head
+// commit: --head or PR_HEAD_SHA (the PR's head on a pull_request run), else HEAD.
 import * as K from './kitlib.js';
 import * as C from './ci_common.js';
 import * as V from './validate_docs.js';
@@ -11,7 +12,7 @@ const VERDICT_PASS = new RegExp(String.raw`(?<![^\n])## Verdict${S}*\n+${S}*PASS
 const HEAD_LINE = new RegExp(String.raw`(?<![^\n])- Head:${S}*([0-9a-f]{7,40})`);
 
 export function main(argv) {
-  const ap = C.makeParser('ci_review_report.js', [{ flag: '--repo', default: '.' }]);
+  const ap = C.makeParser('ci_review_report.js', [{ flag: '--repo', default: '.' }, { flag: '--head', default: null }]);
   const a = C.parseArgs(ap, argv);
   const root = K.realResolve(a.repo);
   const slug = C.laneSlug(root);
@@ -21,11 +22,20 @@ export function main(argv) {
   if (V.main([rep, '--repo', root])) return C.fail('review-report: report does not validate');
   const text = C.readText(rep);
   if (!VERDICT_PASS.test(text)) return C.fail('review-report: Verdict is not PASS');
-  const head = C.pyStrip(C.gitPy(['rev-parse', 'HEAD'], root));
+  // On a pull_request run HEAD is GitHub's synthetic merge commit; the CI step passes the PR's own head commit.
+  const prHead = (a.head || process.env.PR_HEAD_SHA || '').trim();
+  const rev = prHead || 'HEAD';
+  let head;
+  try {
+    head = C.pyStrip(C.gitPy(['rev-parse', '--verify', `${rev}^{commit}`], root));
+  } catch {
+    return C.fail(`review-report: the PR head commit ${rev} is not in this checkout; check out with fetch-depth: 0`);
+  }
   const m = HEAD_LINE.exec(text);
   if (!m) return C.fail("review-report: no '- Head: <sha>' line; the report must name the commit it reviewed");
-  if (!K.reviewHeadOk(root, m[1])) {
-    return C.fail(`review-report: report reviewed ${m[1]} but HEAD is ${head.slice(0, 12)}; code changed after review. Run /zi-review again.`);
+  if (!K.reviewHeadOk(root, m[1], head)) {
+    const what = prHead ? 'the PR head' : 'HEAD';
+    return C.fail(`review-report: report reviewed ${m[1]} but ${what} is ${head.slice(0, 12)}; code changed after review. Run /zi-review again.`);
   }
   return C.ok(`review-report: PASS for ${m[1]}`);
 }
