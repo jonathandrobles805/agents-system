@@ -1,5 +1,5 @@
 ---
-description: "A security finding or review: start it as work type `security` and carry it through the `security` workflow profile (kit/workflows/security.json). The controller decides every stage from files; this command only classifies and hands off."
+description: "Use when there is a security finding or a security review to do. Starts it as work type `security`, always at high risk."
 argument-hint: "<what you want, in one sentence>"
 ---
 

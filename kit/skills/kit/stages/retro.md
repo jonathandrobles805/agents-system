@@ -1,5 +1,5 @@
 ---
-description: "After a merge, run the retro agent on a lane, show the proposed lessons and enforcement changes, write LESSONS.md on the human's approval, flag global lessons for the kit, and clean up the worktree. With --incident, turn a production incident into a lesson the same way."
+description: "Use when a lane has merged, or with --incident when a production incident got past every gate. The retro agent proposes lessons and the check that would have caught the problem; you accept, edit or drop each; accepted lessons are written and the worktree is cleaned up."
 argument-hint: "<feature slug> | --incident \"<what happened>\" [--slug <feature it came from>]"
 ---
 

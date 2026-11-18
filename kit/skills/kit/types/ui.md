@@ -1,5 +1,5 @@
 ---
-description: "A user-interface change against the design model: start it as work type `ui` and carry it through the `ui` workflow profile (kit/workflows/ui.json). The controller decides every stage from files; this command only classifies and hands off."
+description: "Use when a screen or its style should change against the design model. Starts it as work type `ui`; at size L it runs as a feature."
 argument-hint: "<what you want, in one sentence>"
 ---
 

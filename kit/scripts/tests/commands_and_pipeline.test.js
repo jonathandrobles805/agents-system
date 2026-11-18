@@ -47,6 +47,14 @@ test('every description and argument-hint is one double-quoted YAML string', () 
   }
 });
 
+test('every description says when to use it first', () => {
+  // Claude and the / menu show the description; the use case comes first (Anthropic's guidance for skills)
+  for (const p of COMMANDS) {
+    const d = /^description: "(.*)"$/m.exec(read(p))?.[1] ?? '';
+    assert.match(d, /^Use when /, rel(p));
+  }
+});
+
 test('/kit names every stage and work type it can be given, and each has its file', () => {
   const text = read(path.join(SKILLS, 'kit', 'SKILL.md'));
   for (const f of EXPECTED) {

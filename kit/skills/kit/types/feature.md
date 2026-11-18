@@ -1,5 +1,5 @@
 ---
-description: "A new capability: start it as work type `feature` and carry it through the `feature` workflow profile (kit/workflows/feature.json). The controller decides every stage from files; this command only classifies and hands off."
+description: "Use when you want a new capability. Starts it as work type `feature`: research, plan, your approval, tests, build, review, your merge, retro."
 argument-hint: "<what you want, in one sentence>"
 ---
 

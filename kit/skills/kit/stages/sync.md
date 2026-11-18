@@ -1,5 +1,5 @@
 ---
-description: "Bring the current worktree up to date with the default branch and run the tests. Conflicts are reported, not auto-resolved beyond one attempt."
+description: "Use when a lane's worktree must catch up with the default branch. Merges it and runs the tests; a conflict is reported, with one attempt to resolve it."
 ---
 
 Run in the current worktree:

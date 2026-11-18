@@ -1,5 +1,5 @@
 ---
-description: "Behaviour-preserving restructuring: start it as work type `refactor` and carry it through the `refactor` workflow profile (kit/workflows/refactor.json). The controller decides every stage from files; this command only classifies and hands off."
+description: "Use when code should be restructured without changing what it does. Starts it as work type `refactor`: research, plan, your approval, tests, build, review, your merge."
 argument-hint: "<what you want, in one sentence>"
 ---
 

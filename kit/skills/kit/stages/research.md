@@ -1,5 +1,5 @@
 ---
-description: "Research a topic with one researcher agent per question, reusing or re-verifying existing research from docs/research/INDEX.md. Writes tagged research files only."
+description: "Use when a feature or topic needs facts about the code or outside systems before planning. One researcher per question; existing research is reused or re-checked. Writes only research files."
 argument-hint: "<topic or feature slug> [question 1; question 2; ...]"
 ---
 

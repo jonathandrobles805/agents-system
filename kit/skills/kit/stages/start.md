@@ -1,5 +1,5 @@
 ---
-description: "Begin a feature the right way: a short discussion until the human and Claude agree on the end goal, then a goal file, a roadmap row, and a hand-off to /kit. Use this instead of describing a feature in plain chat."
+description: "Use when you want something built and there is no agreed goal yet. A short discussion until you and Claude agree on the end goal, then a goal file, a roadmap row, and the hand-off to the loop."
 argument-hint: "<what you want, in one sentence>"
 ---
 

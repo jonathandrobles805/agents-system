@@ -1,5 +1,5 @@
 ---
-description: "A change to the declared architecture or design model: start it as work type `architecture` and carry it through the `architecture` workflow profile (kit/workflows/architecture.json). The controller decides every stage from files; this command only classifies and hands off."
+description: "Use when the declared architecture or design model should change. Starts it as work type `architecture`: research, plan, your approval, build, review, your merge."
 argument-hint: "<what you want, in one sentence>"
 ---
 

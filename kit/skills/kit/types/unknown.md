@@ -1,5 +1,5 @@
 ---
-description: "Start work when you do not know what kind it is. Routes provisionally to `fix`; the debugger's evidence settles the real kind (fix, incident, refactor) and the controller re-routes. The user never has to classify."
+description: "Use when you do not know what kind of work it is. Starts it as a provisional fix; the debugger's evidence then settles whether it is a fix, an incident or a refactor."
 argument-hint: "<the symptom or wish, in your own words>"
 ---
 

@@ -1,6 +1,6 @@
 ---
 name: kit-status
-description: "Show where every feature is (derived from files and git, never from agent claims), what needs the human, lane drift, debt, and research staleness."
+description: "Use when you want to know where every feature stands and what is waiting for you. Shows positions, what needs you, lane drift, debt and stale research, all read from files and git."
 argument-hint: "[--all]"
 allowed-tools: Bash
 ---

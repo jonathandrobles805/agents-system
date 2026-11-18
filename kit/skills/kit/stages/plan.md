@@ -1,5 +1,5 @@
 ---
-description: "Write the spec for a feature from existing research: planner agent, unknown resolution, spec-critic, validation. Refuses when WIP limit is hit, files overlap another active spec, or research is insufficient. Human approval happens after."
+description: "Use when research exists and the spec should be written. The planner writes it, open unknowns are resolved, the spec critic reviews it, and it is validated. Refuses at the WIP limit, on file overlap, or with too little research. You approve it afterwards."
 argument-hint: "<feature slug>"
 ---
 

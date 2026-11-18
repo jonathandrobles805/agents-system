@@ -1,5 +1,5 @@
 ---
-description: "Documentation only: start it as work type `docs` and carry it through the `docs` workflow profile (kit/workflows/docs.json). The controller decides every stage from files; this command only classifies and hands off."
+description: "Use when only documentation changes. Starts it as work type `docs`."
 argument-hint: "<what you want, in one sentence>"
 ---
 

@@ -1,6 +1,6 @@
 ---
 name: kit
-description: "The agent kit's one entry point. Start any piece of work (`/kit fix the login bug`, `/kit feature ...`), continue it (`/kit <slug>`), run one stage by hand (`/kit plan <slug>`), or drain the roadmap (`/kit --queue`). The next stage is always decided by `lane.js next-step` from files and git, never by this skill's judgment; it stops only where a human must act (approve the plan, merge, accept lessons)."
+description: "Use when you want the kit to start a piece of work, continue one, or run one stage. `/kit fix the login bug` (or feature, ui, docs, ...) starts work; `/kit <slug>` continues it; `/kit plan <slug>` runs one stage; `/kit --queue` works through the roadmap. It stops only where you must act: approve the plan, merge, accept lessons."
 argument-hint: "[<work type>] <what you want> | <slug> | <stage> <slug> | --queue"
 allowed-tools: Bash, Read, Write, Edit, Agent, AskUserQuestion
 ---

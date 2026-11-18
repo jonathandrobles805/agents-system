@@ -1,5 +1,5 @@
 ---
-description: "A defect with a symptom you can describe: start it as work type `fix` and carry it through the `fix` workflow profile (kit/workflows/fix.json). The controller decides every stage from files; this command only classifies and hands off."
+description: "Use when something is broken and you can describe the symptom. Starts it as work type `fix`: reproduce, spec, your approval, tests, build, review, your merge, retro."
 argument-hint: "<what you want, in one sentence>"
 ---
 
