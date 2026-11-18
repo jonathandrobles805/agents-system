@@ -2,7 +2,26 @@
 
 All notable changes to the kit. Each entry names the decision or lesson that caused it.
 
-## [Unreleased]
+## [0.3.0] - unreleased
+
+### Changed (decisions 0016 E.5 and 0017: the 23 commands become four skills)
+- **Re-run `./install.sh` after pulling.** The kit is now four skills in `~/.claude/skills/`: `/kit`, `/kit-status`, `/kit-dashboard`, `/kit-setup`. `install.sh` removes the kit's own old files from `~/.claude/commands/` (links are removed; `--copy` files are moved to `~/.claude/kit-backup/`; your own commands are left alone) and prints this map:
+
+  | Old | New |
+  |---|---|
+  | `/run <slug>` | `/kit <slug>` |
+  | `/start`, `/work`, `/new-feature`, `/fix`, `/ui`, `/refactor`, `/docs`, `/investigate`, `/security`, `/architecture`, `/migrate`, `/incident`, `/new-skill` | `/kit <what you want>`, or `/kit <work type> <what you want>` (`feature`, `fix`, `ui`, `refactor`, `docs`, `investigation`, `security`, `architecture`, `migration`, `incident`, `skill-development`) |
+  | `/research`, `/plan`, `/implement`, `/review`, `/sync`, `/retro` | `/kit research`, `/kit plan <slug>`, ... (one stage by hand; `/kit retro --incident "<what>"`) |
+  | `/status`, `/dashboard`, `/bootstrap` | `/kit-status`, `/kit-dashboard`, `/kit-setup` |
+
+  Why: `/plan`, `/review` and `/status` are Claude Code built-in commands and `/run` is a bundled skill; every kit name now starts with `kit`. The stage steps live once, in `kit/skills/kit/stages/`, instead of being copied across 23 files.
+- Only a human, or the kit's own headless launcher (`claude -p "/kit <slug>"`), starts a kit skill (`disable-model-invocation: true`).
+- Skill headers are valid YAML (15 of 23 were not), and every description starts with when to use it.
+- The planner no longer spawns researchers itself; the plan stage does (whether a subagent may spawn subagents depends on the Claude Code version).
+- Evidence: `docs/research/claude-code-skill-probe.md` (Claude Code 2.1.327). It also found that an `allowed-tools` pattern with `"$PWD"` does not match, so the skills keep `Bash` (#63).
+- **Projects:** run `node ~/.claude/kit/scripts/bootstrap.js --upgrade --all` so their CI and hook messages name the new skills.
+- **Rollback:** revert the release commit, pull, delete the four links `~/.claude/skills/kit`, `kit-status`, `kit-dashboard`, `kit-setup`, and re-run `./install.sh`; the old commands come back from `kit/commands/`. Projects: `bootstrap.js --upgrade --all` again.
+
 
 ### Fixed (field test #47, first run with real agents)
 - A fix lane the debugger re-routed to refactor (`cause: design fault …`) was sent straight to `build` with 0/0 criteria: the refactor profile used the feature derivation, which reads any open lane as building. Now no profile reaches `test` or `build` while its lane has no approved, scoped spec: such a lane goes plan → approve → scope first (`inLanePlanning`), and `scope` is a script stage in every profile. End-to-end test of the re-route.

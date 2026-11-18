@@ -516,7 +516,7 @@
     {"file": "planted-faults/run.js", "from": "tool:planted-faults", "kind": "runs", "to": "script:sandbox"},
     {"file": "planted-faults/run.js", "from": "tool:planted-faults", "kind": "runs", "to": "script:validate_docs"}
   ],
-  "kit_version": "0.2.0",
+  "kit_version": "0.3.0",
   "nodes": [
     {"attrs": {"description": "Reproduces a reported failure inside the lane, localizes its cause (bisecting when a known-good commit exists), proposes the failing test that will pin it, and names the kind of work the evidence shows. Writes only the lane's progress file; the planner writes the spec, the tester the test, the implementer the fix. First agent of the fix and incident profiles.", "model": "opus", "tools": ["Read", "Grep", "Glob", "Write", "Edit", "Bash"]}, "declared": true, "id": "agent:debugger", "kind": "agent", "label": "debugger", "path": "kit/agents/debugger.md", "purpose": "Reproduces a failure, localizes it, writes the failing test, and names the kind of work the evidence shows; never fixes.", "writes": "test files and the lane progress file only"},
     {"attrs": {"description": "Builds exactly what an approved spec says, in its own worktree, tests first, under hooks that block unread or out-of-spec edits. Use for /kit implement.", "model": "opus", "tools": ["Read", "Grep", "Glob", "Edit", "Write", "Bash"]}, "declared": true, "id": "agent:implementer", "kind": "agent", "label": "implementer", "path": "kit/agents/implementer.md", "purpose": "Builds exactly what the approved spec says, in its own worktree, and nothing more.", "writes": "the spec's file list only"},
