@@ -1,6 +1,6 @@
 ---
 name: zi-review
-description: "Review a lane with the fresh-context reviewer agent; second reviewer on high-risk specs. Writes docs/specs/<slug>.review.md and posts the fail list to the PR. The reviewer never sees the builder's conversation."
+description: "Reviews a lane's pull request with a fresh reviewer that never saw the builder's conversation (a second one on high-risk specs), writes the review report and posts any fail list to the PR. Never merges. Use when a lane's PR is ready for review."
 argument-hint: "<feature slug>"
 allowed-tools: Bash, Read, Agent
 ---

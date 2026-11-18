@@ -1,6 +1,6 @@
 ---
 name: zi-new-feature
-description: "A new capability: start it as work type `feature` and carry it through the `feature` workflow profile (kit/workflows/feature.json). The controller decides every stage from files; this command only classifies and hands off."
+description: "Starts a new capability as work type feature: research, plan, approval, tests, build, review, merge, retro. Use when the user wants something the product does not do yet."
 argument-hint: "<what you want, in one sentence>"
 allowed-tools: Read, Write, Bash, AskUserQuestion
 ---

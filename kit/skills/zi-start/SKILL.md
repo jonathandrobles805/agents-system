@@ -1,6 +1,6 @@
 ---
 name: zi-start
-description: "Begin a feature the right way: a short discussion until the human and Claude agree on the end goal, then a goal file, a roadmap row, and a hand-off to /zi-run. Use this instead of describing a feature in plain chat."
+description: "Agrees the end goal of a piece of work with the human in a short discussion, then writes the goal file and the roadmap row and offers to hand off to /zi-run. Use when there is something to build and no agreed goal yet."
 argument-hint: "<what you want, in one sentence>"
 allowed-tools: Read, Write, Bash, AskUserQuestion
 ---

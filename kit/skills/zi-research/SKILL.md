@@ -1,6 +1,6 @@
 ---
 name: zi-research
-description: "Research a topic with one researcher agent per question, reusing or re-verifying existing research from docs/research/INDEX.md. Writes tagged research files only."
+description: "Answers the questions a feature or topic needs before planning, one researcher per question, reusing or re-checking research that already exists. Writes only research files. Use before /zi-plan, or on a topic of its own."
 argument-hint: "<topic or feature slug> [question 1; question 2; ...]"
 allowed-tools: Bash, Read, Agent
 ---

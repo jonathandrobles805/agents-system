@@ -55,6 +55,15 @@ test('every description and argument-hint is one double-quoted YAML string', () 
   }
 });
 
+test('every description says what the skill does and when to use it, in the third person', () => {
+  // Anthropic's skill-authoring guide: third person (the description is injected into the system prompt), what + when
+  for (const p of COMMANDS) {
+    const d = /^description: "(.*)"$/m.exec(read(p))?.[1] ?? '';
+    assert.match(d, /\bUse (when|to|before|after|once)\b/, `${rel(p)}: says when to use it`);
+    assert.doesNotMatch(d, /\b(you|your|I|we)\b/i, `${rel(p)}: third person`);
+  }
+});
+
 test('only the human starts the skills no other kit skill hands work to', () => {
   // decision 0017 item 3: these four have side effects and are never a hand-off target; probe F4: the flag still lets
   // `claude -p "/name"` start them. Every other skill stays invocable, because one skill hands work to the next.

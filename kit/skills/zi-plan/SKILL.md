@@ -1,6 +1,6 @@
 ---
 name: zi-plan
-description: "Write the spec for a feature from existing research: planner agent, unknown resolution, spec-critic, validation. Refuses when WIP limit is hit, files overlap another active spec, or research is insufficient. Human approval happens after."
+description: "Writes the spec for a feature: the planner drafts it, open unknowns are researched, the spec critic reviews it, and it is validated. Refuses at the WIP limit, on file overlap, or with too little research. Use when the research for a feature is done; the human approves the spec afterwards."
 argument-hint: "<feature slug>"
 allowed-tools: Bash, Read, Agent
 ---

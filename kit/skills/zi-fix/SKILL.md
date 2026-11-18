@@ -1,6 +1,6 @@
 ---
 name: zi-fix
-description: "A defect with a symptom you can describe: start it as work type `fix` and carry it through the `fix` workflow profile (kit/workflows/fix.json). The controller decides every stage from files; this command only classifies and hands off."
+description: "Starts a fix for a described bug as work type fix: reproduce, spec, approval, tests, build, review, merge, retro. Use when something is broken and the symptom can be described."
 argument-hint: "<what you want, in one sentence>"
 allowed-tools: Read, Write, Bash, AskUserQuestion
 ---

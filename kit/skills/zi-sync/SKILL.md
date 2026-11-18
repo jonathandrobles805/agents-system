@@ -1,6 +1,6 @@
 ---
 name: zi-sync
-description: "Bring the current worktree up to date with the default branch and run the tests. Conflicts are reported, not auto-resolved beyond one attempt."
+description: "Merges the default branch into a lane's worktree and runs the tests; a conflict is reported, with one attempt to resolve it. Use when a lane has fallen behind the default branch."
 allowed-tools: Bash, Read
 disable-model-invocation: true
 ---

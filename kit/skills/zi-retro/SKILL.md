@@ -1,6 +1,6 @@
 ---
 name: zi-retro
-description: "After a merge, run the retro agent on a lane, show the proposed lessons and enforcement changes, write LESSONS.md on the human's approval, flag global lessons for the kit, and clean up the worktree. With --incident, turn a production incident into a lesson the same way."
+description: "Turns a merged lane, or with --incident a production incident, into lessons: the retro agent proposes each lesson and the check that would have caught it, the human accepts, edits or drops each, and the worktree is cleaned up. Use after a merge or an incident."
 argument-hint: "<feature slug> | --incident \"<what happened>\" [--slug <feature it came from>]"
 allowed-tools: Bash, Read, Edit, Agent, AskUserQuestion
 ---

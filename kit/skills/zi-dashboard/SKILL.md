@@ -1,6 +1,6 @@
 ---
 name: zi-dashboard
-description: "Start the live agent-kit dashboard for this project (or all registered projects): pipeline positions derived from files and git, lane details, live hook events, and a button to open Claude in a lane's worktree."
+description: "Starts the live dashboard for this project (or every project with --all): where each feature is, lane details, and hook events as they happen. Use to watch the kit work."
 argument-hint: "[--all] [--port 8765]"
 allowed-tools: Bash
 disable-model-invocation: true

@@ -1,6 +1,6 @@
 ---
 name: zi-status
-description: "Show where every feature is (derived from files and git, never from agent claims), what needs the human, lane drift, debt, and research staleness."
+description: "Shows where every feature stands and what is waiting for the human: positions, lane drift, debt and stale research, all read from files and git. Use to see the state of the work."
 argument-hint: "[--all]"
 allowed-tools: Bash
 ---

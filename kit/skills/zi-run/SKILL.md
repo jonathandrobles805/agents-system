@@ -1,6 +1,6 @@
 ---
 name: zi-run
-description: "Carry a feature from its agreed goal to a merged PR and retro, stopping only where a human must act (approve the plan, merge, accept lessons). The next stage is always decided by `lane.js next-step` from files and git, never by this command's judgment. --queue drains the roadmap up to the WIP limit, one lane per worktree, in parallel."
+description: "Carries a feature through every stage (research, spec, approval, tests, build, review, merge, retro), asking lane.js next-step what comes next each time and stopping only where a human must act. Use to start or resume work on a feature that has an agreed goal, or with --queue to work through the roadmap."
 argument-hint: "<feature slug> | --queue"
 allowed-tools: Bash, Read, Edit, Agent, AskUserQuestion
 ---

@@ -1,6 +1,6 @@
 ---
 name: zi-migrate
-description: "A data or schema migration: start it as work type `migration` and carry it through the `migration` workflow profile (kit/workflows/migration.json). The controller decides every stage from files; this command only classifies and hands off."
+description: "Starts a data or schema migration as work type migration, always at high risk. Use when data or a schema must be migrated."
 argument-hint: "<what you want, in one sentence>"
 allowed-tools: Read, Write, Bash, AskUserQuestion
 ---

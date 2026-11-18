@@ -1,6 +1,6 @@
 ---
 name: zi-investigate
-description: "A question about the codebase or a system; no code changes: start it as work type `investigation` and carry it through the `investigation` workflow profile (kit/workflows/investigation.json). The controller decides every stage from files; this command only classifies and hands off."
+description: "Starts an investigation as work type investigation: research ending in a report, with no code change. Use when the user wants an answer about the code or a system, not a change."
 argument-hint: "<what you want, in one sentence>"
 allowed-tools: Read, Write, Bash, AskUserQuestion
 ---

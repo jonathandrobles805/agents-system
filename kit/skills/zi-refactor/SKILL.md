@@ -1,6 +1,6 @@
 ---
 name: zi-refactor
-description: "Behaviour-preserving restructuring: start it as work type `refactor` and carry it through the `refactor` workflow profile (kit/workflows/refactor.json). The controller decides every stage from files; this command only classifies and hands off."
+description: "Starts a restructuring of code that keeps its behaviour, as work type refactor: research, plan, approval, tests, build, review, merge. Use when code should change shape but not behaviour."
 argument-hint: "<what you want, in one sentence>"
 allowed-tools: Read, Write, Bash, AskUserQuestion
 ---

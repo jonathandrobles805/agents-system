@@ -1,6 +1,6 @@
 ---
 name: zi-ui
-description: "A user-interface change against the design model: start it as work type `ui` and carry it through the `ui` workflow profile (kit/workflows/ui.json). The controller decides every stage from files; this command only classifies and hands off."
+description: "Starts a change to a screen or its style as work type ui, checked against the design model; at size L it runs as a feature. Use when the change is to what the user sees."
 argument-hint: "<what you want, in one sentence>"
 allowed-tools: Read, Write, Bash, AskUserQuestion
 ---

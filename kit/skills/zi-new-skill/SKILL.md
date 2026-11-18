@@ -1,6 +1,6 @@
 ---
 name: zi-new-skill
-description: "A new or changed kit skill: start it as work type `skill-development` and carry it through the `skill-development` workflow profile (kit/workflows/skill-development.json). The controller decides every stage from files; this command only classifies and hands off."
+description: "Starts adding or changing a kit skill as work type skill-development. Its plan and build stages need the skill-smith agent, which does not exist yet (#59). Use when a kit skill should be added or changed."
 argument-hint: "<what you want, in one sentence>"
 allowed-tools: Read, Write, Bash, AskUserQuestion
 ---

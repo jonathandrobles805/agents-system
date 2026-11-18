@@ -1,6 +1,6 @@
 ---
 name: zi-docs
-description: "Documentation only: start it as work type `docs` and carry it through the `docs` workflow profile (kit/workflows/docs.json). The controller decides every stage from files; this command only classifies and hands off."
+description: "Starts a documentation-only change as work type docs. Use when only documentation changes."
 argument-hint: "<what you want, in one sentence>"
 allowed-tools: Read, Write, Bash, AskUserQuestion
 ---

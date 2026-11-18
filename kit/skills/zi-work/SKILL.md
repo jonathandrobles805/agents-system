@@ -1,6 +1,6 @@
 ---
 name: zi-work
-description: "Start work when you do not know what kind it is. Routes provisionally to `fix`; the debugger's evidence settles the real kind (fix, incident, refactor) and the controller re-routes. The user never has to classify."
+description: "Starts work whose kind is unknown as a provisional fix; the debugger's evidence then settles whether it is a fix, an incident or a refactor. Use when something is wrong and the kind of work is not clear."
 argument-hint: "<the symptom or wish, in your own words>"
 allowed-tools: Read, Write, Bash, AskUserQuestion
 ---
