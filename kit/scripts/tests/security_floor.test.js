@@ -134,6 +134,6 @@ test('ci_security_floor passes a fresh project and fails every loosening', (t) =
 test('check() is pure and reports a missing settings file', (t) => {
   const root = path.join(tmpPath(t), 'empty');
   fs.mkdirSync(root, { recursive: true });
-  assert.deepEqual(check({ root, home: emptyHome(t), managed: [] }), ['.claude/settings.json missing; run /bootstrap']);
+  assert.deepEqual(check({ root, home: emptyHome(t), managed: [] }), ['.claude/settings.json missing; run /zi-bootstrap']);
   setEnv(t, 'CLAUDE_HOME', emptyHome(t));
 });

@@ -1,5 +1,5 @@
 {
-  "command": "/migrate",
+  "command": "/zi-migrate",
   "description": "A data or schema migration. Impact analysis, plan, approval, backup, execute, verify, restore validation. Always high risk.",
   "stages": [
     "start",

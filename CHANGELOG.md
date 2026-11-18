@@ -2,7 +2,18 @@
 
 All notable changes to the kit. Each entry names the decision or lesson that caused it.
 
-## [Unreleased]
+## [0.3.0] - unreleased
+
+### Changed (decision 0017: the 23 commands become 23 skills, each `zi-` plus its old name)
+- **Re-run `./install.sh` after pulling.** Each command is now a skill in `~/.claude/skills/zi-<name>/`: `/run` is `/zi-run`, `/plan` is `/zi-plan`, `/review` is `/zi-review`, `/status` is `/zi-status`, `/fix` is `/zi-fix`, and so on for all 23. `install.sh` removes the kit's own old files from `~/.claude/commands/` (links are removed; `--copy` files are moved to `~/.claude/kit-backup/`; your own commands are left alone) and prints the map.
+- Why the prefix: `/plan`, `/review` and `/status` are Claude Code built-in commands and `/run` is a bundled skill, which a skill of the same name replaces. `zi-` keeps every old name and clears all of them.
+- `/zi-bootstrap`, `/zi-implement`, `/zi-sync` and `/zi-dashboard` are started only by a human (`disable-model-invocation: true`); the other skills hand work to each other as the commands did.
+- Skill headers are valid YAML (15 of 23 were not); every description says, in the third person, what the skill does and when to use it; `/zi-implement`, `/zi-plan` and `/zi-review` name their argument (`$slug`).
+- The planner no longer spawns researchers itself; the plan stage does (whether a subagent may spawn subagents depends on the Claude Code version).
+- Evidence: `docs/research/claude-code-skill-probe.md` (Claude Code 2.1.327). It also found that an `allowed-tools` pattern with `"$PWD"` does not match, so the skills keep `Bash` (#63).
+- **Projects:** run `node ~/.claude/kit/scripts/bootstrap.js --upgrade --all` so their CI and hook messages name the new skills.
+- **Rollback:** revert the release commit, pull, delete the links `~/.claude/skills/zi-*`, and re-run `./install.sh`; the 23 old commands come back from `kit/commands/` (tested). Projects: `bootstrap.js --upgrade --all` again.
+
 
 ### Fixed (field test #47, first run with real agents)
 - A fix lane the debugger re-routed to refactor (`cause: design fault …`) was sent straight to `build` with 0/0 criteria: the refactor profile used the feature derivation, which reads any open lane as building. Now no profile reaches `test` or `build` while its lane has no approved, scoped spec: such a lane goes plan → approve → scope first (`inLanePlanning`), and `scope` is a script stage in every profile. End-to-end test of the re-route.

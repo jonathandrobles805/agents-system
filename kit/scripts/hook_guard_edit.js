@@ -46,7 +46,7 @@ export function main() {
   if (rel.startsWith('/') || rel.startsWith('..')) return deny(`guard-edit: '${rel}' is outside the project root.`);
 
   if (K.globMatch(rel, K.ALWAYS_BLOCKED_EDIT)) {
-    return deny(`guard-edit: '${rel}' is kit configuration. Agents never edit it; change it through /bootstrap or by hand.`);
+    return deny(`guard-edit: '${rel}' is kit configuration. Agents never edit it; change it through /zi-bootstrap or by hand.`);
   }
 
   const exists = fs.existsSync(absPath);

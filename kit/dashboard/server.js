@@ -231,7 +231,7 @@ export function startWatcher(state, interval) {
 /** Files and directories whose change can change the manifest. */
 export function archWatchList(kitDir, manifest) {
   const base = path.dirname(kitDir);
-  const files = ['agents', 'commands', 'scripts', path.join('scripts', 'tests'), 'templates', 'ci', 'hooks', 'dashboard', 'manifest.json'].map((p) => path.join(kitDir, p));
+  const files = ['agents', 'skills', 'scripts', path.join('scripts', 'tests'), 'templates', 'ci', 'hooks', 'dashboard', 'manifest.json'].map((p) => path.join(kitDir, p));
   files.push(path.join(base, 'package.json'), path.join(base, 'VERSION'), path.join(base, '.github', 'workflows', 'kit.yml'));
   for (const n of manifest ? manifest.nodes : []) files.push(path.join(base, n.path));
   return files;

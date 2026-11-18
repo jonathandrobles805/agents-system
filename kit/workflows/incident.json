@@ -1,5 +1,5 @@
 {
-  "command": "/incident",
+  "command": "/zi-incident",
   "description": "Production is broken. The lane opens from the agreed goal; the debugger triages, reproduces and localizes inside it; the planner writes the recovery spec; a human approves it; test, fix, review, human merge, retrospective.",
   "stages": [
     "start",

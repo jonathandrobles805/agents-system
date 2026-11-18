@@ -1,6 +1,6 @@
 ---
 name: implementer
-description: Builds exactly what an approved spec says, in its own worktree, tests first, under hooks that block unread or out-of-spec edits. Use for /implement.
+description: Builds exactly what an approved spec says, in its own worktree, tests first, under hooks that block unread or out-of-spec edits. Use for /zi-implement.
 tools: Read, Grep, Glob, Edit, Write, Bash
 model: opus
 hooks:

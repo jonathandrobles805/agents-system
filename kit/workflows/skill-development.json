@@ -1,5 +1,5 @@
 {
-  "command": "/new-skill",
+  "command": "/zi-new-skill",
   "description": "A new or changed kit skill. Gap, research, draft (skill-smith), review, eval, human approval, release.",
   "stages": [
     "start",

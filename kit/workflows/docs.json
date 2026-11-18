@@ -1,5 +1,5 @@
 {
-  "command": "/docs",
+  "command": "/zi-docs",
   "description": "Documentation only. Inspect, edit, validate content, links and examples; review; merge.",
   "stages": [
     "start",
