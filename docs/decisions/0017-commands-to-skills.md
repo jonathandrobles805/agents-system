@@ -1,6 +1,6 @@
-# 0017 Commands become four `kit` skills
+# 0017 Commands become 23 skills, each named `zi-` plus its old name
 
-Date: 2026-11-17 · Amended: 2026-11-17 (simpler names: `/kit`, `/kit-setup`, `types/`; owner, in chat) · Status: accepted · Depends on: 0016 E.5 · Evidence: plan `commands-to-skills` (independent review 2026-11-17), issues #56–#59
+Date: 2026-11-17 · Amended: 2026-11-17, twice by the owner in chat: first `/kit`, `/kit-setup`, `types/`; then one skill per job with the `zi-` prefix (this text) · Status: accepted · Depends on: 0016 E.5 (as amended) · Evidence: plan `commands-to-skills` (independent review 2026-11-17), issues #56–#59, #63
 
 ## Context
 
@@ -14,37 +14,29 @@ Facts this rests on, checked on Claude Code 2.1.326 and its docs on 2026-11-17:
 
 ## Decision
 
-1. **Four skills, plain names that start with `kit`.** `/kit` (the orchestrator), `/kit-status`, `/kit-dashboard`, `/kit-setup`. The rule (`kit`, or `kit-` plus a plain word) is fixed for every future kit skill, so no kit skill can take the name of a Claude Code built-in or bundled skill, now or after an update.
-2. **Only a human or the launcher starts them.** Every kit skill sets `disable-model-invocation: true`. The headless launcher starts lanes with `/kit <slug>` [lane.js:691 today sends `/run <slug>`].
-3. **Install: personal, one copy.** `install.sh` links `kit/skills/<name>/` into `~/.claude/skills/<name>/`, removes the kit's old files from `~/.claude/commands/` (links and `--copy` copies, kit files only), and prints the name map. Projects get no copy of these skills. A plugin is not used while plugin agents cannot carry hooks.
-4. **Folder.** `kit/skills/<name>/`. The subfolders `kit/skills/domains/` and `kit/skills/workflows/` stay reserved for the domain and workflow skills of OPERATING-MODEL §3, and `install.sh` skips them.
-5. **Inside `/kit`.** `SKILL.md` holds today's `/run` loop: ask `lane.js next-step`, act on the stage, repeat. Each stage's steps move to `stages/<stage>.md` (from today's `/start`, `/research`, `/plan`, `/implement`, `/review`, `/sync`, `/retro` and the stage rows of `/run`), and each work type's notes to `types/<type>.md` (from the 11 work-type commands and `/work`). The skill reads only the file the next step names. An argument that names an existing goal resumes it; anything else starts the goal conversation. Behaviour does not change; only where the text lives and what it is called.
-6. **OPERATING-MODEL §3 skill rules** (copied per project, hashed by `guards-present`, rejected by CI without a planted fault, an eval set or a `criteria` section) apply to domain and workflow skills. The four orchestration skills are exempt: they are covered by the kit's own tests, the architecture map and the planted faults that already exercise the stages.
-7. **The hybrid-factory blueprint** (branch `docs/hybrid-factory-adoption-blueprint`, draft) is superseded by 0016 and this decision and is not merged. It forbade a skills layer [blueprint L26, L111].
+1. **One skill per job, 23 skills.** Each old command becomes its own skill, a folder `kit/skills/zi-<old name>/` with one `SKILL.md`. The owner chose this over one orchestrator skill (the earlier text of this decision): each job is visible and specific in the `/` menu, as Anthropic's guidance asks of a skill's name and description.
+2. **Names: `zi-` plus the old name.** `zi` is the kit's prefix. It keeps every old name recognisable and keeps every kit skill clear of Claude Code's own names: `/plan`, `/review` and `/status` are built-in commands and `/run` is a bundled skill, which a skill of the same name replaces. Every future kit skill is `zi-` plus a plain name (lowercase letters, numbers, hyphens).
+3. **Who starts them.** `disable-model-invocation: true` on every skill that no other kit skill hands work to (`zi-bootstrap`, `zi-implement`, `zi-sync`, `zi-dashboard`); only the human starts those. The others stay invocable by Claude, because one skill hands work to the next (`/zi-start` then `/zi-run`, `/zi-work` then the work type, `/zi-run` then a stage). A test checks the split against the text of the skills. The headless launcher starts lanes with `claude -p "/zi-run <slug>"`.
+4. **Install: personal, one copy.** `install.sh` links `kit/skills/<name>/` into `~/.claude/skills/<name>/`, removes the kit's old files from `~/.claude/commands/` (links and `--copy` copies, kit files only), and prints the name map. Projects get no copy of these skills. A plugin is not used while plugin agents cannot carry hooks.
+5. **Folder.** `kit/skills/zi-<name>/`. The subfolders `kit/skills/domains/` and `kit/skills/workflows/` stay reserved for the domain and workflow skills of OPERATING-MODEL §3, and `install.sh` skips them.
+6. **Behaviour does not change.** Each skill keeps its command's text; only its name and the names it refers to change.
+7. **OPERATING-MODEL §3 skill rules** (copied per project, hashed by `guards-present`, rejected by CI without a planted fault, an eval set or a `criteria` section) apply to domain and workflow skills. The 23 `zi-` skills are exempt: they are covered by the kit's own tests, the architecture map and the planted faults that already exercise the stages.
+8. **The hybrid-factory blueprint** (branch `docs/hybrid-factory-adoption-blueprint`, draft) is superseded by 0016 and this decision and is not merged. It forbade a skills layer [blueprint L26, L111].
 
 ### Name map
 
-| Old | New |
-|---|---|
-| `/run <slug>` | `/kit <slug>` |
-| `/start <what you want>` | `/kit <what you want>` |
-| `/work <symptom>` | `/kit <symptom>` (no work type: the controller routes it, as `/work` does today) |
-| `/new-feature`, `/fix`, `/ui`, `/refactor`, `/docs`, `/investigate`, `/security`, `/architecture`, `/migrate`, `/incident`, `/new-skill` | `/kit <work type> <what you want>` |
-| `/research`, `/plan`, `/implement`, `/review`, `/sync`, `/retro` | stages of `/kit`; not started by hand |
-| `/status` | `/kit-status` |
-| `/dashboard` | `/kit-dashboard` |
-| `/bootstrap [--upgrade]` | `/kit-setup [--upgrade]` |
+Every command keeps its name with `zi-` in front: `/start` → `/zi-start`, `/run` → `/zi-run`, `/research` → `/zi-research`, `/plan` → `/zi-plan`, `/implement` → `/zi-implement`, `/review` → `/zi-review`, `/sync` → `/zi-sync`, `/retro` → `/zi-retro`, `/work` → `/zi-work`, `/new-feature` → `/zi-new-feature`, `/fix` → `/zi-fix`, `/ui` → `/zi-ui`, `/refactor` → `/zi-refactor`, `/docs` → `/zi-docs`, `/investigate` → `/zi-investigate`, `/security` → `/zi-security`, `/architecture` → `/zi-architecture`, `/migrate` → `/zi-migrate`, `/incident` → `/zi-incident`, `/new-skill` → `/zi-new-skill`, `/status` → `/zi-status`, `/dashboard` → `/zi-dashboard`, `/bootstrap` → `/zi-bootstrap`.
 
-Short names in KIT-SPEC and OPERATING-MODEL (`/bootstrap`, `/status`, a stage name) refer to the skills above.
+Short names in KIT-SPEC and OPERATING-MODEL (`/bootstrap`, `/status`, `/plan`) refer to the `zi-` skills.
 
 ## Consequences
 
-Easier: one copy of each stage's steps; no kit name can shadow or be shadowed by Claude Code; frontmatter can restrict tools per skill; skill edits trigger the eval job (its smoke set tests the agents, not yet the skills).
+Easier: each job is its own skill with its own description and tool list; no kit name can shadow or be shadowed by Claude Code; skill edits trigger the eval job (its smoke set tests the agents, not yet the skills).
 
-Harder: everyone re-runs `install.sh` once and learns four names; every reference to an old name must change in the same release (launcher prompt, script messages, the `command` field of the 11 workflow profiles, README, FIRST-PROJECT, tests); projects run `bootstrap.js --upgrade --all` so their CI messages use the new names. Version 0.3.0.
+Harder: everyone re-runs `install.sh` once and types `zi-` in front of each command; every reference to an old name changes in the same release (launcher prompt, script messages, the `command` field of the 11 workflow profiles, README, FIRST-PROJECT, tests); projects run `bootstrap.js --upgrade --all` so their CI messages use the new names. The text the 11 work-type skills share is still copied in each; moving it to one shared file is a separate step. Version 0.3.0.
 
-Not yet known, settled by a probe before the frontmatter is relied on (`docs/research/claude-code-skill-probe.md`): whether `disallowed-tools` reaches subagents and whether it outlasts the skill; whether a skill with `disable-model-invocation: true` runs when typed and when launched with `claude -p` [anthropics/claude-code#26251 reports a refusal]; whether a symlinked skill folder is found; whether `$slug` substitutes.
+Settled by the probe (`docs/research/claude-code-skill-probe.md`, Claude Code 2.1.327): `disallowed-tools` also strips the tool from subagents and outlasts the skill, so no kit skill uses it; a skill with `disable-model-invocation: true` runs when launched as `claude -p "/name"`; a symlinked skill folder is found; an `allowed-tools` pattern containing `"$PWD"` does not match, so the skills keep `Bash` (#63). Still to check by hand in the first real run: a skill with the flag starts when typed in an interactive session [anthropics/claude-code#26251 reports a refusal in the VS Code extension].
 
 ## Approval
 
-Approved by: Jonathan Robles (via chat) on 2026-11-17 at b7ed48a
+Approved by: Jonathan Robles (via chat) on 2026-11-17 at b7ed48a; amended by him in chat on 2026-11-17 (names `zi-` plus the old name, one skill per job)
