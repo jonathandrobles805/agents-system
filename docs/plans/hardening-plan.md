@@ -136,7 +136,7 @@ Issues #29, #30 and #41 are still open; check what's left in each before closing
 - **Not used for:**
     - local work, tests and the gate, which need no GitHub identity;
     - CI, which uses GitHub Actions' own token;
-    - your approval and merge, which use your own account.
+    - your approval and merge, which use your own account. The merge may be run by Claude on your word (see "Merging on your word" below).
 
 **What the App may do:**
 
@@ -155,6 +155,11 @@ Issues #29, #30 and #41 are still open; check what's left in each before closing
 - CODEOWNERS names you for every path (`*`), and code-owner review is required, so an approval by the App never counts. CODEOWNERS adds `docs/specs/`, `.claude/kit.json`, `package.json` and the test config ([0016 L197](https://github.com/jonathandrobles805/agents-system/blob/3a34247f08515ed8f3b328f01bb9531970cbb222/docs/decisions/0016-direction-vs-reference-factory.md#L197)).
 - The "most recent push must be approved by someone else" rule stays off: the App is the pusher, so your approval already satisfies it, and it would block you when you update a PR branch yourself.
 - This needs GitHub Pro, because the repo is private and personally owned.
+
+**Merging on your word (owner decision, 2026-11-18).** You do not merge every PR by hand. Claude merges when you say so, with `lane.js merge` (#81): it waits until every required check has reported on the PR head and passed, and merges exactly that commit. Because it runs with your account, GitHub cannot tell it from you, so your word is enforced on your machine, not by GitHub:
+- **CI green:** branch protection with the real job names and no bypass, and `lane.js merge` refusing red or pending CI. Proven on kit-test (PRs #7–#12).
+- **Your yes:** a Claude Code `ask` permission rule on the merge command, so Claude Code prompts you before every merge and the model cannot skip it. It needs the `kit` launcher from Step 2 (#63: rules naming `"$HOME"` do not match).
+- **Still denied to every session:** an approving review, any other merge (`gh pr merge`, its `gh api` and GraphQL forms; the bash guard blocks them today), and changes to protection or rulesets.
 
 **The approval line.** Today `lane.js` needs `Status: approved` and an approval line before a lane starts ([L375-L376](https://github.com/jonathandrobles805/agents-system/blob/3a34247f08515ed8f3b328f01bb9531970cbb222/kit/scripts/lane.js#L375-L376), [L502-L506](https://github.com/jonathandrobles805/agents-system/blob/3a34247f08515ed8f3b328f01bb9531970cbb222/kit/scripts/lane.js#L502-L506)). That changes: `lane.js` reads your approving review of the merged spec PR through the GitHub API and records the reviewer, date and commit in the store, so the spec file no longer needs the line, and `/zi-plan`'s instruction to fill it changes too ([plan.md L42](https://github.com/jonathandrobles805/agents-system/blob/3a34247f08515ed8f3b328f01bb9531970cbb222/kit/commands/plan.md#L42)). No agent writes an approval.
 
@@ -211,9 +216,10 @@ Two rules hold throughout:
 
 Steps 1–9 of the skills work are done on branch `commands-to-skills`: 23 `zi-` skills, install, version 0.3.0, and a tested rollback. The probe showed that a skill with `disable-model-invocation` does start under `claude -p`.
 
-- [ ] Run one real feature on a canary project (PR #62, its Step 10).
-- [ ] Check that a flagged skill also starts when you type it (probe item U3 in PR #62's plan).
-- [ ] You review and merge PR #62, and the PR that adds 0016 E.6–E.9 (PR #65, branch docs/0016-amendments-e6-e8).
+- [x] Run one real feature on a canary project (PR #62, its Step 10). Done on kit-test, twice: `footer-text` (PRs #1–#5) and `project-name-constant` (PRs #7–#12, all merged by `lane.js merge` with the 10 required checks green). Findings filed as #66–#77 and #82–#86.
+- [x] Check that a flagged skill also starts when you type it (probe item U3 in PR #62's plan). Typed `/zi-bootstrap` ran on kit-test.
+- [x] You review and merge PR #62, and the PR that adds 0016 E.6–E.9 (PR #65, branch docs/0016-amendments-e6-e8). Both merged.
+- [ ] Check that 0017's headless launcher starts `claude -p "/zi-run <slug>"`.
 - **Done when:** the canary run finishes, and 0017's headless launcher starts `claude -p "/zi-run <slug>"`.
 
 ### Step 1. Judge: GitHub enforces you (0016 step 1, plus D1)
@@ -233,7 +239,7 @@ Steps 1–9 of the skills work are done on branch `commands-to-skills`: 23 `zi-`
 
 - [ ] Add `lane.js advance`, the table of allowed moves and the store. The dashboard reads the store.
 - [ ] Rounds and wall time move into the store. `lane.js stage` becomes a call to `advance`.
-- [ ] Fix #63 first: add a `kit` launcher on `PATH`, prove with a probe that the new permission rules match, then narrow the lanes' rules (E.4) and the skills' `Bash` so lanes can't call `advance`, `gate`, `start` or a merge. Sessions outside the container keep `advance`, `gate` and `start`, but are denied an approving review, a merge, and changes to protection or the ruleset (`gh pr review --approve`, `gh pr merge` and their `gh api` forms).
+- [ ] Fix #63 first: add a `kit` launcher on `PATH`, prove with a probe that the new permission rules match, then narrow the lanes' rules (E.4) and the skills' `Bash` so lanes can't call `advance`, `gate`, `start` or a merge. Sessions outside the container keep `advance`, `gate` and `start`, and may merge only through `kit merge` behind an `ask` rule (D1, "Merging on your word"); they are denied an approving review, any other merge, and changes to protection or the ruleset (`gh pr review --approve`, `gh pr merge` and their `gh api` forms).
 - [ ] Fix #57 (stages a profile lacks are refused, not mapped to done), #58 (listed stages are produced or removed, and `requires` blocks) and #59 (`skill-development` is refused until its agent exists).
 - [ ] Make the lane start fail closed, with `local_only` (D3), and update the `lane.test.js` fixtures.
 - **Done when:**
@@ -241,7 +247,8 @@ Steps 1–9 of the skills work are done on branch `commands-to-skills`: 23 `zi-`
     - a round past the limit parks the lane;
     - a lane agent calling `advance`, `gate`, `start` or a merge is denied, as proven by a planted fault;
     - every shipped permission rule matches its command, as proven by a probe;
-    - a session outside the container is denied an approval, a merge, or a change to protection or the ruleset, as proven by a planted fault;
+    - a session outside the container is denied an approval, any merge other than `kit merge`, or a change to protection or the ruleset, as proven by a planted fault;
+    - `kit merge` prompts the human every time (the `ask` rule matches, as proven by the probe) and refuses red or pending CI;
     - the reproductions in #57–#59 behave as their issues require;
     - a lane start with a failed fetch is refused, and one with no `origin` is refused unless `local_only` is set.
 
