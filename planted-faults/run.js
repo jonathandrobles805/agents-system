@@ -17,6 +17,7 @@ import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { ArgumentParser } from '../kit/scripts/args.js';
 import * as K from '../kit/scripts/kitlib.js';
+import * as G from '../kit/scripts/pr_gate.js';
 import * as F from '../kit/scripts/tests/fixtures.js';
 import { GOOD_RESEARCH, review as REVIEW, spec as SPEC } from '../kit/scripts/tests/testdata.js';
 
@@ -592,6 +593,16 @@ export function main(argv) {
     const step46 = /^\s+run:\s*(.+)$/.exec(wf46[wf46.findIndex((l) => /^\s+- name: validate-docs\s*$/.test(l)) + 1])[1];
     const c46 = sh('sh', ['-c', step46], { cwd: co46, env: { ...process.env, KIT_DIR: KIT } });
     record(46, 'a broken doc committed on a branch passes project CI', 'generated CI validate-docs (ci_changed_docs; base fetched in a depth-1 checkout, missing base fails)', c46.returncode === 1 && c46.stderr.includes('untagged-claim'), c46.stderr);
+
+    // 47 an agent merges a PR directly, without waiting for CI (kit-test PR #3 and #4 were merged on red CI)
+    const r47 = hook('hook_guard_bash.js', { ...base, hook_event_name: 'PreToolUse', tool_name: 'Bash', tool_input: { command: 'gh pr merge 4 --squash' } });
+    record(47, 'an agent merges a pull request directly, without waiting for CI', 'guard-bash: gh pr merge / gh api …/merge blocked; lane.js merge is the only way', r47.returncode === 2 && r47.stderr.includes('lane.js merge'), r47.stderr);
+
+    // 48 "no checks reported" (CI not started yet) or a red check is read as mergeable
+    const req48 = G.projectChecks(root);
+    const none48 = G.evaluate([], req48);
+    const red48 = G.evaluate(req48.required.map((name, i) => ({ id: i + 1, name, status: 'completed', conclusion: i === 0 ? 'failure' : 'success' })), req48);
+    record(48, 'a pull request with no checks reported yet, or one red check, is read as mergeable', 'lane.js merge waits for every required job of the workflow (pr_gate evaluate)', none48.state === 'pending' && none48.missing.length === req48.required.length && red48.state === 'red', `none: ${none48.state}, one red: ${red48.state}`);
   } finally {
     if (a.keep) process.stderr.write(`fixtures kept at ${tmp}\n`);
     else fs.rmSync(tmp, { recursive: true, force: true });

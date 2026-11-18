@@ -51,6 +51,12 @@ kit-test is a tiny practice project with no linter, type checker, formatter, int
 
 During the first `/zi-bootstrap` the kit also offers to install missing tools; it installs only when you say yes.
 
+## Merging
+
+The kit merges a pull request only with `lane.js merge` (the skills run it when you say "merge"). It waits until every required check above has reported on the PR's latest commit and passed, and refuses otherwise. "No checks reported" means CI has not started yet; it is never treated as green. To see the state without merging: `lane.js ci <slug>`.
+
+A merge you do yourself on the GitHub page is only blocked on red CI if branch protection is on: run `/zi-bootstrap --protect` (private repositories need a GitHub plan that offers it).
+
 ## Rules behind this page
 
 - No check is green while checking nothing: `docs/KIT-SPEC.md` (field-test corrections) and decision `0014`. Planted fault 40 proves a missing command fails CI.

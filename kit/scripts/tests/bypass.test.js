@@ -775,11 +775,11 @@ test('ci_test_count reports success when it cannot read the base [inverts at Ste
 // Documents that have drifted from the code they describe.
 // ===========================================================================================================
 
-test('README counts 19 planted faults; the suite runs 46 [inverts at Step 7]', () => {
+test('README counts 19 planted faults; the suite runs 48 [inverts at Step 7]', () => {
   assert.match(read(REPO, 'README.md'), /the 19 faults from the spec/, 'DEFECT: the count is written by hand');
   const run = read(REPO, 'planted-faults', 'run.js');
   const ids = new Set([...run.matchAll(/\brecord\((\d+),/g)].map((m) => Number(m[1])));
-  assert.equal(ids.size, 46, 'the suite defines 46 (S0 added #46)');
+  assert.equal(ids.size, 48, 'the suite defines 48 (S0 added #46; #68 added #47, #48)');
 });
 
 test('the generated audit names a commit that is not HEAD [inverts at Step 7]', () => {

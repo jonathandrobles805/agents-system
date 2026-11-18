@@ -34,7 +34,7 @@ test('all 23 skills exist, each a SKILL.md named after its folder, with a descri
 });
 
 test('commands reference real scripts and subcommands', () => {
-  const laneSubs = new Set(['precheck', 'start', 'stage', 'wip', 'unknowns', 'merged', 'incident', 'next-step', 'next', 'goal-set', 'roadmap-set', 'index', 'finish', 'launch', 'resume', 'stop', 'resume-all', 'profiles', 'agent-for', 'scope']);
+  const laneSubs = new Set(['precheck', 'start', 'stage', 'wip', 'unknowns', 'merged', 'incident', 'next-step', 'next', 'goal-set', 'roadmap-set', 'index', 'finish', 'launch', 'resume', 'stop', 'resume-all', 'profiles', 'agent-for', 'scope', 'ci', 'merge']);
   for (const p of COMMANDS) {
     const text = read(p);
     for (const m of text.matchAll(/kit\/scripts\/([a-z_]+\.js)/g)) {
@@ -115,9 +115,14 @@ test('no allowed-tools pattern relies on a $variable or quotes, which Claude Cod
 });
 
 test('commands never merge or approve for the human', () => {
+  // A skill may name `gh pr merge` only to forbid it; merging is lane.js merge on the human's word, which waits for CI (#68).
   for (const p of COMMANDS) {
-    assert.ok(!read(p).toLowerCase().includes('gh pr merge'), path.basename(p));
+    const text = read(p).toLowerCase();
+    for (const m of text.matchAll(/gh pr merge/g)) {
+      assert.ok(/never `?$/.test(text.slice(Math.max(0, m.index - 8), m.index)), `${path.basename(p)}: gh pr merge outside a 'never'`);
+    }
   }
+  assert.ok(read(path.join(SKILLS, 'zi-run', 'SKILL.md')).includes('**Merge only when they say so**'));
   assert.ok(read(path.join(SKILLS, 'zi-plan', 'SKILL.md')).toLowerCase().includes('nothing is built before that'));
   assert.ok(read(path.join(SKILLS, 'zi-review', 'SKILL.md')).toLowerCase().includes('this command never merges'));
 });

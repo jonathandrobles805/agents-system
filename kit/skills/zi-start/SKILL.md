@@ -25,7 +25,7 @@ Show the human the filled `## Done looks like` and `## Not in this goal` lists a
 ## Step 3: record
 - Choose a slug (kebab-case, ≤ 40 chars). Write `docs/goals/<slug>.md` from `~/.claude/kit/templates/goal.md` with `Status: agreed` and the agreed-by line.
 - Add the feature to `ROADMAP.md` Features table (`| <feature> | <slug> | <milestone> | queued | — | — | — |`) and to the `## Queue` list (ask where in the order if other items are queued). Then confirm the system sees it: `node "$HOME/.claude/kit/scripts/lane.js" next-step <slug> --repo "$PWD"` must answer `research`.
-- Commit both on a branch `goal/<slug>`, push, open a PR titled `goal: <feature>`, and merge it (docs only; the human's agreement in this conversation is the approval).
+- Commit both on a branch `goal/<slug>`, push, open a PR titled `goal: <feature>`, and merge it with `node "$HOME/.claude/kit/scripts/lane.js" merge --pr <url> --repo "$PWD" --by <name>` (docs only; the human's agreement in this conversation is the approval). It waits for CI and merges only when every required check passed; if it refuses, show its reasons and stop. Never `gh pr merge`.
 
 ## Step 4: hand off
 Ask: "Run it now (`/zi-run <slug>`), queue it for later, or stop here?" On "run", invoke `/zi-run <slug>`. Do not start research or write a spec inside this command.

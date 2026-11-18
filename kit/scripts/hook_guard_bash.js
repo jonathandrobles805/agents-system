@@ -5,7 +5,8 @@
 //   git push --force / -f, git push to main/master, git reset --hard, git clean -f, git checkout -- . ,
 //   rm -rf on anything outside /tmp or the worktree, sudo, curl|sh / wget|sh, --no-verify,
 //   writes into .claude/ or .github/workflows via redirection, sed -i, tee, cp, mv,
-//   chmod/chown on .claude/hooks, printing secrets (cat .env), git commit when staged files match secret patterns.
+//   chmod/chown on .claude/hooks, printing secrets (cat .env), git commit when staged files match secret patterns,
+//   merging a PR directly (gh pr merge, gh api PUT …/merge, GraphQL mergePullRequest): lane.js merge waits for CI.
 // In a lane additionally: git worktree remove/prune, git branch -D, checkout/switch to another branch.
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
@@ -26,6 +27,11 @@ export const RULES = [
   rule(`${B}git${S}+clean${S}+-[a-zA-Z]*f`, 'git clean -f deletes untracked files'),
   rule(`${B}git${S}+checkout${S}+--${S}+\\.`, 'git checkout -- . discards all changes'),
   rule(`${B}git${S}+(commit|push|merge|rebase)${E}[^|;&]*--no-verify`, '--no-verify skips hooks'),
+  // Merging goes through `lane.js merge`, which waits for every required check (#68). Anchored at the start of a
+  // command (line start, after ; & | ( or $( ), so the words inside a quoted PR or issue body do not match.
+  rule(`(?:^|[\n;&|(]|\\$\\()${S}*gh${S}+pr${S}+merge${E}`, 'merging a PR directly; run lane.js merge <slug> --by <name>, which waits for CI to pass'),
+  rule(`(?:^|[\n;&|(]|\\$\\()${S}*gh${S}+api${E}(?=[^|;&\n]*(?:-X${S}*|--method[=${WS}]${S}*)PUT${E})(?=[^|;&\n]*pulls/[^/${WS}]+/merge${E})`, 'merging a PR through the API; run lane.js merge <slug> --by <name>, which waits for CI to pass'),
+  rule(`(?:^|[\n;&|(]|\\$\\()${S}*gh${S}+api${S}+graphql${E}[^|;&]*mergePullRequest`, 'merging a PR through GraphQL; run lane.js merge <slug> --by <name>, which waits for CI to pass'),
   rule(`${B}sudo${E}`, 'sudo'),
   rule(`${B}(curl|wget)${E}[^|;&]*\\|${S}*(ba|z|da)?sh${E}`, 'piping a download into a shell'),
   rule(`(>|>>|${B}tee${E}|${B}sed${S}+-i|${B}cp${E}|${B}mv${E})[^|;&]*\\.claude/`, 'writing into .claude/ (kit configuration)'),

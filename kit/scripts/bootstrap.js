@@ -7,6 +7,7 @@ import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import * as K from './kitlib.js';
+import * as G from './pr_gate.js';
 import { ArgumentParser } from './args.js';
 
 const HERE = K.realResolve(path.dirname(fileURLToPath(import.meta.url)));
@@ -1575,7 +1576,13 @@ export function main(argv) {
   const result = a.upgrade ? upgradeProject(root, answers, a.dry_run) : b.run();
   const det = a.upgrade ? detect(root) : b.det;
   if (a.protect && !a.dry_run) {
-    result.branch_protection = protectBranch(root, get(det, 'default_branch', 'main'), ['tests', 'typecheck', 'lint', 'boundaries', 'scope-diff', 'test-count', 'dep-diff', 'secrets', 'claude-md-cap', 'guards-present', 'validate-docs', 'review-report']);
+    // Required checks are the workflow's job names, the names GitHub reports, read from the file just written.
+    // They used to include step names (scope-diff, review-report, ...), which never report as checks, so every PR
+    // would have waited forever (#68). The same list is what lane.js merge waits for.
+    const checks = G.projectChecks(root);
+    result.branch_protection = checks
+      ? protectBranch(root, get(det, 'default_branch', 'main'), checks.required)
+      : { ok: false, reason: `no ${G.WORKFLOW}; nothing to require` };
   }
   if (a.json) {
     print(K.jsonDumps(result, { indent: 2 }));
