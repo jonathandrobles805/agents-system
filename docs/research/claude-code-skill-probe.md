@@ -1,87 +1,44 @@
-# Claude Code skill probe (decision 0017, Step 0b)
+# Research: how Claude Code 2.1.327 treats the skill frontmatter the kit relies on
 
-Run by Jonathan Robles on his Mac, 2026-11-17 16:26 PST, with `docs/research/claude-code-skill-probe.sh` at `aeae0f4`. Claude Code 2.1.327, Darwin 24.6.0. Results below are the script's own output, pasted unedited into the session; the interpretation at the end is analysis.
+- Question: For the kit's four skills (decision 0017), does disallowed-tools reach subagents and outlast its skill, does disable-model-invocation still allow a headless start, are symlinked personal skills found, does arguments substitute, and which Bash commands do allowed-tools patterns approve?
+- Slug: claude-code-skill-probe
+- Date: 2026-11-17
+- Commit: aeae0f4
+- Requested by: commands → skills plan, Step 0b (PR #62); decision 0017
 
-Each run: `claude -p "/<skill>" --permission-mode acceptEdits --allowedTools "Skill,Agent,Read,Write,Edit"` in a fresh temporary project, except Q6: `claude -p "/kit-probe-perm" --permission-mode default` with no `--allowedTools`, so only the skill's own `allowed-tools` can approve a command.
+## Method
 
-| # | Question | Observed | Good for the kit when | Exit |
-|---|---|---|---|---|
-| 1a | Main session under `disallowed-tools: Edit, Write` can still write | main.txt: no | no | 0 |
-| 1b | A subagent started from that skill can still write | sub.txt: no | yes | 0 |
-| 2 | Write works again later in the same turn, after a restricted skill ran | after.txt: no | yes (no means the restriction leaks into the orchestrator) | 0 |
-| 3 | A `disable-model-invocation: true` skill runs when started as `claude -p "/name"` | dmi.txt: yes | yes | 0 |
-| 4 | A symlinked folder in `~/.claude/skills` is discovered | link.txt: yes | yes | 0 |
-| 5 | `arguments: [slug]` substitutes `$slug` | arg-hello.txt: yes | yes | 0 |
-| 6a | `Bash(./mark.sh p1*)` approves `./mark.sh p1 extra` | p1.txt: yes | yes | 0 |
-| 6b | A command no pattern matches is refused (`./mark.sh p2`) | p2.txt: no | no | 0 |
-| 6c | `cd sub && ../mark.sh p3` runs when each part has a pattern | p3.txt: yes | yes | 0 |
-| 6d | A pattern with a literal `$PWD` matches the same literal command | p4.txt: no | yes | 0 |
+`docs/research/claude-code-skill-probe.sh` (at `aeae0f4`) builds a throwaway project with six probe skills and one probe agent, runs each skill headless with `claude -p`, and records which marker files the run left behind. Jonathan Robles ran it on his Mac on 2026-11-17 (Claude Code 2.1.327, Darwin 24.6.0) and pasted the output unedited; it is kept verbatim in `docs/research/claude-code-skill-probe.output.txt`. Runs 1–5 use `--permission-mode acceptEdits --allowedTools "Skill,Agent,Read,Write,Edit"`; run 6 uses `--permission-mode default` and no `--allowedTools`, so only the skill's own `allowed-tools` can approve a command.
 
-Files in the probe project: arg-hello.txt dmi.txt link.txt p1.txt p3.txt
+## Findings
 
-Not covered: Q3 typed by hand in an interactive session (checked in Step 10).
+- F1. Under `disallowed-tools: Edit, Write`, the main session could not write (`main.txt` absent). [verified: docs/research/claude-code-skill-probe.output.txt:9-9] `main.txt: no`
+- F2. A subagent started from that skill could not write either: Claude Code refused to start the Write-only agent at all. [verified: docs/research/claude-code-skill-probe.output.txt:31-31] `would be spawned with zero tools`
+- F3. After a skill with `disallowed-tools: Edit, Write` finished, Write stayed denied later in the same turn. [verified: docs/research/claude-code-skill-probe.output.txt:45-45] `still in force after that skill had finished`
+- F4. A skill with `disable-model-invocation: true` ran when started as `claude -p "/name"`. [verified: docs/research/claude-code-skill-probe.output.txt:12-12] `dmi.txt: yes`
+- F5. A skill folder reached through a symlink in `~/.claude/skills` was found and ran. [verified: docs/research/claude-code-skill-probe.output.txt:13-13] `link.txt: yes`
+- F6. `arguments: [slug]` substituted `$slug` in a SKILL.md (`/kit-probe-args hello` wrote `arg-hello.txt`). [verified: docs/research/claude-code-skill-probe.output.txt:14-14] `arg-hello.txt: yes`
+- F7. `Bash(./mark.sh p1*)` in `allowed-tools` approved `./mark.sh p1 extra`; a command no pattern named was refused. [verified: docs/research/claude-code-skill-probe.output.txt:15-16] `p1.txt: yes`
+- F8. `cd sub && ../mark.sh p3` ran when `Bash(cd *)` and `Bash(../mark.sh p3*)` were both allowed. [verified: docs/research/claude-code-skill-probe.output.txt:17-17] `p3.txt: yes`
+- F9. `Bash(bash "$PWD/mark.sh" p4*)` did not approve `bash "$PWD/mark.sh" p4`; it was refused as needing approval. [verified: docs/research/claude-code-skill-probe.output.txt:72-72] `**Refused** ("This command requires approval")`
 
-## Raw output
+## What I could not verify
 
-### q1 (exit 0)
-```
-Neither file was created, so the probe indicates `disallowed-tools` does reach the subagent.
+- U1. Whether F9 is caused by the `$`, by the quotes, or by both. [unknown] Resolve by: one probe skill per variant (`$` without quotes, quotes without `$`).
+- U2. Whether `permissions.allow` in `.claude/settings.json` matches like skill `allowed-tools` (the kit ships `Bash(node "$HOME/.claude/kit/scripts/*)` there). [unknown] Resolve by: the same probe with the pattern in a project settings file instead of the skill (#63).
+- U3. Whether a skill with `disable-model-invocation: true` starts when typed in an interactive session (a refusal was reported for the VS Code extension, anthropics/claude-code#26251). [unknown] Resolve by: typing `/kit-probe-dmi` in the probe project, or the first real run (plan Step 10).
+- U4. Whether these results hold on other Claude Code versions. [unknown] Resolve by: re-running the script after a Claude Code upgrade.
 
-1. **main.txt:** Write unavailable in main session. The Write call was denied, so `main.txt` was not created.
-2. **sub.txt:** The `probe-writer` subagent never started. The harness refused it with: "Agent 'probe-writer' would be spawned with zero tools — refusing. Its tools list resolved to nothing: unrecognized [Write]." Write is the only tool that agent has, and it wasn't available to it either.
-3. **Files in the project directory now:**
-   - `.claude/`
-   - `.git/`
-   - `mark.sh`
-   - `sub/`, an empty directory. There is no `sub.txt` file. The directory was already there with the same timestamp as the other entries (16:25), so this run didn't make it.
-```
+## Confidence
 
-### q2 (exit 0)
-```
-1. kit-probe-restrict loaded, and I replied "restricted skill loaded" as it asked.
-2. Write unavailable after restricted skill. The Write tool was still listed, but calling it to create `after.txt` returned "Permission to use Write has been denied."
-3. `after.txt` does not exist; `ls` returned "No such file or directory."
+High for 2.1.327 on macOS: every finding is a marker file the run left or an error Claude Code printed, from one unedited run.
 
-So the restriction set by kit-probe-restrict was still in force after that skill had finished, when the outer skill moved on to step 2.
-```
+## Recommendation
 
-### q3 (exit 0)
-```
-done
-```
+No kit skill uses `disallowed-tools` (F2, F3): on `/kit` it would stop the planner, tester, implementer and reviewer from writing. All four skills set `disable-model-invocation: true` (F4); lanes still launch headless. The personal install by symlink works (F5). No kit skill uses `arguments` (F6 holds only in a SKILL.md; the stage files are read by `/kit`, and `/kit` takes more than a slug). The skills keep `Bash` in `allowed-tools` (F9): every kit script is called as `node "$HOME/.claude/kit/scripts/…"`, so a narrow list would leave the kit's own commands unapproved in headless lanes; narrowing waits for #63.
 
-### q4 (exit 0)
-```
-done
-```
+## Sources
 
-### q5 (exit 0)
-```
-I created `arg-hello.txt`, which contains the word "arg".
-```
-
-### q6 (exit 0)
-```
-Two of the four commands ran and two were refused.
-
-| # | Command | Result |
-|---|---------|--------|
-| 1 | `./mark.sh p1 extra` | **Ran** (no output) |
-| 2 | `./mark.sh p2` | **Refused** ("This command requires approval") |
-| 3 | `cd sub && ../mark.sh p3` | **Ran** (no output) |
-| 4 | `bash "$PWD/mark.sh" p4` | **Refused** ("This command requires approval") |
-
-- **Approved:** the two forms that ran are `./mark.sh` with two arguments and `../mark.sh` after a `cd`. The plain `./mark.sh p2` with one argument was refused, so the skill's allowed pattern seems to need an extra argument or match a different path form.
-- **Refused:** going through `bash` with an absolute `$PWD` path did not match any allowed pattern.
-- **Working directory:** command 3's `cd sub` stuck, so the session is now in `project/sub`. All four calls were sent at once, so command 4 may have been checked from either directory, but it was refused before it ran either way.
-```
-
-(In q6 the model's reading of command 2 is wrong: `./mark.sh p2` was refused because no pattern names `p2`, which is what 6b tests.)
-
-## What the kit does with this (analysis)
-
-- **No `disallowed-tools` on any kit skill (1b, 2).** It removes the tool from subagents too, and it stays in force after the skill that set it. On `/kit` it would stop the planner, tester, implementer and reviewer from writing their files.
-- **`disable-model-invocation: true` on all four skills (3).** A headless lane starts with `claude -p "/kit <slug>"` (`launch` in lane.js); that still runs.
-- **Personal install by symlink works (4).**
-- **`arguments` substitutes only in a SKILL.md (5 plus how skills load).** The kit's stage files are read by `/kit`, not loaded as skills, so a named argument there would not be substituted; `/kit`'s own arguments are not one slug. No kit skill uses `arguments`.
-- **`allowed-tools` keeps `Bash` (6d).** Every kit script is called as `node "$HOME/.claude/kit/scripts/<script>.js" ...`. A pattern containing `"$PWD"` did not match the same literal command, so a narrow list built from the kit's own commands would leave them unapproved, and a headless lane (`--permission-mode default`) would be denied them. Not tested here: whether the cause is the `$`, the quotes, or both; and whether the same holds for `permissions.allow` in `.claude/settings.json` (the kit ships `Bash(node "$HOME/.claude/kit/scripts/*)` there).
+- docs/research/claude-code-skill-probe.sh
+- docs/research/claude-code-skill-probe.output.txt
+- https://github.com/anthropics/claude-code/issues/26251

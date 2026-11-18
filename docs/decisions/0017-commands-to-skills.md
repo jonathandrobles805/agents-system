@@ -43,7 +43,7 @@ Easier: one copy of each stage's steps; no kit name can shadow or be shadowed by
 
 Harder: everyone re-runs `install.sh` once and learns four names; every reference to an old name must change in the same release (launcher prompt, script messages, the `command` field of the 11 workflow profiles, README, FIRST-PROJECT, tests); projects run `bootstrap.js --upgrade --all` so their CI messages use the new names. Version 0.3.0.
 
-Not yet known, settled by a probe before the frontmatter is relied on (`docs/research/claude-code-skill-probe.md`): whether `disallowed-tools` reaches subagents and whether it outlasts the skill; whether a skill with `disable-model-invocation: true` runs when typed and when launched with `claude -p` [anthropics/claude-code#26251 reports a refusal]; whether a symlinked skill folder is found; whether `$slug` substitutes.
+Settled by the probe (`docs/research/claude-code-skill-probe.md`, Claude Code 2.1.327, 2026-11-17): `disallowed-tools` also strips the tool from subagents and outlasts the skill, so no kit skill uses it; a skill with `disable-model-invocation: true` runs when launched as `claude -p "/name"`; a symlinked skill folder is found; `$slug` substitutes, but only in a SKILL.md, and no kit skill takes one slug, so none uses `arguments`; an `allowed-tools` pattern containing `"$PWD"` does not match, so the skills keep `Bash` (#63). Still to check by hand in the first real run: a skill with the flag starts when typed in an interactive session [anthropics/claude-code#26251 reports a refusal in the VS Code extension].
 
 ## Approval
 
