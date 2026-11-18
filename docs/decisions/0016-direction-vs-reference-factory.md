@@ -1,6 +1,6 @@
 # 0016 Direction: the kit against a working reference factory
 
-Date: 2026-11-15 · Amended: 2026-11-17 (E.5) · Status: accepted · Approved by: Jonathan Robles (via chat) on 2026-11-17 at b7ed48a · Supersedes in part: 0015 §1–§4 (see E.4)
+Date: 2026-11-15 · Amended: 2026-11-17 (E.5), 2026-11-18 (E.6–E.8) · Status: accepted · Approved by: Jonathan Robles (via chat) on 2026-11-17 at b7ed48a; E.6–E.8 by Jonathan Robles (via chat) on 2026-11-18 · Supersedes in part: 0015 §1–§4 (see E.4)
 
 ## Context
 
@@ -10,7 +10,7 @@ The kit has produced 21 lesson issues in two field runs (#29–#38 from `hello-e
 
 **Tags.** `[verified: file:line]` was read in this repository at the pin. `[read: path:line]` was read in the reference at its pin. `[issue #N]` is the issue's text on GitHub. `[observed: …]` names a run or a terminal output and where it is recorded. `[cmd]` is a command run for this document, with its result next to it. `[unverified]` has not been checked. Sentences that recommend or judge are analysis and carry no tag.
 
-**License.** The reference is GPLv3 [read: LICENSE:1-2; README.md:163-168]. This document copies no code and no prompt text from it; it describes structure and behaviour in our own words. This repository has no LICENSE file [cmd: `ls` at the repo root lists none]. Whether adopting the reference's *structure* (a transition table, one writer of job state, `VERDICT:`-style first lines, a `## Summary` at the top of each step file) raises any obligation, and what license the kit itself should carry: **needs a human / legal check.** Until then nobody copies text or code from the reference into the kit, and nobody opens its files while writing the kit's replacement code (clean-room practice) [unverified that this is required; that is part of the legal question].
+**License.** The reference is GPLv3 [read: LICENSE:1-2; README.md:163-168]. This document copies no code and no prompt text from it; it describes structure and behaviour in our own words. This repository has no LICENSE file [cmd: `ls` at the repo root lists none]. Whether adopting the reference's *structure* (a transition table, one writer of job state, `VERDICT:`-style first lines, a `## Summary` at the top of each step file) raises any obligation, and what license the kit itself should carry: **needs a human / legal check.** Until then nobody copies text or code from the reference into the kit, and nobody opens its files while writing the kit's replacement code (clean-room practice) [unverified that this is required; that is part of the legal question]. *(Answered 2026-11-18, Open questions 1: personal, private use.)*
 
 ---
 
@@ -82,7 +82,7 @@ The review was given to the owner in a session on 2026-11-15 and is not committe
 | Tool-call and hour budgets per stage | **Ours aims higher, theirs works** | Their bound is `max_rounds` [read: factory/config.json:3], counted by the script that owns the state. Ours is counted inside the lane, can be reset by the lane, and does not stop a call [verified: hook_budget_check.js:47-84; kitlib.js:763-767] (#41, #53, 0015 §1b). |
 | Human merges every PR | **Different goal** | They auto-merge what the approver approves [read: .claude/agents/approver.md:13-15]. We keep the human merge (constraint "No self-approval" [verified: docs/OPERATING-MODEL.md:252]) and should make GitHub enforce it (E.2). |
 | Intake decides worth and scope once, on an expensive model | **Theirs better, small** | Our `/start` agrees a goal with the human; their intake can reject or rescope before any spec work [read: .claude/agents/intake.md:28-48]. Optional addition. |
-| Reviewer routing by risk and surface from a config table | **Equal** | Both are tables, not prompts [read: factory/bin/route:35-43] [verified: lane.js:966-992]. |
+| Reviewer routing by risk and surface from a config table | **Equal** | Both are tables, not prompts [read: factory/bin/route:35-43] [verified: lane.js:966-992]. *(See E.6: specialist reviewers routed from the actual diff.)* |
 | Cost per job from transcripts | **Theirs visible, ours more robust** | Theirs is shown everywhere but depends on an undocumented format [read: DESIGN.md:124-125]; ours uses OpenTelemetry but only for launched lanes and is never rendered (A). |
 | `## Summary` at the top of every step file | **Theirs better** | Only our spec template has one [cmd: `grep -c '^## Summary'` over kit/templates → spec.md 1, all others 0]. |
 | Hooks as the main enforcement | **Theirs better for our threat model too** | Local hooks can be switched off by the lane (B.3). A gate that lives where the lane cannot write (GitHub) is the only one that holds; hooks are for speed. |
@@ -194,8 +194,8 @@ Removing done-check, post-edit evidence, budget and read-log takes about 511 lin
 1. **State store and transition table.** `lane.js advance <slug> <stage>` is the only writer of a gitignored store in the main checkout; legal moves in one table; each move checks its justifying files and the commit it applies to. A refusal names the reason.
 2. **Gate.** `lane.js gate <slug>` runs the project commands from the *base branch's* `kit.json`, in the worktree, and writes a verdict bound to the HEAD SHA. The orchestrator runs it; reviewers start only on PASS; it runs again after syncing with the base before the PR is marked ready.
 3. **Judge recomputes.** CI reads the spec and its scope list from the base branch, not the PR [verified that today it reads the PR's: ci_scope_diff.js:14-19]; CI checks that new or changed tests fail against the base code and pass against the head (the red run, recomputed) [unverified that this works for every stack the kit supports]; the review report stays as a record but stops being a required check.
-4. **GitHub enforces the human.** Lanes push and open PRs as a separate bot identity with write but no admin; `required_approving_review_count: 1`, `enforce_admins: true`; CODEOWNERS adds `docs/specs/`, `.claude/kit.json`, `package.json` and test config. The owner approves; the bot cannot.
-5. **Wall for unattended lanes.** The container runtime (only the worktree and scratch mounted [verified: sandbox.js:141-146]), no owner credentials inside, the push done host-side. Done when four attempts from inside a lane fail: edit a guard, read the `gh` token, push to `main`, merge without approval.
+4. **GitHub enforces the human.** Lanes push and open PRs as a separate bot identity with write but no admin; `required_approving_review_count: 1`, `enforce_admins: true`; CODEOWNERS adds `docs/specs/`, `.claude/kit.json`, `package.json` and test config. The owner approves; the bot cannot. *(Amended by E.7: the bot identity is a GitHub App, and this repo follows the same rule.)*
+5. **Wall for unattended lanes.** The container runtime (only the worktree and scratch mounted [verified: sandbox.js:141-146]), no owner credentials inside, the push done host-side. Done when four attempts from inside a lane fail: edit a guard, read the `gh` token, push to `main`, merge without approval. *(Amended by E.7: every lane that pushes, attended or not, runs in the container.)*
 6. **Rounds and wall time** in the store replace tool-call budgets; the orchestrator stops resuming an agent past the limit.
 
 ### E.2 Migration order (never weaker than today)
@@ -241,6 +241,65 @@ Issue #56 lists (c), "one orchestrator skill", as paused work that this decision
 - **Where it sits in E.2.** Before step 1. It changes packaging and names only, not the spine, the gate or the hooks, so it adds no risk to the migration, and E.2's later steps then edit one skill instead of 23 files.
 - **Not changed by this.** The agents, the hooks, `lane.js` stage logic and the workflow profiles. Three controller defects found while reviewing it are filed for E.2 (#57, #58, #59).
 
+### E.6 Specialist reviewers (amendment, 2026-11-18)
+
+**Pins and tags for E.6–E.8.** Ours: `main` at `3a34247`; no code has changed since `f1da557`, so `[verified: …]` lines in E.6–E.8 hold for both. `[docs: URL]` is vendor documentation read on 2026-11-17. The work order that carries these amendments out is `docs/plans/hardening-plan.md`; `docs/plans/hardening-plan-trace.md` maps each of its rules to the line here that states it.
+
+**Why.** E.1–E.5 decide whether a change *may* merge, not whether it is *good*. Review today is one agent, `reviewer` [verified: kit/agents/reviewer.md:3], run a second time with a security focus at high risk [verified: kit/commands/review.md:17-18]. Spec and review quality is where issues persist (C.1: #33, #34, #49).
+
+**Decision.**
+1. **Reviewers.** `reviewer` is replaced by `code-reviewer`, `security-reviewer`, `ui-reviewer`, `ux-reviewer`, and an optional `architecture-reviewer`. The names are our own, not the reference's.
+
+| Reviewer | Runs when | Judges | Planted fault it must catch |
+|---|---|---|---|
+| `code-reviewer` | Every change | Correctness, simplicity, test quality, nothing beyond the spec, plus one adversarial test | A feature the spec did not ask for |
+| `security-reviewer` | Risk is high, or the diff touches login, permissions, secrets, payments, user data or trust boundaries | Security, data loss, idempotency, irreversible migrations | A SQL injection |
+| `ui-reviewer` | The diff touches screens, styles or components | Layout and visuals in the running app at desktop and mobile sizes | Text below the rulebook's contrast minimum |
+| `ux-reviewer` | The diff touches user flows, copy or form states | Workflows, states, copy, accessibility, keyboard and mobile use | A flow with no keyboard path |
+| `architecture-reviewer` (optional) | The diff crosses component boundaries, public contracts or data ownership | Boundaries and contracts against `ARCHITECTURE.md` | A call across a forbidden boundary |
+
+2. **Routing.** A script picks the reviewers from `git diff --name-only <base SHA>...<HEAD SHA>` and the spec's risk, using a table in the workflow profile. No agent chooses.
+3. **Rulebooks.** Each reviewer has a numbered rulebook (for example `SEC-3`); the agent that writes the code in that area is given the same rulebook. A reviewer fails a change only by citing a rule ID or a spec criterion plus `file:line`, as today's fail list already carries both [verified: kit/agents/reviewer.md:44].
+4. **Verdict line (issue #56, item S3).** Every report's first line is `<reviewer>: PASS` or `<reviewer>: FAIL`; the scripts read that line and refuse a report without it. The rest of #56's output contract (S2, S4–S8) stays open.
+5. **Kept from today's reviewer.** It never sees the builder's conversation [verified: kit/agents/reviewer.md:3]; it writes one adversarial test [verified: kit/agents/reviewer.md:38]; it writes only its report and that test, and never fixes code [verified: kit/agents/reviewer.md:47].
+6. **No pretend reviews.** If UI or UX review needs a browser the lane does not have, the report says the check did not run and the lane parks for the owner.
+7. **Tied to the commit.** One report per reviewer names the commit the gate checked. A FAIL ends the round (E.8).
+
+**Where it sits in E.2.** After step 7 (Wall), before step 8 (Dashboard). Done when each reviewer catches its planted fault with a rule ID in the eval set, a report without a verdict line is refused, and a UI review with no browser parks the lane. Until then `reviewer` stays.
+
+**Open.** The rulebook format and location; the eval score each reviewer must reach.
+
+### E.7 Agent identity and the container (amendment, 2026-11-18)
+
+**Why.** Agents run with the owner's GitHub login: PRs #54, #60 and #61 were opened and merged by the owner's account [cmd: `gh api repos/…/pulls/N` → `user.login` and `merged_by.login`], and the kit's skills keep full `Bash`, which pre-approves `git push` and `gh pr merge` [issue #63]. The bash guard allows `gh pr merge 1`, `gh api -X PUT repos/o/r/pulls/1/merge`, `git push origin HEAD:main` and a `cd`-then-write to `hook_guard_bash.js` [cmd: the guard run on each command on `f1da557`]. GitHub recommends a GitHub App for a long-lived integration, and its tokens are short-lived [docs: docs.github.com/en/apps/creating-github-apps/about-creating-github-apps/deciding-when-to-build-a-github-app]. GitHub's Copilot coding agent cannot approve or merge, can push to a single branch, and has restricted internet access [docs: docs.github.com/en/copilot/concepts/security-governance-and-network-settings/risks-and-mitigations].
+
+**Decision. This amends E.1 Add 4 and Add 5.**
+1. **A GitHub App is the agents' identity**, in place of the "separate bot identity" of E.1 Add 4. Permissions: contents and pull requests, write; installed only on the repos the owner chooses.
+2. **One layer uses it:** pushing a lane's branch and opening its PR. That step runs on the owner's machine, outside the container, with a short-lived App token. Local work, tests and the gate need no GitHub identity; CI uses GitHub Actions' own token; the owner approves and merges with the owner's own account.
+3. **A ruleset lets the App push only `lane/*` branches.**
+4. **Protection, for projects and for this repo alike:** 1 required approval; "Do not allow bypassing the above settings" (`enforce_admins: true`); no force push and no deletion; the required checks from E.8; the CODEOWNERS additions of E.1 Add 4. The App opens this repo's PRs too, so the owner can approve them: GitHub never lets a pull request's author approve it [docs: docs.github.com/en/pull-requests/collaborating-with-pull-requests/reviewing-changes-in-pull-requests/approving-a-pull-request-with-required-reviews]. The optional "most recent push must be approved by someone other than its pusher" rule stays off, because the owner is the only human. A private repo needs GitHub Pro, Team or Enterprise for protected branches [docs: docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/managing-protected-branches/about-protected-branches].
+5. **Every lane that pushes runs in the container, attended or not**, extending E.1 Add 5 beyond unattended lanes: only the worktree and scratch mounted [verified: kit/scripts/sandbox.js:141-146], none of the owner's credentials inside, and network access limited. This also covers issue #55 (secret reads through Bash on macOS) and makes Open question 4 moot. Done when E.1 Add 5's four attempts fail.
+
+**Where it sits in E.2.** Items 1–4 in step 1 (Judge); item 5 in step 7 (Wall).
+
+**Limit.** Copilot's model also stops the person who asked for a PR from approving it, which needs a second human [docs: risks-and-mitigations, above]. A one-person project cannot have one; the owner approving the App's PR is the strongest solo setup.
+
+### E.8 Gate and lane additions (amendment, 2026-11-18)
+
+**Decision.**
+1. **Gate: protected files (issue #56, item S1.3).** `lane.js gate` (E.1 Add 2) fails if the lane changed the spec, `kit.json`, `.claude/`, CI config, `package.json` scripts or test config, so a lane cannot change what the base commands run.
+2. **Gate: containment (issue #56, item S1.4).** The checks run contained, with a time limit and stdin closed.
+3. **Gate: risk re-check.** High-risk paths are matched against `git diff --name-only <base SHA>...<HEAD SHA>`. Today they are matched only by substring against the spec's file bullets [verified: kit/scripts/validate_docs.js:494-500; defaults kit/scripts/kitlib.js:27], so a glob such as `src/**` hides a billing change. A low-risk lane whose diff touches a high-risk path is stopped for the owner.
+4. **Lane start fails closed.** `lane.js start` falls back to the local base when there is no `origin` or the fetch fails [verified: kit/scripts/lane.js:562-573]. It will refuse instead, record the base commit, and accept a repo with no remote only when `kit.json` sets `"local_only": true`. The `lane.test.js` fixtures, which start lanes with no `origin`, change with it.
+5. **Required checks use job names.** Bootstrap requires 12 checks [verified: kit/scripts/bootstrap.js:1578]; 7 of them (`scope-diff`, `test-count`, `dep-diff`, `claude-md-cap`, `guards-present`, `validate-docs`, `review-report`) are steps inside the `kit-checks` job [verified: kit/ci/github.yml:81-109], so they never report and protection would block every PR. The list is built from the real job names and read back from GitHub.
+6. **The approval line.** A lane starts only with `Status: approved` and an approval line [verified: kit/scripts/lane.js:375, 502]. `lane.js` writes that line from the owner's approving review on the spec PR, read through the GitHub API. No agent writes it.
+7. **Issue #63 before E.4's guardrail.** The kit's permission rule names scripts through `"$HOME"` [verified: kit/hooks/settings.project.json:8], and a probe found such a rule does not match [issue #63]. First a `kit` launcher on `PATH`, so rules can name exact commands; every shipped rule is proven to match by a probe or a planted fault; then lanes and skills are narrowed so they cannot call `advance`, `gate`, `start` or a merge (E.4).
+8. **A round** is one build, gate and review cycle; a gate FAIL or a review FAIL ends it (E.1 Add 6).
+9. **One watched real run** of a low-risk feature, end to end on the test project, right after E.2 step 3, with every problem filed before step 4.
+10. **Other #56 items picked up:** `ci_scope_diff`, `ci_test_count`, `ci_dep_diff` and `ci_pr_size` fetch the base before comparing (with E.2 step 4); KIT-SPEC gains its missing rows for planted faults 39–45 (with E.2 step 5).
+
+**Where it sits in E.2.** Items 1–3 in step 3 (Gate); item 4, 7 and 8 in step 2 (Spine); items 5 and 6 in step 1 (Judge); item 9 between steps 3 and 4; item 10 as stated.
+
 ---
 
 ## F. How the owner can watch a run today
@@ -272,18 +331,18 @@ or `/dashboard` inside Claude Code [verified: kit/commands/dashboard.md:7-10]. I
 ## Alternatives rejected
 
 - **Keep the kit's design and fix the field-run issues one by one** (E.3): rejected on cost and because the fixed mechanism remains switch-off-able by the lane.
-- **Adopt the reference as-is**: rejected. It auto-merges on an LLM's approval, has no spec-approval pause, no test-first proof, no sandbox and no tests of its own (A), and it is GPLv3 (license question open).
+- **Adopt the reference as-is**: rejected. It auto-merges on an LLM's approval, has no spec-approval pause, no test-first proof, no sandbox and no tests of its own (A), and it is GPLv3 (license question answered for private use, Open questions 1).
 - **Make local hooks tamper-proof** (signing, shadow copies, read-only files under the same user): rejected; the same user can undo any of them (B.3); KIT-SPEC already records signing as a non-fix [verified: docs/KIT-SPEC.md:539-541].
 
 ## Consequences
 
 Easier: one place moves state and refuses illegal moves; the merge depends only on things the lane cannot write; most field-run bug classes stop recurring; the dashboard can show rounds, cost and files.
 
-Harder: a migration across eight steps; two field runs to re-prove the system; a bot identity and GitHub settings the owner must create; slower in-session feedback; the red-run check becomes a CI job whose feasibility per stack is unverified. The license question must be answered before any implementation that resembles the reference.
+Harder: a migration across eight steps; two field runs to re-prove the system; a bot identity and GitHub settings the owner must create; slower in-session feedback; the red-run check becomes a CI job whose feasibility per stack is unverified. The license question must be answered before any implementation that resembles the reference *(answered 2026-11-18, Open questions 1)*.
 
 ## Open questions
 
-1. License and clean-room practice for work informed by a GPLv3 reference, and the kit's own license: **needs a human / legal check.**
+1. License and clean-room practice for work informed by a GPLv3 reference, and the kit's own license: **closed by the owner, 2026-11-18:** the kit is personal and private and is not shared, and the GPL's duties apply when copies are conveyed to others [docs: www.gnu.org/licenses/gpl-3.0.en.html]. Revisit before publishing or sharing the kit. Nothing is copied from the reference.
 2. Does Claude Code 2.1.325 refuse an Edit of an unread file by itself [unverified]?
 3. Can CI recompute "the new tests fail on base" for Node, Python, Go and Rust projects without per-stack code [unverified]?
 4. Does the macOS Keychain release the `gh` token to a process inside `srt` [unverified]? The container avoids the question.
