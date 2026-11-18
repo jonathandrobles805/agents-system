@@ -60,6 +60,24 @@ jobs:
           test -L "$CLAUDE_HOME/kit"
           test -f "$CLAUDE_HOME/kit/dashboard/index.html"
           test "$(ls "$CLAUDE_HOME/agents" | wc -l)" -eq "$(ls kit/agents/*.md | wc -l)"
+          test -f "$CLAUDE_HOME/skills/zi-run/SKILL.md" && test -f "$CLAUDE_HOME/skills/zi-plan/SKILL.md"
+          test "$(ls "$CLAUDE_HOME/skills" | wc -l)" -eq "$(ls -d kit/skills/*/ | grep -cv -e /domains/ -e /workflows/)"
+      - name: install.sh upgrades a kit 0.2.0 install and leaves the user's own commands alone
+        if: ${{ !cancelled() }}
+        run: |
+          export CLAUDE_HOME="$(mktemp -d)"
+          old="$(mktemp -d)/kit/commands"; mkdir -p "$old" "$CLAUDE_HOME/commands"
+          # 0.2.0 linked its commands into ~/.claude/commands (here: links into a kit's commands folder, dangling as after a pull)
+          for n in run plan review status bootstrap; do ln -s "$old/$n.md" "$CLAUDE_HOME/commands/$n.md"; done
+          # a --copy install left regular files that call the kit's scripts
+          printf 'Research, using the scripts in ~/.claude/kit/ \n' > "$CLAUDE_HOME/commands/research.md"
+          # the user's own commands, one with a name the kit used to have
+          echo "my own sync" > "$CLAUDE_HOME/commands/sync.md"; echo "mine" > "$CLAUDE_HOME/commands/mine.md"
+          ./install.sh
+          test "$(ls "$CLAUDE_HOME/commands" | sort | tr '\n' ' ')" = "mine.md sync.md "
+          test "$(cat "$CLAUDE_HOME/commands/sync.md")" = "my own sync"
+          test -f "$CLAUDE_HOME"/kit-backup/commands-*/research.md
+          ./install.sh
   eval-smoke:
     name: eval smoke set (agents, skills, templates, workflows, eval)
     runs-on: ubuntu-latest

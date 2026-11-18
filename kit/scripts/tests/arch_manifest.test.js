@@ -44,6 +44,7 @@ Read \`templates/spec.md\` first. Run scripts/lib.js now.
 `;
 
 const COMMAND = `---
+name: build
 description: Run the builder.
 argument-hint: <slug>
 allowed-tools: Bash, Agent
@@ -66,13 +67,13 @@ jobs:
         run: npm test
 `;
 
-/** A small kit: one agent, two commands, three scripts, one test, one template, one workflow job. All declared. */
+/** A small kit: one agent, two skills, three scripts, one test, one template, one workflow job. All declared. */
 function miniKit(t, { declare = true } = {}) {
   const repo = tmpPath(t);
   const kit = path.join(repo, 'kit');
   put(kit, 'agents/builder.md', AGENT);
-  put(kit, 'commands/build.md', COMMAND);
-  put(kit, 'commands/finish.md', '---\ndescription: Finish.\n---\nDone.\n');
+  put(kit, 'skills/build/SKILL.md', COMMAND);
+  put(kit, 'skills/finish/SKILL.md', '---\nname: finish\ndescription: Finish.\n---\nDone.\n');
   put(kit, 'scripts/hook_guard.js', "import * as L from './lib.js';\nexport const x = L;\n");
   put(kit, 'scripts/ci_check.js', "import { a } from './lib.js';\nexport const y = a;\n");
   put(kit, 'scripts/lib.js', "export const a = 1;\nexport const load = () => import('./hook_guard.js');\n");
@@ -83,7 +84,7 @@ function miniKit(t, { declare = true } = {}) {
   put(repo, 'VERSION', '9.9.9\n');
   const components = {};
   if (declare) {
-    for (const id of ['command:build', 'command:finish', 'agent:builder', 'hook:guard', 'ci:check', 'script:lib', 'ci-job:template/checks']) components[id] = { purpose: `purpose of ${id}` };
+    for (const id of ['skill:build', 'skill:finish', 'agent:builder', 'hook:guard', 'ci:check', 'script:lib', 'ci-job:template/checks']) components[id] = { purpose: `purpose of ${id}` };
   }
   put(kit, 'manifest.json', JSON.stringify({ schema: 1, components }));
   return { repo, kit };
@@ -102,6 +103,16 @@ test('agent hooks are read with event, matcher and timeout', () => {
   assert.deepEqual(hooks.map((h) => [h.event, h.matcher, h.timeout ?? null]), [['PreToolUse', 'Edit|Write', 30], ['Stop', '', null]]);
   assert.equal(M.hookTarget(hooks[1].command).file, 'ci_check.js');
   assert.equal(M.hookTarget(hooks[1].command).args, '--hook');
+});
+
+test('front matter values are unquoted and lists are read, so quoting a value never changes what the map shows', () => {
+  const fm = M.frontmatter(['---', 'description: "Use when: a \\"quoted\\" word, and a \\\\ backslash"', "single: 'it''s'", 'plain: Read, Write', 'arguments: [slug, "two"]', 'tools:', '  - Read', '  - "Bash"', 'hooks:', '  PreToolUse:', '---'].join('\n').split('\n'));
+  assert.equal(fm.fields.description, 'Use when: a "quoted" word, and a \\ backslash');
+  assert.equal(fm.fields.single, "it's");
+  assert.equal(fm.fields.plain, 'Read, Write');
+  assert.deepEqual(fm.fields.arguments, ['slug', 'two']);
+  assert.deepEqual(fm.fields.tools, ['Read', 'Bash']);
+  assert.equal(fm.fields.hooks, '', 'a nested block is not a list');
 });
 
 test('settings hooks keep document order and find their lines; invalid JSON gives null', () => {
@@ -130,9 +141,9 @@ test('every kind of link is read from the file that makes it, with its line', (t
   assert.equal(edge(m, 'agent:builder', 'ci:check', 'hook').args, '--hook');
   assert.ok(edge(m, 'agent:builder', 'template:spec', 'uses'));
   assert.ok(edge(m, 'agent:builder', 'script:lib', 'runs'));
-  assert.ok(edge(m, 'command:build', 'agent:builder', 'spawns'));
-  assert.ok(edge(m, 'command:build', 'command:finish', 'follows'));
-  assert.ok(edge(m, 'command:build', 'script:lib', 'runs'));
+  assert.ok(edge(m, 'skill:build', 'agent:builder', 'spawns'));
+  assert.ok(edge(m, 'skill:build', 'skill:finish', 'follows'));
+  assert.ok(edge(m, 'skill:build', 'script:lib', 'runs'));
   const job = edge(m, 'ci-job:template/checks', 'ci:check', 'runs');
   assert.equal(job.step, 'check it');
   assert.ok(edge(m, 'ci-job:template/checks', 'test:lib', 'runs'), 'npm test reaches the test files through package.json');
@@ -146,7 +157,7 @@ test('every kind of link is read from the file that makes it, with its line', (t
 test('a change reaches everything that needs it, through imports, tests and CI, and cycles end', (t) => {
   const { kit } = miniKit(t);
   const d = M.buildManifest(kit).nodes.find((n) => n.id === 'script:lib').derived;
-  for (const id of ['hook:guard', 'ci:check', 'test:lib', 'command:build', 'agent:builder', 'ci-job:template/checks']) assert.ok(d.dependents.includes(id), `${id} depends on lib`);
+  for (const id of ['hook:guard', 'ci:check', 'test:lib', 'skill:build', 'agent:builder', 'ci-job:template/checks']) assert.ok(d.dependents.includes(id), `${id} depends on lib`);
   assert.deepEqual(d.tests, ['test:lib']);
   assert.deepEqual(d.jobs, ['ci-job:template/checks']);
   assert.equal(d.cases, 2);
@@ -196,7 +207,7 @@ test('without a declared file every component is undeclared', (t) => {
 
 test('references to things that do not exist are errors with their line', (t) => {
   const { kit } = miniKit(t);
-  put(kit, 'commands/build.md', `${COMMAND}Then run scripts/nope.js and use templates/missing.md.\n`);
+  put(kit, 'skills/build/SKILL.md', `${COMMAND}Then run scripts/nope.js and use templates/missing.md.\n`);
   put(kit, 'scripts/lib.js', "import './gone.js';\nexport const a = 1;\n");
   const m = M.buildManifest(kit);
   const dangling = problems(m, 'dangling-reference').map((p) => p.message);
@@ -229,13 +240,33 @@ test('an agent whose name differs from its file is an error', (t) => {
   assert.equal(problems(M.buildManifest(kit), 'agent-name-mismatch').length, 1);
 });
 
-test('the stages of /run must equal the stages lane.js can answer', (t) => {
+test('the stages of /zi-run must equal the stages lane.js can answer', (t) => {
   const { kit } = miniKit(t);
-  put(kit, 'commands/run.md', '---\ndescription: run\n---\n| stage | what |\n|---|---|\n| `research` | spawn `builder` |\n| `plan` | follow `/finish` |\n');
+  put(kit, 'skills/zi-run/SKILL.md', '---\nname: zi-run\ndescription: run\n---\n| stage | what |\n|---|---|\n| `research` | spawn `builder` |\n| `plan` | follow `/finish` |\n');
   put(kit, 'scripts/lane.js', "export async function nextStep() {\n  return { stage: 'research' };\n  return { stage: 'build', reason: 'x' };\n}\n");
   const m = M.buildManifest(kit);
   assert.deepEqual(m.pipeline.map((s) => s.id), ['research', 'plan']);
-  assert.match(problems(m, 'stage-mismatch')[0].message, /only in lane\.js \[build\].*only in \/run \[plan\]/);
+  assert.match(problems(m, 'stage-mismatch')[0].message, /only in lane\.js \[build\].*only in \/zi-run \[plan\]/);
+});
+
+test('a skill follows another by its name, and lends the agents it spawns to the /zi-run stage row', (t) => {
+  const { kit } = miniKit(t);
+  put(kit, 'skills/zi-run/SKILL.md', '---\nname: zi-run\ndescription: run\n---\n| stage | what |\n|---|---|\n| `plan` | follow `/zi-plan <slug>` |\n');
+  put(kit, 'skills/zi-plan/SKILL.md', '---\nname: zi-plan\ndescription: plan\n---\nSpawn the `builder` agent.\n');
+  put(kit, 'skills/zi-fix/SKILL.md', '---\nname: zi-fix\ndescription: fix\n---\nFollow `/zi-plan` exactly, then `/zi-run <slug>`.\n');
+  put(kit, 'skills/domains/api/SKILL.md', '---\nname: api\n---\nreserved: not a kit skill\n');
+  const m = M.buildManifest(kit);
+  assert.ok(!m.nodes.some((n) => n.id.includes('api')), 'domains/ and workflows/ are not kit skills');
+  assert.ok(edge(m, 'skill:zi-run', 'skill:zi-plan', 'follows'));
+  assert.ok(edge(m, 'skill:zi-fix', 'skill:zi-plan', 'follows'));
+  assert.ok(edge(m, 'skill:zi-fix', 'skill:zi-run', 'follows'));
+  assert.deepEqual(m.pipeline.find((s) => s.id === 'plan').agents, ['builder']);
+});
+
+test('a SKILL.md whose name is not its folder is an error', (t) => {
+  const { kit } = miniKit(t);
+  put(kit, 'skills/finish/SKILL.md', '---\nname: done\ndescription: Finish.\n---\nDone.\n');
+  assert.equal(problems(M.buildManifest(kit), 'skill-name-mismatch').length, 1);
 });
 
 test('warnings: nothing uses a script, no test names a script', (t) => {
@@ -254,7 +285,7 @@ test('the snapshot has no line numbers or counts, so moving text does not make i
   const snap = M.snapshotOf(M.buildManifest(kit));
   const text = JSON.stringify(snap);
   assert.ok(!text.includes('"line"') && !text.includes('"count"') && !text.includes('"stats"') && !text.includes('"derived"'));
-  put(kit, 'commands/build.md', COMMAND.replace('---\n\nSpawn', '---\n\n\n\nSpawn'));
+  put(kit, 'skills/build/SKILL.md', COMMAND.replace('---\n\nSpawn', '---\n\n\n\nSpawn'));
   assert.equal(M.snapshotText(M.buildManifest(kit)), M.snapshotText(M.buildManifest(kit)));
   assert.deepEqual(M.snapshotOf(M.buildManifest(kit)), snap);
 });
@@ -328,7 +359,7 @@ test('the real kit: every agent has hooks, and the committed snapshot is current
   assert.equal(r.returncode, 0, `kit/architecture.json is stale: run npm run architecture:update\n${r.stderr}`);
 });
 
-test('the real kit: the /run stages are the stages next-step can answer, in the order the pipeline runs', () => {
+test('the real kit: the /zi-run stages are the stages next-step can answer, in the order the pipeline runs', () => {
   const m = M.buildManifest(REAL_KIT);
   assert.deepEqual(m.pipeline.map((s) => s.id).slice(0, 9), ['start', 'research', 'plan', 'approve', 'lane', 'test', 'build', 'review', 'wait-merge']);
   assert.equal(m.pipeline.find((s) => s.id === 'approve').pause, 1);

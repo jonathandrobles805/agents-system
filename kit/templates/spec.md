@@ -78,7 +78,7 @@
 
 ## Open questions
 
-<!-- Must be empty before approval. /implement refuses otherwise. -->
+<!-- Must be empty before approval. /zi-implement refuses otherwise. -->
 
 - {{none}}
 

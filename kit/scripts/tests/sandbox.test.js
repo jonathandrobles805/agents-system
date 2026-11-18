@@ -82,9 +82,9 @@ test('sandboxConfig: floor domains plus the spec Network section, deny paths fro
 
 test('launchCommand per runtime', () => {
   const base = { allowWrite: ['/w', '/tmp/s'], allowedDomains: ['a.example'], engine: 'docker' };
-  const srt = launchCommand({ ...base, runtime: 'srt' }, { wt: '/w', settingsPath: '/w/.claude/session/sandbox.json', prompt: '/run x' });
+  const srt = launchCommand({ ...base, runtime: 'srt' }, { wt: '/w', settingsPath: '/w/.claude/session/sandbox.json', prompt: '/zi-run x' });
   assert.deepEqual(srt.slice(0, 4), ['srt', '--settings', '/w/.claude/session/sandbox.json', '--']);
-  assert.ok(srt.includes('claude') && srt.includes('/run x'));
+  assert.ok(srt.includes('claude') && srt.includes('/zi-run x'));
   const c = launchCommand({ ...base, runtime: 'container' }, { wt: '/w', settingsPath: '/x', prompt: 'p' });
   assert.equal(c[0], 'docker');
   assert.ok(c.includes('--network') && c.includes('kit-lane') && c.includes('/w:/w') && c.includes('KIT_ALLOWED_DOMAIN=a.example'));

@@ -1,4 +1,4 @@
-// Structural checks on the command files, plus a mechanical end-to-end run of the pipeline scripts on the Node fixture:
+// Structural checks on the skill files (decision 0017), plus a mechanical end-to-end run of the pipeline scripts on the Node fixture:
 // bootstrap -> research index -> spec -> approve -> lane start -> hooks during build -> done-check -> review report -> CI checks -> finish.
 // Agents are not run here (they need Claude Code); every script they call is.
 import test from 'node:test';
@@ -12,17 +12,22 @@ import { SCRIPTS, runScript, tmpPath } from './helpers.js';
 import { spec as makeSpec, review as makeReview } from './testdata.js';
 
 const KIT = path.dirname(SCRIPTS);
-const COMMANDS = fs.readdirSync(path.join(KIT, 'commands')).filter((f) => f.endsWith('.md')).sort().map((f) => path.join(KIT, 'commands', f));
-const EXPECTED = new Set(['bootstrap', 'dashboard', 'implement', 'plan', 'research', 'retro', 'review', 'run', 'start', 'status', 'sync',
-  // step 7: one command per kind of work plus the router (KIT-SPEC 10.12)
-  'work', 'new-feature', 'fix', 'ui', 'refactor', 'docs', 'investigate', 'security', 'architecture', 'migrate', 'incident', 'new-skill']);
+const SKILLS = path.join(KIT, 'skills');
+const NAMES = ['bootstrap', 'dashboard', 'implement', 'plan', 'research', 'retro', 'review', 'run', 'start', 'status', 'sync',
+  // step 7: one skill per kind of work plus the router (KIT-SPEC 10.12)
+  'work', 'new-feature', 'fix', 'ui', 'refactor', 'docs', 'investigate', 'security', 'architecture', 'migrate', 'incident', 'new-skill'];
+// decision 0017: each old command is the skill zi-<name>, one SKILL.md in its own folder
+const COMMANDS = fs.readdirSync(SKILLS, { recursive: true }).filter((f) => f.endsWith('.md')).sort().map((f) => path.join(SKILLS, f));
+const EXPECTED = new Set(NAMES.map((n) => `zi-${n}/SKILL.md`));
 const read = (p) => fs.readFileSync(p, 'utf8');
+const rel = (p) => path.relative(SKILLS, p).split(path.sep).join('/');
 
-test('all commands exist with frontmatter', () => {
-  assert.deepEqual(new Set(COMMANDS.map((p) => path.basename(p, '.md'))), EXPECTED);
+test('all 23 skills exist, each a SKILL.md named after its folder, with a description and its tools', () => {
+  assert.deepEqual(new Set(COMMANDS.map(rel)), EXPECTED);
   for (const p of COMMANDS) {
     const m = /^---\n([\s\S]*?)\n---\n/.exec(read(p));
     assert.ok(m, p);
+    assert.match(m[1], new RegExp(`^name: ${path.basename(path.dirname(p))}$`, 'm'), p);
     assert.match(m[1], /^description:\s*\S/m, p);
     assert.match(m[1], /^allowed-tools:\s*\S/m, p);
   }
@@ -41,12 +46,80 @@ test('commands reference real scripts and subcommands', () => {
   }
 });
 
+test('every description and argument-hint is one double-quoted YAML string', () => {
+  // unquoted, a `: ` or a leading `[` makes the line invalid YAML; Claude Code then loads the skill with no metadata
+  const DQ = /^"(?:[^"\\]|\\.)*"$/;
+  for (const p of COMMANDS) {
+    const head = /^---\n([\s\S]*?)\n---\n/.exec(read(p))[1];
+    for (const m of head.matchAll(/^(description|argument-hint):[ \t]*(.*)$/gm)) assert.match(m[2], DQ, `${rel(p)} ${m[1]}`);
+  }
+});
+
+test('every description says what the skill does and when to use it, in the third person', () => {
+  // Anthropic's skill-authoring guide: third person (the description is injected into the system prompt), what + when
+  for (const p of COMMANDS) {
+    const d = /^description: "(.*)"$/m.exec(read(p))?.[1] ?? '';
+    assert.match(d, /\bUse (when|to|before|after|once)\b/, `${rel(p)}: says when to use it`);
+    assert.doesNotMatch(d, /\b(you|your|I|we)\b/i, `${rel(p)}: third person`);
+  }
+});
+
+test('only the human starts the skills no other kit skill hands work to', () => {
+  // decision 0017 item 3: these four have side effects and are never a hand-off target; probe F4: the flag still lets
+  // `claude -p "/name"` start them. Every other skill stays invocable, because one skill hands work to the next.
+  const MANUAL = ['zi-bootstrap', 'zi-dashboard', 'zi-implement', 'zi-sync'];
+  for (const p of COMMANDS) {
+    const name = path.basename(path.dirname(p));
+    const flagged = /^disable-model-invocation: true$/m.test(/^---\n([\s\S]*?)\n---\n/.exec(read(p))[1]);
+    assert.equal(flagged, MANUAL.includes(name), `${name} disable-model-invocation`);
+  }
+  // a hand-off ("follow", "invoke", "then" a skill) never targets a skill only the human may start
+  for (const p of COMMANDS) {
+    for (const m of read(p).matchAll(/\b(?:follow|invoke|then)\s+`\/(zi-[a-z-]+)/gi)) assert.ok(!MANUAL.includes(m[1]), `${rel(p)} hands off to ${m[1]}`);
+  }
+});
+
+test('every work type writes the same four goal fields the goal template has', () => {
+  // field test: /work's goal block lacked Domain:, which the other ten had
+  const types = ['zi-work', 'zi-new-feature', 'zi-fix', 'zi-ui', 'zi-refactor', 'zi-docs', 'zi-investigate', 'zi-security', 'zi-architecture', 'zi-migrate', 'zi-incident', 'zi-new-skill'];
+  for (const n of types) {
+    const text = read(path.join(SKILLS, n, 'SKILL.md'));
+    for (const f of ['- Work type:', '- Risk:', '- Size:', '- Domain:']) assert.ok(text.includes(f), `${n} ${f}`);
+  }
+});
+
+test('the installed prompts cite nothing that is not installed with them', () => {
+  // KIT-SPEC, OPERATING-MODEL and the decisions live in the kit repo's docs/, which install.sh does not place
+  for (const p of COMMANDS) assert.doesNotMatch(read(p), /KIT-SPEC|OPERATING-MODEL|[Ss]ince step \d/, rel(p));
+});
+
+test('a skill that takes one feature slug names it, so Claude Code fills it in', () => {
+  // probe F6: arguments: [slug] substitutes $slug in a SKILL.md
+  for (const n of ['zi-implement', 'zi-plan', 'zi-review']) {
+    const text = read(path.join(SKILLS, n, 'SKILL.md'));
+    assert.match(/^---\n([\s\S]*?)\n---\n/.exec(text)[1], /^arguments: \[slug\]$/m, n);
+    assert.ok(text.includes('$slug'), `${n} uses $slug`);
+    assert.ok(!text.includes('<slug>') && !text.includes('$ARGUMENTS'), `${n}: one name for the feature, not <slug> or $ARGUMENTS`);
+  }
+});
+
+test('no kit skill strips tools from the agents it spawns', () => {
+  // probe F2, F3 (docs/research/claude-code-skill-probe.md): disallowed-tools also removes the tool from subagents and
+  // stays in force after the skill
+  for (const p of COMMANDS) assert.doesNotMatch(/^---\n([\s\S]*?)\n---\n/.exec(read(p))[1], /^disallowed-tools:/m, rel(p));
+});
+
+test('no allowed-tools pattern relies on a $variable or quotes, which Claude Code does not match', () => {
+  // probe F9: a pattern containing "$PWD" did not approve the same literal command, so such a pattern only looks safe
+  for (const p of COMMANDS) assert.doesNotMatch(/^allowed-tools:(.*)$/m.exec(read(p))?.[1] ?? '', /\$|"/, rel(p));
+});
+
 test('commands never merge or approve for the human', () => {
   for (const p of COMMANDS) {
     assert.ok(!read(p).toLowerCase().includes('gh pr merge'), path.basename(p));
   }
-  assert.ok(read(path.join(KIT, 'commands', 'plan.md')).toLowerCase().includes('nothing is built before that'));
-  assert.ok(read(path.join(KIT, 'commands', 'review.md')).toLowerCase().includes('this command never merges'));
+  assert.ok(read(path.join(SKILLS, 'zi-plan', 'SKILL.md')).toLowerCase().includes('nothing is built before that'));
+  assert.ok(read(path.join(SKILLS, 'zi-review', 'SKILL.md')).toLowerCase().includes('this command never merges'));
 });
 
 const hook = (name, payload) => runScript(name, [], { stdin: jsonDumps(payload) });

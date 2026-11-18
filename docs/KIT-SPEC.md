@@ -1,6 +1,6 @@
 # Agent kit specification
 
-Version: 0.2.0
+Version: 0.3.0 (amended by decisions 0016 E.5 and 0017)
 Status: approved
 Approved by: Jonathan Robles (via chat, defaults accepted: WIP 2, mutation 70% warning-first, default high-risk paths, second model on high-risk)
 Approved on: 2026-11-08

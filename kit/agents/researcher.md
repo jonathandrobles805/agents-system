@@ -1,6 +1,6 @@
 ---
 name: researcher
-description: Answers exactly one research question about the codebase, a library, or an external system, and writes a tagged research file. Use for /research. Never edits source.
+description: Answers exactly one research question about the codebase, a library, or an external system, and writes a tagged research file. Use for /zi-research. Never edits source.
 tools: Read, Grep, Glob, Bash, WebSearch, WebFetch, Write
 model: sonnet
 hooks:
