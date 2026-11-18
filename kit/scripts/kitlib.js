@@ -819,23 +819,24 @@ export function reviewOnlyFile(work) {
 }
 
 /**
- * A review names the commit it reviewed. It is current if that is HEAD, or HEAD's parent and the
- * commit at HEAD only touched the review report, lane-owned docs (progress, log, events written by hooks
- * during review) and test files.
+ * A review names the commit it reviewed. It is current if that is the branch head, or the head's parent and
+ * the head commit only touched the review report, lane-owned docs (progress, log, events written by hooks
+ * during review) and test files. `head` defaults to HEAD; CI on a pull request passes the PR's head commit,
+ * because there HEAD is GitHub's synthetic merge commit, which no review can name (issue #69).
  */
-export function reviewHeadOk(root, reviewedSha) {
-  let head;
+export function reviewHeadOk(root, reviewedSha, head = 'HEAD') {
+  let headSha;
   try {
-    head = git(['rev-parse', 'HEAD'], root).trim();
+    headSha = git(['rev-parse', '--verify', `${head}^{commit}`], root).trim();
   } catch {
     return false;
   }
-  if (head.startsWith(reviewedSha)) return true;
+  if (headSha.startsWith(reviewedSha)) return true;
   let parent;
   let changed;
   try {
-    parent = git(['rev-parse', 'HEAD~1'], root).trim();
-    changed = git(['diff', '--name-only', 'HEAD~1', 'HEAD'], root).split(/\s+/).filter(Boolean);
+    parent = git(['rev-parse', `${headSha}~1`], root).trim();
+    changed = git(['diff', '--name-only', `${headSha}~1`, headSha], root).split(/\s+/).filter(Boolean);
   } catch {
     return false;
   }

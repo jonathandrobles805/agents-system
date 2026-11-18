@@ -104,6 +104,9 @@ jobs:
       - name: validate-docs
         run: node "$KIT_DIR/scripts/ci_changed_docs.js" --repo . --base origin/{{default_branch}}
       - name: review-report
+        # On pull_request, HEAD is GitHub's synthetic merge commit; compare the review with the PR's own head (#69).
+        env:
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: node "$KIT_DIR/scripts/ci_review_report.js" --repo .
       - name: pr-size (warning)
         run: node "$KIT_DIR/scripts/ci_pr_size.js" --repo . --base origin/{{default_branch}} || true

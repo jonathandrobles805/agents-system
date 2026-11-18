@@ -15,6 +15,10 @@ All notable changes to the kit. Each entry names the decision or lesson that cau
 - **Rollback:** revert the release commit, pull, delete the links `~/.claude/skills/zi-*`, and re-run `./install.sh`; the 23 old commands come back from `kit/commands/` (tested). Projects: `bootstrap.js --upgrade --all` again.
 
 
+### Fixed (#69, kit-test canary run)
+- The `review-report` CI check failed on every pull request, whatever the review said: on a `pull_request` run the checkout is GitHub's synthetic merge commit, which no review can name. The CI step now passes the PR's head commit (`PR_HEAD_SHA`), and the check compares the review with it (or with `--head`); a PR head missing from the checkout fails with a clear message instead of falling back. Pushes and merge-queue runs still compare with HEAD. Test with a synthetic-merge fixture.
+- **Projects:** run `/zi-bootstrap --upgrade` (or `bootstrap.js --upgrade --all`) so their CI workflow passes the PR head.
+
 ### Fixed (field test #47, first run with real agents)
 - A fix lane the debugger re-routed to refactor (`cause: design fault …`) was sent straight to `build` with 0/0 criteria: the refactor profile used the feature derivation, which reads any open lane as building. Now no profile reaches `test` or `build` while its lane has no approved, scoped spec: such a lane goes plan → approve → scope first (`inLanePlanning`), and `scope` is a script stage in every profile. End-to-end test of the re-route.
 

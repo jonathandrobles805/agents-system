@@ -154,6 +154,47 @@ test('review report check', (t) => {
   assert.equal(r.returncode, 1);
 });
 
+test('review report on a pull_request run uses the PR head, not the synthetic merge commit (#69)', (t) => {
+  const root = laneRepo(t);
+  write(root, 'tests/routes.test.ts', "import { it, expect } from 'vitest';\nit('exposes refund', () => { expect(1).toBe(1); });\n");
+  const reviewed = F.commitAll(root, 'D1');
+  const rep = path.join(root, 'docs', 'specs', 'refund-route.review.md');
+  fs.writeFileSync(rep, makeReview({ head: reviewed.slice(0, 10), verdict: 'PASS' }));
+  const laneTip = F.commitAll(root, 'review');
+  // main moves on, then CI checks out what GitHub builds for a PR: a detached merge of the PR head into main.
+  F.git(['checkout', '-q', 'main'], root);
+  write(root, 'NOTES.md', 'main moved on\n');
+  F.commitAll(root, 'main moves');
+  const merge = () => {
+    F.git(['checkout', '-q', '--detach', 'main'], root);
+    F.git(['merge', '-q', '--no-ff', '-m', 'synthetic merge', laneTip], root);
+  };
+  merge();
+  const env = (extra) => ({ ...process.env, GITHUB_HEAD_REF: 'wt/refund-route', PR_HEAD_SHA: '', ...extra });
+  const run = (extra) => runScript('ci_review_report.js', ['--repo', root], { env: env(extra) });
+  // Without the PR head the check compares against the merge commit and can never pass: the bug.
+  let r = run({});
+  assert.ok(r.returncode === 1 && r.stderr.includes('code changed after review'), r.stderr);
+  r = run({ PR_HEAD_SHA: laneTip });
+  assert.equal(r.returncode, 0, r.stderr);
+  r = runScript('ci_review_report.js', ['--repo', root, '--head', laneTip], { env: env({}) });
+  assert.equal(r.returncode, 0, r.stderr);
+  // A PR head the checkout does not have fails loudly instead of falling back to HEAD.
+  r = run({ PR_HEAD_SHA: 'f'.repeat(40) });
+  assert.ok(r.returncode === 1 && r.stderr.includes('not in this checkout'), r.stderr);
+  // Code changed on the PR after the review still fails, now naming the PR head.
+  F.git(['checkout', '-q', 'wt/refund-route'], root);
+  write(root, 'src/api/routes.ts', '// changed after review\n' + read(root, 'src', 'api', 'routes.ts'));
+  const sneaky = F.commitAll(root, 'sneaky change');
+  F.git(['checkout', '-q', '--detach', 'main'], root);
+  F.git(['merge', '-q', '--no-ff', '-m', 'synthetic merge 2', sneaky], root);
+  r = run({ PR_HEAD_SHA: sneaky });
+  assert.ok(r.returncode === 1 && r.stderr.includes('the PR head is'), r.stderr);
+  // The generated workflow passes the PR head to the step.
+  const wf = read(root, '.github', 'workflows', 'kit.yml');
+  assert.match(wf, /- name: review-report\n(?:\s+#.*\n)?\s+env:\n\s+PR_HEAD_SHA: \$\{\{ github\.event\.pull_request\.head\.sha \}\}\n\s+run: node "\$KIT_DIR\/scripts\/ci_review_report\.js"/);
+});
+
 test('pr size warning', (t) => {
   const root = laneRepo(t);
   for (let i = 0; i < 30; i++) write(root, `src/f${i}.ts`, 'export const x = 1;\n');
