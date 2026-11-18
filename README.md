@@ -8,6 +8,7 @@ Start here:
 - `docs/KIT-SPEC.md` — the contract for what gets built
 - `docs/implementation-plan.md` — the original phase plan (historical; the roadmap now lives in OPERATING-MODEL §16)
 - `docs/failure-modes-and-enforcement.md` — what each gate stops and how
+- `docs/CI-CHECKS.md` — what each CI check checks, why some check nothing at first, and how to turn them on
 - `docs/research/claude-code-features.md` — verified Claude Code features with citations
 - `docs/decisions/` — why things are the way they are
 
