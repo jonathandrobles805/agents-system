@@ -1,6 +1,6 @@
 # 0016 Direction: the kit against a working reference factory
 
-Date: 2026-11-15 · Amended: 2026-11-17 (E.5), 2026-11-18 (E.6–E.9, proposed in PR #65) · Status: accepted; E.6–E.9 proposed, in force when the owner merges PR #65 · Approved by: Jonathan Robles (via chat) on 2026-11-17 at b7ed48a · Supersedes in part: 0015 §1–§4 (see E.4)
+Date: 2026-11-15 · Amended: 2026-11-17 (E.5), 2026-11-18 (E.6–E.9, proposed in PR #65) · Status: accepted; E.6–E.9 take effect only when the owner merges PR #65 · Approved by: Jonathan Robles (via chat) on 2026-11-17 at b7ed48a · Supersedes in part: 0015 §1–§4 (see E.4)
 
 ## Context
 
@@ -241,9 +241,9 @@ Issue #56 lists (c), "one orchestrator skill", as paused work that this decision
 - **Where it sits in E.2.** Before step 1. It changes packaging and names only, not the spine, the gate or the hooks, so it adds no risk to the migration, and E.2's later steps then edit one skill instead of 23 files.
 - **Not changed by this.** The agents, the hooks, `lane.js` stage logic and the workflow profiles. Three controller defects found while reviewing it are filed for E.2 (#57, #58, #59).
 
-### E.6 Specialist reviewers (amendment, 2026-11-18)
+### E.6 Specialist reviewers (amendment, 2026-11-18, PR #65)
 
-**Pins and tags for E.6–E.9.** Ours: `main` at `3a34247`; no code has changed since `f1da557`, so `[verified: …]` lines in E.6–E.9 hold for both. `[docs: URL]` is vendor documentation read on 2026-11-17. The work order that carries these amendments out is `docs/plans/hardening-plan.md`; `docs/plans/hardening-plan-trace.md` maps each of its rules to the line here that states it.
+**Pins and tags for E.6–E.9.** Ours: `main` at `3a34247`; no code has changed since `f1da557`, so `[verified: …]` lines in E.6–E.9 hold for both. `[docs: URL]` is vendor documentation read on 2026-11-17. The work order that carries these amendments out is `docs/plans/hardening-plan.md`; `docs/plans/hardening-plan-trace.md` maps each of its rules to the line here that states it. The owner settled the decisions behind them in chat on 2026-11-17: the agents' identity and the container (E.7), the same rule for this repo (E.7 item 4), and the verdict line (E.6 item 5); automatic spec approval and the license are recorded under Alternatives rejected and Open questions.
 
 **Why.** E.1–E.5 decide whether a change *may* merge, not whether it is *good*. Review today is one agent, `reviewer` [verified: kit/agents/reviewer.md:3], run a second time with a security focus at high risk [verified: kit/commands/review.md:17-18]. Spec and review quality is where issues persist (C.1: #33, #34, #49).
 
@@ -270,7 +270,7 @@ Issue #56 lists (c), "one orchestrator skill", as paused work that this decision
 
 **Open.** The rulebook format and location; the eval score each reviewer must reach.
 
-### E.7 Agent identity and the container (amendment, 2026-11-18)
+### E.7 Agent identity and the container (amendment, 2026-11-18, PR #65)
 
 **Why.** Agents run with the owner's GitHub login: PRs #54, #60 and #61 were opened and merged by the owner's account [cmd: `gh api repos/…/pulls/N` → `user.login` and `merged_by.login`], and the kit's skills keep full `Bash`, which pre-approves `git push` and `gh pr merge` [issue #63]. The bash guard allows `gh pr merge 1`, `gh api -X PUT repos/o/r/pulls/1/merge`, `git push origin HEAD:main` and a `cd`-then-write to `hook_guard_bash.js` [cmd: the guard run on each command on `f1da557`]. GitHub recommends a GitHub App for a long-lived integration, and its tokens are short-lived [docs: docs.github.com/en/apps/creating-github-apps/about-creating-github-apps/deciding-when-to-build-a-github-app]. GitHub's Copilot coding agent cannot approve or merge, can push to a single branch, and has restricted internet access [docs: docs.github.com/en/copilot/concepts/security-governance-and-network-settings/risks-and-mitigations].
 
@@ -287,7 +287,7 @@ Issue #56 lists (c), "one orchestrator skill", as paused work that this decision
 
 **Limit.** Copilot's model also stops the person who asked for a PR from approving it, which needs a second human [docs: risks-and-mitigations, above]. A one-person project cannot have one; the owner approving the App's PR is the strongest solo setup.
 
-### E.8 Gate and lane additions (amendment, 2026-11-18)
+### E.8 Gate and lane additions (amendment, 2026-11-18, PR #65)
 
 **Decision.**
 1. **Gate: protected files (issue #56, item S1.3).** `lane.js gate` (E.1 Add 2) fails if the lane changed the spec, `kit.json`, `.claude/`, CI config, `package.json` scripts or test config, so a lane cannot change what the base commands run.
@@ -300,12 +300,12 @@ Issue #56 lists (c), "one orchestrator skill", as paused work that this decision
 8. **A round** is one build, gate and review cycle; a gate FAIL or a review FAIL ends it, and a round past the limit parks the lane for the owner (E.1 Add 6).
 9. **One watched real run** of a low-risk feature, end to end on the test project, right after E.2 step 3, with every problem filed before step 4.
 10. **Controller defects filed for E.2 (E.5).** #57: a stage a profile lacks is refused, not mapped to done. #58: every listed stage is produced or removed, and a `requires` entry blocks. #59: `skill-development` is refused until its agent exists.
-11. **Before step 1: finish 0017's work (PR #62).** One real feature on a canary project; check that a flagged skill also starts when typed (probe item U3). Done when the canary run finishes and the launcher starts `claude -p "/zi-run <slug>"` headless.
+11. **Before step 1: finish 0017's work (PR #62), and the owner merges PR #62 and PR #65.** One real feature on a canary project; check that a flagged skill also starts when typed (probe item U3). Done when the canary run finishes and the launcher starts `claude -p "/zi-run <slug>"` headless.
 12. **Other #56 items picked up:** `ci_scope_diff`, `ci_test_count`, `ci_dep_diff` and `ci_pr_size` fetch the base before comparing (with E.2 step 4); KIT-SPEC gains its missing rows for planted faults 39–45 (with E.2 step 5).
 
 **Where it sits in E.2.** Item 11 before step 1; items 5 and 6 in step 1 (Judge); items 4, 7, 8 and 10 in step 2 (Spine); items 1–3 in step 3 (Gate); item 9 between steps 3 and 4; item 12 as stated.
 
-### E.9 Proof (amendment, 2026-11-18)
+### E.9 Proof (amendment, 2026-11-18, PR #65)
 
 **Decision.**
 1. **A control counts only when a planted fault shows it catching a deliberate bypass.** Each fault is written with its step.

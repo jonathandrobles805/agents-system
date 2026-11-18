@@ -215,7 +215,7 @@ Steps 1–9 of the skills work are done on branch `commands-to-skills`: 23 `zi-`
 ### Step 1. Judge: GitHub enforces you (0016 step 1, plus D1)
 
 - [ ] Put a test project on GitHub. Create the GitHub App (contents and pull requests: write), and install it on the test project and this repo.
-- [ ] Add a ruleset so only the App may push `wt/*` branches.
+- [ ] Add a ruleset so the App may push only `wt/*` branches.
 - [ ] Set protection as in D1. Build the required checks from the real job names (`kit-checks`, not its 7 steps; [bootstrap.js L1578](https://github.com/jonathandrobles805/agents-system/blob/3a34247f08515ed8f3b328f01bb9531970cbb222/kit/scripts/bootstrap.js#L1578)). Read the settings back from GitHub.
 - [ ] The push-and-open-PR step runs on your machine with an App token; `lane.js` writes the approval line from your GitHub review.
 - **Done when, tested on the test project:**
@@ -297,7 +297,7 @@ Steps 1–9 of the skills work are done on branch `commands-to-skills`: 23 `zi-`
 
 - [ ] Confirm 0016 E.6 is merged (Step 0).
 - [ ] Write the rulebooks, the reviewers, the routing script and the `<reviewer>: PASS|FAIL` first line, with one report per reviewer tied to the commit.
-- **Done when:** each reviewer catches its planted fault with a rule ID, and the scripts refuse a report without a verdict line. Until then, today's reviewer stays.
+- **Done when:** each reviewer catches its planted fault with a rule ID, the scripts refuse a report without a verdict line, and a UI review with no browser parks the lane. Until then, today's reviewer stays.
 
 ### Step 10. Dashboard (0016 step 8, D.2–D.3)
 
