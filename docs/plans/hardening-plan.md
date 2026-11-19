@@ -183,7 +183,7 @@ Issues #29, #30 and #41 are still open; check what's left in each before closing
 On top of 0016's `lane.js gate` ([E.1 Add 2](https://github.com/jonathandrobles805/agents-system/blob/3a34247f08515ed8f3b328f01bb9531970cbb222/docs/decisions/0016-direction-vs-reference-factory.md#L195)):
 
 - **Protected files (#56 S1.3, plus `package.json` scripts and test config from 0016 E.1 Add 4):** the gate fails if the lane changed the spec after its approved commit, `kit.json`, `.claude/`, CI config, `package.json` scripts or test config.
-- **Containment (#56 S1.4):** the checks run contained, with a time limit and stdin closed.
+- **Containment (#56 S1.4):** the checks run contained and non-interactive, with a time limit and stdin closed; only the exit code and output come back.
 - **Risk re-check:** high-risk paths are matched against the actual diff. Today they are matched only by substring against the spec's file bullets ([validate_docs.js L494–500](https://github.com/jonathandrobles805/agents-system/blob/3a34247f08515ed8f3b328f01bb9531970cbb222/kit/scripts/validate_docs.js#L494-L500); defaults in [kitlib.js L27](https://github.com/jonathandrobles805/agents-system/blob/3a34247f08515ed8f3b328f01bb9531970cbb222/kit/scripts/kitlib.js#L27)), so a glob like `src/**` hides a billing change. A low-risk lane that touches a high-risk path is stopped for you.
 
 ### D5. Specialist reviewers and their verdict line (0016 E.6, plus #56 S3)
@@ -274,7 +274,7 @@ Steps 1–9 of the skills work are done on branch `commands-to-skills`: 23 `zi-`
 ### Step 4. One real run that you watch (this plan)
 
 - [ ] Run one low-risk feature end to end on the test project with Steps 0–3 in place.
-- [ ] File every problem as an issue before going on. The last two field runs found 10 and 11 issues (0016 E.3); the two kit-test canary runs filed #66–#77 and #82–#86.
+- [ ] File every problem as an issue before going on. The last two field runs found 10 and 11 issues (0016 E.3).
 
 ### Step 5. CI re-checks things itself (0016 step 4)
 

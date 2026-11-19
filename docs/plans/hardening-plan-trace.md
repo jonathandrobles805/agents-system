@@ -1,6 +1,6 @@
 # Hardening plan: traceability
 
-Every rule in `docs/plans/hardening-plan.md` is listed once, with the place in `docs/decisions/0016-direction-vs-reference-factory.md` that states it, cited by its label and line. A rule with no 0016 place, or an amendment line with no rule here, is a defect in this pair of documents. Line numbers are for 0016 on branch `docs/0016-merge-on-owners-word`; the labels stay valid if lines move. Every cited line was checked by a script when this file was written (2026-11-19).
+Every rule in `docs/plans/hardening-plan.md` is listed once, with the place in `docs/decisions/0016-direction-vs-reference-factory.md` that states it, cited by its label and line. A rule with no 0016 place, or an amendment line with no rule here, is a defect in this pair of documents. Line numbers are for 0016 on branch `docs/plan-fixes-outside-review` (PR #89); the labels stay valid if lines move. Every cited line was checked by a script when this file was written (2026-11-19).
 
 "F" rows are the planted-fault table (plan: How we prove it works; 0016 E.9). Plan Steps 1–3, 5–8 and 10 are E.2 steps 1–8; Step 0 comes from 0017, Step 11 from Consequences, and Steps 4 and 9 are added by the plan.
 
@@ -46,7 +46,7 @@ Every rule in `docs/plans/hardening-plan.md` is listed once, with the place in `
 | D2.5 | Sessions outside the container keep `advance`, `gate`, `start`; merge only through `kit merge` behind the `ask` rule; denied approve, any other merge, protection or ruleset changes | Step 2 | E.8 item 7 (L301) | Fault F11 |
 | D3 | Lane start fails closed unless the repo is local-only and records the base commit; a failed fetch is always refused; no remote needs `local_only`; fixtures updated | D3 | E.8 item 4 (L298) | Fault F16 |
 | D4.1 | Gate fails on protected-file changes, including the spec after its approved commit (#56 S1.3 plus E.1 Add 4) | D4 | E.8 item 1 (L295) | Fault F20 |
-| D4.2 | Gate runs contained, with a time limit and stdin closed (#56 S1.4) | D4 | E.8 item 2 (L296) | Fault F22 |
+| D4.2 | Gate runs contained and non-interactive, with a time limit and stdin closed; only the exit code and output come back (#56 S1.4) | D4 | E.8 item 2 (L296) | Fault F22 |
 | D4.3 | Risk re-check against the actual diff | D4 | E.8 item 3 (L297) | Fault F23 |
 | D5.1 | Reviewers: `code-`, `security-`, `ui-`, `ux-`, optional `architecture-reviewer`; our own names; when each runs, what it judges, the fault it must catch | D5; Reviewer system design | E.6 item 1 (L253); E.6 reviewer table (L255) | Faults F29–F33 |
 | D5.2 | Rulebooks given to writer and reviewer; a FAIL cites a rule ID or criterion plus `file:line` | D5; Reviewer system design | E.6 item 4 (L265) | Faults F29–F33 |
@@ -65,9 +65,9 @@ Every rule in `docs/plans/hardening-plan.md` is listed once, with the place in `
 | ID | Rule in the plan | Plan section | 0016 | Proof |
 |---|---|---|---|---|
 | S0 | Finish the skills move: canary run, probe U3, merge PR #62 and PR #65; done when the canary finishes; the headless check moves to Step 8 | Step 0 | E.8 item 11 (L305); E.5 (L235); E.10 item 5 (L367) | Done-when |
-| S1 | Judge: test project, App, ruleset, protection from job names, read-back, your yes to the spec PR merge recorded in the store; five done-whens | Step 1 | E.2 step 1 (L205); E.7 item 1 (L280); E.7 item 2 (L281); E.7 item 3 (L282); E.7 item 4 (L283); E.8 item 5 (L299); E.8 item 6 (L300); E.7 Done when (L286); E.7 Where it sits (L288) | Faults F1–F5 |
-| S2 | Spine: `advance`, store, rounds, E.4, #63, outside-session denials, #57–#59, fail-closed start; seven done-whens | Step 2 | E.2 step 2 (L206); E.1 Add 1 (L194); E.1 Add 6 (L199); E.8 item 7 (L301); E.8 item 8 (L302); E.8 item 10 (L304); E.8 item 4 (L298); E.8 Where it sits (L308) | Faults F6–F16 |
-| S3 | Gate from the base `kit.json`, tied to the commit, no reviewer on FAIL, re-run after sync, done-check reads the verdict; D4; five done-whens | Step 3 | E.1 Add 2 (L195); E.2 step 3 (L207); E.8 item 1 (L295); E.8 item 2 (L296); E.8 item 3 (L297) | Faults F17–F23 |
+| S1 | Judge: matrix names first, test project, App, keys and eval move, ruleset, protection with `enforce_admins` from job names, read-back, fault 30 rewrite; six done-whens | Step 1 | E.2 step 1 (L205); E.7 item 1 (L280); E.7 item 2 (L281); E.7 item 3 (L282); E.7 item 4 (L283); E.8 item 5 (L299); E.7 Done when (L286); E.7 Where it sits (L288); E.11 item 2 (L379); E.11 item 3 (L380); E.11 item 5 (L382) | Faults F1–F5 |
+| S2 | Spine: `advance`, store, rounds, E.4, #63, outside-session denials, #57–#59, fail-closed start; eight done-whens | Step 2 | E.2 step 2 (L206); E.1 Add 1 (L194); E.1 Add 6 (L199); E.8 item 7 (L301); E.8 item 8 (L302); E.8 item 10 (L304); E.8 item 4 (L298); E.8 Where it sits (L308) | Faults F6–F16 |
+| S3 | Gate from the base `kit.json`, tied to the commit, no reviewer on FAIL, re-run after sync, done-check reads the verdict; D4; six done-whens | Step 3 | E.1 Add 2 (L195); E.2 step 3 (L207); E.8 item 1 (L295); E.8 item 2 (L296); E.8 item 3 (L297) | Faults F17–F23 |
 | S4 | One watched real run of a low-risk feature; file every problem first | Step 4 | E.8 item 9 (L303); E.3 (L220) | Issues filed |
 | S5 | CI scope from base, red run recomputed, review report demoted; #56 CI scripts fetch the base; done-when | Step 5 | E.1 Add 3 (L196); E.2 step 4 (L208); E.8 item 12 (L306); Open question 3 (L429) | Faults F24–F26 |
 | S6 | Planted faults first; KIT-SPEC rows 39–45 | Step 6 | E.2 step 5 (L209); E.8 item 12 (L306) | Fault table |
