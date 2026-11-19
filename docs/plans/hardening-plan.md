@@ -48,13 +48,13 @@ All five were settled by you in chat on 2026-11-17. Each is compared with GitHub
 
 ## Evidence baseline
 
-Repo links point to `main` at [`3a34247`](https://github.com/jonathandrobles805/agents-system/tree/3a34247f08515ed8f3b328f01bb9531970cbb222), checked 2026-11-17 22:50. Since `f1da557` (PR #54), only docs have changed: #60, #61 and #64 amended 0016 E.5 and 0017. So every code line cited here is the same as at `f1da557`.
+Repo links point to `main` at [`3a34247`](https://github.com/jonathandrobles805/agents-system/tree/3a34247f08515ed8f3b328f01bb9531970cbb222), checked 2026-11-17 22:50. Between `f1da557` (PR #54) and `3a34247` only docs changed, so every code line cited here is the same as at `f1da557`. Code has changed on `main` since (#62, #79, #80, #81); this baseline stays at `3a34247`, and later facts give their own commit.
 
-**Checks on this code:**
+**Checks on this code (at `3a34247`; on `main` at `4fa12cf`: 367 of 367 tests, 48 of 48 faults):**
 
 - `npm test`: 347 of 347 pass.
 - `planted-faults/run.js`: 46 of 46 caught.
-- On the skills branch, draft PR #62 reports 358 of 358 tests (as reported in #62, not re-run here).
+- On the skills branch, PR #62 (then a draft, merged since) reported 358 of 358 tests (as reported in #62, not re-run here).
 
 **GitHub:**
 
@@ -62,7 +62,7 @@ Repo links point to `main` at [`3a34247`](https://github.com/jonathandrobles805/
 - The repo is private and owned by a personal account.
 - PRs #54, #60 and #61 were opened and merged by your own account.
 
-**The Bash guard against bypass commands** (`hook_guard_bash.js`):
+**The Bash guard against bypass commands** (`hook_guard_bash.js`, at `3a34247`; since #81 it blocks the first two when they start a command, while `env gh pr merge 1` still passes):
 
 | Command | Result |
 | --- | --- |
@@ -93,7 +93,7 @@ Repo links point to `main` at [`3a34247`](https://github.com/jonathandrobles805/
 
 ## Where the kit stands today
 
-Fifteen holes are open on `main`.
+Fifteen holes were open on `main` at `3a34247`; hole 14 has since closed (#62), and holes 4 and 6 are partly fixed (#81).
 
 - **0016 and 0017 close 6:** holes 1, 3, 7, 8, 11 and 14.
 - **This plan closes 5:** holes 2, 4, 5, 13 and 15.
@@ -114,10 +114,10 @@ Fifteen holes are open on `main`.
 | 11 | Controller bugs: docs and ui lanes jump to done (#57); listed stages never run (#58); a missing agent (#59) | Issues #57–#59 | 0016 E.5 (filed for E.2) | 2 |
 | 12 | No gate exists; #56 adds rules for it: fail on protected-file changes, and run contained with a time limit | Issue #56 S1.3, S1.4 | 0016 E.1 Add 2, plus #56 | 3 |
 | 13 | One reviewer, plus a second security-focused pass at high risk | [review.md L17–18](https://github.com/jonathandrobles805/agents-system/blob/3a34247f08515ed8f3b328f01bb9531970cbb222/kit/commands/review.md#L17-L18) | E.6 (this plan) | 9 |
-| 14 | 23 commands, not skills | 0017; draft PR #62 | 0017 | 0 |
+| 14 | 23 commands, not skills | 0017; PR #62, merged | 0017 | 0 |
 | 15 | On macOS, Claude Code's docs say searches run through Bash, so the read guard may never see secret reads (not yet observed) | Issue #55 | This plan: a container for every lane that pushes | 8 |
 
-**Already fixed on `main`:**
+**Already fixed on `main`** (these commits reached `main` through PR #54's squash merge `f1da557`):
 
 - The date-dependent test (`e24b7df`).
 - A red run must name its test as failing (`59d54ab`, #30).
@@ -141,7 +141,7 @@ Issues #29, #30 and #41 are still open; check what's left in each before closing
 **What the App may do:**
 
 - Write contents, pull requests and workflows, on the repos you install it on. Workflows lets it change `.github/workflows/` ([GitHub docs](https://docs.github.com/en/apps/creating-github-apps/registering-a-github-app/choosing-permissions-for-a-github-app)).
-- Because a pull request from a branch in the same repo runs its own workflow file with the repo's secrets ([GitHub Security Lab](https://securitylab.github.com/research/github-actions-preventing-pwn-requests)), the two Anthropic keys `kit.yml` uses move into a GitHub environment limited to `main` ([GitHub docs](https://docs.github.com/en/actions/reference/workflows-and-actions/deployments-and-environments)). The step that needs them runs with them only on `main`.
+- Because a pull request from a branch in the same repo runs its own workflow file with the repo's secrets ([GitHub Security Lab](https://securitylab.github.com/research/github-actions-preventing-pwn-requests)), the two Anthropic keys move into a GitHub environment limited to `main` ([GitHub docs](https://docs.github.com/en/actions/reference/workflows-and-actions/deployments-and-environments)). The real-agent eval, today a pull-request-only step in `kit.yml`, moves to `main` and to the weekly workflow (`kit-eval-weekly.yml`); each job names the environment and fails when the keys are missing. Pull requests run the recorded-fixture eval only. This follows GitHub's default for its own agent, whose pull-request workflows wait for a person's approval ([GitHub docs](https://docs.github.com/en/copilot/concepts/agents/cloud-agent/risks-and-mitigations)); that approval exists only for Copilot (0016 E.11).
 - A ruleset lets it push only to `wt/*` branches, the kit's lane branches ([lane.js L559](https://github.com/jonathandrobles805/agents-system/blob/3a34247f08515ed8f3b328f01bb9531970cbb222/kit/scripts/lane.js#L559)), and `spec/*` branches, where specs are proposed ([plan.md L42](https://github.com/jonathandrobles805/agents-system/blob/3a34247f08515ed8f3b328f01bb9531970cbb222/kit/commands/plan.md#L42)). The ruleset restricts creating, updating and deleting every other branch, a tag ruleset stops it creating tags, and only you are on the bypass list. These rules sit in their own ruleset, apart from branch protection.
 - It cannot merge: the ruleset lets only you update `main`.
 
@@ -154,7 +154,7 @@ Issues #29, #30 and #41 are still open; check what's left in each before closing
 - This needs GitHub Pro, because the repo is private and personally owned.
 
 **Merging on your word (owner decision, 2026-11-18; 0016 E.10).** You do not merge every PR by hand. Claude merges when you say so, with `lane.js merge` (#81): it waits until every required check has reported on the PR head and passed, and merges exactly that commit. Because it runs with your account, GitHub cannot tell it from you, so your word is enforced on your machine, not by GitHub:
-- **CI green:** branch protection with the real job names and no bypass, and `lane.js merge` refusing red or pending CI. Proven on kit-test (PRs #7–#12).
+- **CI green:** branch protection with the real job names and no bypass (Step 1), and `lane.js merge` refusing red or pending CI. `lane.js merge` was used on kit-test (PRs #7–#12, as reported); branch protection with no bypass is not set yet, because bootstrap still sends `enforce_admins: false` ([bootstrap.js L1398](https://github.com/jonathandrobles805/agents-system/blob/4fa12cf51030656bba5aef5c73522bfb95be965e/kit/scripts/bootstrap.js#L1398)).
 - **Your yes:** a Claude Code `ask` permission rule on the merge command, so Claude Code prompts you before every merge and the model cannot skip it. It needs the `kit` launcher from Step 2 (#63: rules naming `"$HOME"` do not match).
 - **Still denied to every session:** an approving review, any other merge (`gh pr merge`, its `gh api` and GraphQL forms; the bash guard blocks them when they start a command, a guardrail, since prefixes such as `env` slip past), and changes to protection or rulesets.
 
@@ -220,20 +220,25 @@ Steps 1–9 of the skills work are done on branch `commands-to-skills`: 23 `zi-`
 
 ### Step 1. Judge: GitHub enforces you (0016 step 1, plus D1)
 
-- [ ] Put a test project on GitHub. Create the GitHub App (contents, pull requests and workflows: write), and install it on the test project and this repo. Move the Anthropic keys into an environment limited to `main`.
+- [ ] Fix the matrix job names first: the kit must name each matrix value as GitHub reports it (`script unit tests (node 20)`, `(node 22)`), not `script unit tests (node ${{ matrix.node }})` ([pr_gate.js L26–48](https://github.com/jonathandrobles805/agents-system/blob/4fa12cf51030656bba5aef5c73522bfb95be965e/kit/scripts/pr_gate.js#L26-L48)). Until then `lane.js merge` on this repo stops after 30 minutes, and protection built from that name would block every PR (0016 E.11).
+- [ ] Put a test project on GitHub (kit-test may already be one). Create the GitHub App (contents, pull requests and workflows: write), and install it on the test project and this repo.
+- [ ] Move the Anthropic keys into an environment limited to `main`; move the real-agent eval from pull requests to `main` and the weekly workflow, each job naming the environment and failing when the keys are missing.
 - [ ] Add a ruleset so the App may push only `wt/*` and `spec/*` branches.
-- [ ] Set protection as in D1. Build the required checks from the real job names (`kit-checks`, not its 7 steps; [bootstrap.js L1578](https://github.com/jonathandrobles805/agents-system/blob/3a34247f08515ed8f3b328f01bb9531970cbb222/kit/scripts/bootstrap.js#L1578)). Read the settings back from GitHub.
-- [ ] The push-and-open-PR step runs on your machine with an App token; `lane.js` records your yes to the spec PR's merge.
-- **Done when, tested on the test project (and, for the last item, on this repo):**
+- [ ] Set protection as in D1, with `enforce_admins` on. Build the required checks from the real job names (`kit-checks`, not its 7 steps; done since #81, [bootstrap.js L1578–1586](https://github.com/jonathandrobles805/agents-system/blob/4fa12cf51030656bba5aef5c73522bfb95be965e/kit/scripts/bootstrap.js#L1578-L1586)). Read the settings back from GitHub.
+- [ ] Rewrite planted fault 30, which tests the code-owner review 0016 E.10 removed, to test the ruleset and protection.
+- [ ] The push-and-open-PR step runs on your machine with an App token.
+- **Done when, tested on the test project (and, for the merge, on this repo):**
     - GitHub refuses a merge while a required check is red or pending, admins included;
     - the App can't push to `main`, or to any branch outside `wt/*` and `spec/*`;
     - every required check reports on a test PR;
     - a required name that no job reports fails the read-back;
-    - Claude merges the App's green PR through `kit merge` after your yes, on the test project and on this repo.
+    - `lane.js merge` merges the App's green PR, on the test project and on this repo (the prompt before it comes in Step 2);
+    - a workflow on an App branch cannot read the Anthropic keys, and the real-agent eval runs on `main`.
 
 ### Step 2. Spine: one script moves the stage (0016 step 2, E.4, E.5; plus D2, D3)
 
-- [ ] Add `lane.js advance`, the table of allowed moves and the store. The dashboard reads the store.
+- [ ] Add `lane.js advance`, the table of allowed moves and the store. The dashboard reads the store. A progress cell containing `#` no longer moves a stage (#56).
+- [ ] `lane.js` records your yes to the spec PR's merge in the store (D1, "The approval line").
 - [ ] Rounds and wall time move into the store. `lane.js stage` becomes a call to `advance`.
 - [ ] Fix #63 first: add a `kit` launcher on `PATH`, prove with a probe that the new permission rules match, then narrow the lanes' rules (E.4) and the skills' `Bash` so lanes can't call `advance`, `gate`, `start` or a merge. Sessions outside the container keep `advance`, `gate` and `start`, and may merge only through `kit merge` behind an `ask` rule (D1, "Merging on your word"); they are denied an approving review, any other merge, and changes to protection or the ruleset (`gh pr review --approve`, `gh pr merge` and their `gh api` forms).
 - [ ] Fix #57 (stages a profile lacks are refused, not mapped to done), #58 (listed stages are produced or removed, and `requires` blocks) and #59 (`skill-development` is refused until its agent exists).
@@ -254,28 +259,31 @@ Steps 1–9 of the skills work are done on branch `commands-to-skills`: 23 `zi-`
     - it runs the commands from the base branch's `kit.json`;
     - its verdict is tied to the commit;
     - no reviewer starts on a FAIL;
-    - it runs again after updating from the base;
+    - it runs again after updating from the base, and on a merge conflict it refuses and the lane parks for you (#56 S1.5);
+    - a missing recorded command, or `none` without a reason, fails it (#56 S1.2);
     - done-check reads the verdict, not the lane's log.
-- [ ] Add D4's protected-file check, containment with a time limit and closed stdin, and the risk re-check.
+- [ ] Add D4's protected-file check, containment (non-interactive, with a time limit and closed stdin; only the exit code and output come back), and the risk re-check.
 - **Done when:**
     - a failing or missing check starts no reviewer;
     - a lane that edits `kit.json` or a `package.json` script fails the gate;
     - a stale verdict is refused;
     - a hanging check is stopped by the time limit;
-    - a low-risk lane whose glob hides a high-risk path is stopped.
+    - a low-risk lane whose glob hides a high-risk path is stopped;
+    - a missing command fails the gate, and a merge conflict parks the lane.
 
 ### Step 4. One real run that you watch (this plan)
 
 - [ ] Run one low-risk feature end to end on the test project with Steps 0–3 in place.
-- [ ] File every problem as an issue before going on. The last two field runs found 10 and 11 issues (0016 E.3).
+- [ ] File every problem as an issue before going on. The last two field runs found 10 and 11 issues (0016 E.3); the two kit-test canary runs filed #66–#77 and #82–#86.
 
 ### Step 5. CI re-checks things itself (0016 step 4)
 
 - [ ] CI reads the scope list from the base branch's spec.
-- [ ] CI checks that new tests fail on the base code and pass on the head.
+- [ ] CI checks that new tests fail on the base code, on an assertion and not a load error, and pass on the head (#56 (d)).
+- [ ] (#56 S1.5) The same gate runs in project CI.
 - [ ] The review report stays as a record, not a required check.
 - [ ] (#56) Make `ci_scope_diff`, `ci_test_count`, `ci_dep_diff` and `ci_pr_size` fetch the base before comparing.
-- **Done when:** a PR that widens its own scope list fails, and a new test that already passes on the base is flagged. Whether this works for every language is still open (0016 open question 3).
+- **Done when:** a PR that widens its own scope list fails, and a new test that already passes on the base, or fails there only with a load error, is flagged. Whether this works for every language is still open (0016 open question 3).
 
 ### Step 6. Planted faults first (0016 step 5)
 
@@ -306,7 +314,7 @@ Steps 1–9 of the skills work are done on branch `commands-to-skills`: 23 `zi-`
 ### Step 9. Specialist reviewers (D5; 0016 E.6)
 
 - [ ] Confirm 0016 E.6 is merged (Step 0).
-- [ ] Write the rulebooks, the reviewers, the routing script and the `<reviewer>: PASS|FAIL` first line, with one report per reviewer tied to the commit.
+- [ ] Write the rulebooks, the reviewers, the routing script and the `<reviewer>: PASS|FAIL` first line, with one report per reviewer tied to the commit. `verify-ui` stops being an alias of `review` (#56).
 - **Done when:** each reviewer catches its planted fault with a rule ID, the scripts refuse a report without a verdict line, and a UI review with no browser parks the lane. Until then, today's reviewer stays.
 
 ### Step 10. Dashboard (0016 step 8, D.2–D.3)
@@ -388,8 +396,9 @@ A control counts only when a planted fault shows it catching a deliberate bypass
 | App pushes to or merges into `main`, or pushes to a branch outside `wt/*` and `spec/*` | GitHub refuses (protection, ruleset) | Test project | 1 |
 | Required check name that no job reports | Bootstrap read-back fails | Test project | 1 |
 | A workflow on an App branch reads the Anthropic keys | The environment limited to `main` withholds them | Test project | 1 |
-| Agent writes the spec's approval line | `lane.js` ignores it; only your yes to the spec PR's merge counts | Kit CI | 1 |
-| Fix or incident lane runs `lane.js scope` before its `spec/<slug>` PR is approved and merged | `lane.js scope` refuses | Kit CI | 1 |
+| Workflow with a matrix job | The required list names each value as GitHub reports it (`script unit tests (node 20)`) | Kit CI | 1 |
+| Agent writes the spec's approval line | `lane.js` ignores it; only your yes to the spec PR's merge counts | Kit CI | 2 |
+| Fix or incident lane runs `lane.js scope` before its `spec/<slug>` PR is approved and merged | `lane.js scope` refuses | Kit CI | 2 |
 | Illegal stage move | `advance` refuses with a reason | Kit CI | 2 |
 | Round past the limit | `advance` parks the lane | Kit CI | 2 |
 | Lane agent runs `advance`, `gate`, `start` or a merge | Denied by the narrowed permission rules | Kit CI | 2 |
@@ -397,14 +406,18 @@ A control counts only when a planted fault shows it catching a deliberate bypass
 | `kit merge` runs without your yes | Claude Code prompts every time (the `ask` rule matches, proven by the probe) | Kit CI | 2 |
 | Kit permission rule that doesn't match its command | Probe fails (#63) | Kit CI | 2 |
 | Reproductions in #57, #58 and #59 | Refused as the issues require | Kit CI | 2 |
+| A progress cell containing `#` | The stage does not move | Kit CI | 2 |
 | Lane start with a failed fetch, or with no `origin` and no `local_only` | Refused | Kit CI | 2 |
 | Failing or missing required check | Gate fails; no reviewer starts | Kit CI | 3 |
+| Recorded command missing, or `none` without a reason | Gate fails | Kit CI | 3 |
+| Merge conflict when the gate re-runs after syncing with the base | Gate refuses; the lane parks | Kit CI | 3 |
 | Lane edits `kit.json` or a `package.json` script | Gate fails on a protected-file change | Kit CI | 3 |
 | Gate verdict for an older commit | Refused as stale | Kit CI | 3 |
 | A check that hangs | Stopped by the time limit | Kit CI | 3 |
 | Low-risk spec whose glob hides a high-risk path | Gate risk re-check stops the lane | Kit CI | 3 |
 | PR widens its own scope list | CI reads the base spec and fails | Kit CI | 5 |
 | New test already passes on the base | CI flags it | Kit CI | 5 |
+| New test fails on the base with a load error, not an assertion | CI flags it | Kit CI | 5 |
 | From inside a lane: edit a guard, read the `gh` token, push to `main`, merge without approval | All four fail | Test project | 8 |
 | From inside a lane: write the main repo's `.git/hooks` or `.git/config` | Refused by the read-only mounts | Test project | 8 |
 | Feature the spec didn't ask for | `code-reviewer: FAIL` with a rule ID | Eval | 9 |
@@ -484,7 +497,7 @@ Repo links point to `main` at `3a34247`.
 
 **Pull requests and issues:**
 
-- [PR #62, commands become 23 zi- skills (draft)](https://github.com/jonathandrobles805/agents-system/pull/62)
+- [PR #62, commands become 23 zi- skills (merged)](https://github.com/jonathandrobles805/agents-system/pull/62)
 - Issues [#55](https://github.com/jonathandrobles805/agents-system/issues/55), [#56](https://github.com/jonathandrobles805/agents-system/issues/56), [#57](https://github.com/jonathandrobles805/agents-system/issues/57), [#58](https://github.com/jonathandrobles805/agents-system/issues/58), [#59](https://github.com/jonathandrobles805/agents-system/issues/59) and [#63](https://github.com/jonathandrobles805/agents-system/issues/63)
 
 **Outside references:**
