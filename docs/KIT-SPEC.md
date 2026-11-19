@@ -386,6 +386,8 @@ The kit is done when all of the following hold:
 | 37 | `/zi-work` given a symptom with no type | provisional `fix`; debugger `cause:` line | boot failure → `incident`; design fault → `refactor`; single defect → `fix`, provisional dropped |
 | 38 | `security` or `migration` goal without high risk | profile `force_risk` | risk is high regardless of the header; container sandbox required |
 | 46 | Broken doc committed on a branch | generated CI `validate-docs` (`ci_changed_docs`) | job fails; in a depth-1 checkout the base is fetched first, and a base that cannot be found fails the job |
+| 47 | An agent merges a pull request directly, without waiting for CI | `hook_guard_bash` (`gh pr merge`, `gh api …/merge`, GraphQL `mergePullRequest`, at the start of a command) | blocked with "run lane.js merge"; a guardrail, the permission rules carry the denial (0016 E.10) |
+| 48 | A pull request with no checks reported yet, or one red check, is read as mergeable | `lane.js merge` (`pr_gate` evaluate) | pending or red; merges only when every required job passed on the PR head |
 
 ---
 
