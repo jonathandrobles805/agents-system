@@ -221,7 +221,7 @@ Steps 1–9 of the skills work are done on branch `commands-to-skills`: 23 `zi-`
 ### Step 1. Judge: GitHub enforces you (0016 step 1, plus D1)
 
 - [ ] Fix the matrix job names first: the kit must name each matrix value as GitHub reports it (`script unit tests (node 20)`, `(node 22)`), not `script unit tests (node ${{ matrix.node }})` ([pr_gate.js L26–48](https://github.com/jonathandrobles805/agents-system/blob/4fa12cf51030656bba5aef5c73522bfb95be965e/kit/scripts/pr_gate.js#L26-L48)). Until then `lane.js merge` on this repo stops after 30 minutes, and protection built from that name would block every PR (0016 E.11).
-- [ ] Put a test project on GitHub (kit-test may already be one). Create the GitHub App (contents, pull requests and workflows: write), and install it on the test project and this repo.
+- [ ] Use kit-test as the test project on GitHub (Step 0 ran there). Create the GitHub App (contents, pull requests and workflows: write), and install it on the test project and this repo.
 - [ ] Move the Anthropic keys into an environment limited to `main`; move the real-agent eval from pull requests to `main` and the weekly workflow, each job naming the environment and failing when the keys are missing.
 - [ ] Add a ruleset so the App may push only `wt/*` and `spec/*` branches.
 - [ ] Set protection as in D1, with `enforce_admins` on. Build the required checks from the real job names (`kit-checks`, not its 7 steps; done since #81, [bootstrap.js L1578–1586](https://github.com/jonathandrobles805/agents-system/blob/4fa12cf51030656bba5aef5c73522bfb95be965e/kit/scripts/bootstrap.js#L1578-L1586)). Read the settings back from GitHub.

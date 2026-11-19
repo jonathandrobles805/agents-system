@@ -10,7 +10,7 @@ Every rule in `docs/plans/hardening-plan.md` is listed once, with the place in `
 |---|---|---|---|---|
 | Q1a | The agents' identity is a GitHub App, used only to push lane and spec branches and open PRs | Decisions taken; Summary 1 | E.7 item 1 (L280); E.7 item 2 (L281) | Faults F1, F2 |
 | Q1b | Every lane that pushes runs in the container, attended or not, with limited network | Decisions taken; Summary | E.7 item 5 (L284) | Fault F27 |
-| Q2 | This repo follows the same rule as projects; the App opens its PRs; Claude merges them on your yes; GitHub Pro | Decisions taken | E.7 item 4 (L283); E.10 item 1 (L363) | S1 done-when 5 |
+| Q2 | This repo follows the same rule as projects; the App opens its PRs; Claude merges them on your yes; GitHub Pro | Decisions taken | E.7 item 4 (L283); E.10 item 1 (L363) | S1 done-when 5; S2 done-when 6 |
 | Q3 | Automatic spec approval dropped; every spec pauses for you; if it returns, a short list of pre-approved change types | Decisions taken; Not in this plan | Alternatives: automatic spec approval (L416); E.1 Keep (L191) | Nothing to build |
 | Q4 | License closed: personal, private use | Decisions taken; Not in this plan | Open question 1 (L427) | Nothing to build |
 | Q5 | Reports start with `<reviewer>: PASS` or `FAIL`; S2–S8 stay open; structured output is the upgrade if misreads happen | Decisions taken | E.6 item 5 (L266) | Fault F34 |
