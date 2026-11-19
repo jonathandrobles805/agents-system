@@ -55,6 +55,18 @@ test('workflowChecks: a matrix job is required once per value, named as GitHub r
   assert.match(err('t (${{ matrix.node }})', '        node: ${{ fromJSON(inputs.m) }}\n'), /cannot be expanded/);
   assert.match(err('t (${{ matrix.other }})', '        node: [20]\n'), /matrix\.other, which is not an axis/);
   assert.match(err('t', '        node: [20, 22]\n'), /does not use matrix\.node/);
+  // Unquoted numbers print as YAML numbers in the check name (3.10 reports as 3.1); quoted ones are verbatim.
+  c = G.workflowChecks(wf('py (${{ matrix.v }})', '        v: [3.10, "3.10", 20, 1.0]\n'));
+  assert.deepEqual(c.errors, []);
+  assert.deepEqual(c.required, ['py (3.1)', 'py (3.10)', 'py (20)', 'py (1)']);
+  // A quoted value with a comma, an inline mapping, and a `matrix:` outside strategy are refused or ignored, never required wrong.
+  assert.match(err('t (${{ matrix.v }})', '        v: ["a, b", c]\n'), /quoted value contains a comma/);
+  c = G.workflowChecks('jobs:\n  t:\n    name: t (${{ matrix.node }})\n    strategy:\n      matrix: { node: [20, 22] }\n    steps: []\n');
+  assert.equal(c.errors.length, 1);
+  assert.match(c.errors[0], /inline mapping/);
+  assert.deepEqual(c.required, []);
+  c = G.workflowChecks('jobs:\n  t:\n    name: T\n    env:\n      matrix:\n        node: [20, 22]\n    steps: []\n');
+  assert.deepEqual([c.errors, c.required], [[], ['T']]);
   // A name that uses matrix.* in a job without a matrix is an error too (and the job is still listed).
   const r = G.workflowChecks('jobs:\n  t:\n    name: t (${{ matrix.node }})\n    steps: []\n');
   assert.equal(r.errors.length, 1);

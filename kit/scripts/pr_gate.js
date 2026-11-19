@@ -32,18 +32,31 @@ const OK = new Set(['success', 'neutral', 'skipped']);
  * axis the name does not use) is a parse error, not a guess: the caller must refuse, since a wrong required list
  * blocks every PR or waits forever.
  */
+/**
+ * One matrix value as the runner prints it into the check name. A quoted scalar is taken verbatim; an unquoted
+ * number is a YAML number and the runner formats it as such, so `3.10` reports as `3.1` and `1.0` as `1` (the
+ * setup-python gotcha). Anything else is a plain string.
+ */
+function matrixValue(v) {
+  const q = /^(['"])(.*)\1$/.exec(v);
+  if (q) return q[2];
+  return /^[-+]?(\d+\.?\d*|\.\d+)([eE][-+]?\d+)?$/.test(v) ? String(Number(v)) : v;
+}
+
 export function workflowChecks(text) {
   const jobs = [];
   const lines = String(text).split('\n');
   const start = lines.findIndex((l) => /^jobs:\s*$/.test(l));
   if (start >= 0) {
     let inMatrix = false;
+    let inStrategy = false;
     for (const line of lines.slice(start + 1)) {
       if (/^\S/.test(line)) break; // the next top-level key ends the jobs block
       let m = /^ {2}([A-Za-z0-9_-]+):\s*$/.exec(line);
       if (m) {
         jobs.push({ id: m[1], name: m[1], optional: false, advisory: false, matrix: null });
         inMatrix = false;
+        inStrategy = false;
         continue;
       }
       const job = jobs.at(-1);
@@ -52,8 +65,11 @@ export function workflowChecks(text) {
       if (m) job.name = m[1].replace(/^(['"])(.*)\1$/, '$2');
       if (/^ {4}if:/.test(line)) job.optional = true;
       if (/^ {4}continue-on-error:/.test(line)) job.advisory = true;
-      // strategy.matrix: axes are the 8-space keys under the 6-space `matrix:` key.
-      if (/^ {6}matrix:\s*$/.test(line)) { inMatrix = true; job.matrix = { axes: {}, unsupported: [] }; continue; }
+      // strategy.matrix: axes are the 8-space keys under the 6-space `matrix:` key, itself under the job's `strategy:`.
+      if (/^ {4}strategy:\s*$/.test(line)) { inStrategy = true; continue; }
+      if (inStrategy && /^ {4}\S/.test(line)) inStrategy = false;
+      if (inStrategy && /^ {6}matrix:\s*$/.test(line)) { inMatrix = true; job.matrix = { axes: {}, unsupported: [] }; continue; }
+      if (inStrategy && /^ {6}matrix:\s*\S/.test(line)) { job.matrix = { axes: {}, unsupported: ['matrix (inline mapping)'] }; continue; }
       if (inMatrix) {
         if (/^ {6}\S/.test(line) || /^ {4}\S/.test(line)) inMatrix = false;
         else {
@@ -61,7 +77,12 @@ export function workflowChecks(text) {
           if (m) {
             const [, axis, raw] = m;
             if (axis === 'include' || axis === 'exclude' || raw === '' || !/^\[.*\]$/.test(raw) || raw.includes('${{')) job.matrix.unsupported.push(axis);
-            else job.matrix.axes[axis] = raw.slice(1, -1).split(',').map((v) => v.trim().replace(/^(['"])(.*)\1$/, '$2')).filter(Boolean);
+            else {
+              const pieces = raw.slice(1, -1).split(',').map((v) => v.trim()).filter(Boolean);
+              // A quoted value holding a comma would be split in two: refuse rather than require two wrong names.
+              if (pieces.some((x) => /^['"]/.test(x) !== /['"]$/.test(x))) job.matrix.unsupported.push(`${axis} (a quoted value contains a comma)`);
+              else job.matrix.axes[axis] = pieces.map(matrixValue);
+            }
           }
         }
       }
