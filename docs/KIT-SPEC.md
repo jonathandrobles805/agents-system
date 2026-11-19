@@ -388,6 +388,7 @@ The kit is done when all of the following hold:
 | 46 | Broken doc committed on a branch | generated CI `validate-docs` (`ci_changed_docs`) | job fails; in a depth-1 checkout the base is fetched first, and a base that cannot be found fails the job |
 | 47 | An agent merges a pull request directly, without waiting for CI | `hook_guard_bash` (`gh pr merge`, `gh api …/merge`, GraphQL `mergePullRequest`, at the start of a command) | blocked with "run lane.js merge"; a guardrail, the permission rules carry the denial (0016 E.10) |
 | 48 | A pull request with no checks reported yet, or one red check, is read as mergeable | `lane.js merge` (`pr_gate` evaluate) | pending or red; merges only when every required job passed on the PR head |
+| 49 | A matrix job is required under its unexpanded name (`… (node ${{ matrix.node }})`), which no check run ever reports | `pr_gate.workflowChecks` | one required name per matrix value, as GitHub reports it; a matrix the parser cannot expand is refused with a reason (0016 E.11) |
 
 ---
 

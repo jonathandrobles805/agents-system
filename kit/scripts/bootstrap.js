@@ -1579,10 +1579,14 @@ export function main(argv) {
     // Required checks are the workflow's job names, the names GitHub reports, read from the file just written.
     // They used to include step names (scope-diff, review-report, ...), which never report as checks, so every PR
     // would have waited forever (#68). The same list is what lane.js merge waits for.
+    // A matrix job is required once per value, as GitHub reports it; a workflow whose check names cannot be
+    // predicted is refused rather than guessed, since a wrong required name blocks every PR (0016 E.11).
     const checks = G.projectChecks(root);
-    result.branch_protection = checks
-      ? protectBranch(root, get(det, 'default_branch', 'main'), checks.required)
-      : { ok: false, reason: `no ${G.WORKFLOW}; nothing to require` };
+    result.branch_protection = !checks
+      ? { ok: false, reason: `no ${G.WORKFLOW}; nothing to require` }
+      : checks.errors.length
+        ? { ok: false, reason: `${G.WORKFLOW}: cannot tell which checks GitHub reports: ${checks.errors.join('; ')}` }
+        : protectBranch(root, get(det, 'default_branch', 'main'), checks.required);
   }
   if (a.json) {
     print(K.jsonDumps(result, { indent: 2 }));

@@ -22,17 +22,44 @@ import * as K from './kitlib.js';
 export const WORKFLOW = path.join('.github', 'workflows', 'kit.yml');
 const OK = new Set(['success', 'neutral', 'skipped']);
 
-/** The jobs of a GitHub Actions workflow, by the name GitHub reports, with their required/advisory/optional lists. */
+/**
+ * One matrix value as the runner prints it into the check name. A quoted scalar is taken verbatim; an unquoted
+ * number is a YAML number and the runner formats it as such, so `3.10` reports as `3.1` and `1.0` as `1` (the
+ * setup-python gotcha); YAML booleans print as `true`/`false` and nulls as empty. Anything else is a plain string.
+ */
+function matrixValue(v) {
+  const q = /^(['"])(.*)\1$/.exec(v);
+  if (q) return q[2];
+  if (/^(true|True|TRUE)$/.test(v)) return 'true';
+  if (/^(false|False|FALSE)$/.test(v)) return 'false';
+  if (/^(null|Null|NULL|~)$/.test(v)) return '';
+  return /^[-+]?(\d+\.?\d*|\.\d+)([eE][-+]?\d+)?$/.test(v) ? String(Number(v)) : v;
+}
+
+/**
+ * The jobs of a GitHub Actions workflow, by the name GitHub reports, with their required/advisory/optional lists.
+ * A job with a `strategy.matrix` reports one check per matrix value, with `${{ matrix.<axis> }}` in its name
+ * replaced by the value (this repo: `script unit tests (node 20)`, `(node 22)`), so a matrix job expands to one
+ * entry per value. Before this, the unexpanded name was required, which no run ever reports: `lane.js merge` on
+ * this repo waited until its timeout and protection built from it would have blocked every PR (0016 E.11).
+ * A matrix this parser cannot expand (an `include`/`exclude`, an expression, more than one axis in the name, or an
+ * axis the name does not use) is a parse error, not a guess: the caller must refuse, since a wrong required list
+ * blocks every PR or waits forever.
+ */
 export function workflowChecks(text) {
   const jobs = [];
   const lines = String(text).split('\n');
   const start = lines.findIndex((l) => /^jobs:\s*$/.test(l));
   if (start >= 0) {
+    let inMatrix = false;
+    let inStrategy = false;
     for (const line of lines.slice(start + 1)) {
       if (/^\S/.test(line)) break; // the next top-level key ends the jobs block
       let m = /^ {2}([A-Za-z0-9_-]+):\s*$/.exec(line);
       if (m) {
-        jobs.push({ id: m[1], name: m[1], optional: false, advisory: false });
+        jobs.push({ id: m[1], name: m[1], optional: false, advisory: false, matrix: null });
+        inMatrix = false;
+        inStrategy = false;
         continue;
       }
       const job = jobs.at(-1);
@@ -41,13 +68,62 @@ export function workflowChecks(text) {
       if (m) job.name = m[1].replace(/^(['"])(.*)\1$/, '$2');
       if (/^ {4}if:/.test(line)) job.optional = true;
       if (/^ {4}continue-on-error:/.test(line)) job.advisory = true;
+      // strategy.matrix: axes are the 8-space keys under the 6-space `matrix:` key, itself under the job's `strategy:`.
+      if (/^ {4}strategy:\s*$/.test(line)) { inStrategy = true; continue; }
+      // `strategy: { matrix: … }` or `strategy: # comment` hides the matrix from this parser: refuse, never require the bare name.
+      if (/^ {4}strategy:\s*\S/.test(line)) { job.matrix = { axes: {}, unsupported: ['strategy (inline mapping or trailing comment)'] }; continue; }
+      if (inStrategy && /^ {4}[^\s#]/.test(line)) inStrategy = false;
+      if (inStrategy && /^ {6}matrix:\s*$/.test(line)) { inMatrix = true; job.matrix = { axes: {}, unsupported: [] }; continue; }
+      if (inStrategy && /^ {6}matrix:\s*\S/.test(line)) { job.matrix = { axes: {}, unsupported: ['matrix (inline mapping)'] }; continue; }
+      if (inStrategy && /^ {5,}matrix:/.test(line) && !/^ {6}matrix:/.test(line)) { job.matrix = { axes: {}, unsupported: ['matrix (non-standard indentation)'] }; continue; }
+      if (inMatrix) {
+        if (/^ {6}[^\s#]/.test(line) || /^ {4}[^\s#]/.test(line)) inMatrix = false;
+        else {
+          m = /^ {8}([A-Za-z0-9_-]+):\s*(.*?)\s*$/.exec(line);
+          if (!m && /^ {8}[^\s#]/.test(line)) job.matrix.unsupported.push('an unparsed matrix line');
+          if (m) {
+            const [, axis, raw] = m;
+            if (axis === 'include' || axis === 'exclude' || raw === '' || !/^\[.*\]$/.test(raw) || raw.includes('${{')) job.matrix.unsupported.push(axis);
+            else {
+              const pieces = raw.slice(1, -1).split(',').map((v) => v.trim()).filter(Boolean);
+              // A quoted value holding a comma would be split in two: refuse rather than require two wrong names.
+              if (!pieces.length) job.matrix.unsupported.push(`${axis} (empty list)`);
+              else if (pieces.some((x) => (/^['"]/.test(x) || /['"]$/.test(x)) && !/^(['"]).+\1$/.test(x))) job.matrix.unsupported.push(`${axis} (a quoted value contains a comma)`);
+              else if (pieces.some((x) => /^[\[{]/.test(x) || /^0[xob]/i.test(x) || /^[.+-]?\.(inf|nan)$/i.test(x))) job.matrix.unsupported.push(`${axis} (a value is a collection or a non-decimal number)`);
+              else if (pieces.some((x) => /\\|''|""|: |:$/.test(x))) job.matrix.unsupported.push(`${axis} (a value with an escape or a key: value pair)`);
+              else job.matrix.axes[axis] = pieces.map(matrixValue);
+            }
+          }
+        }
+      }
     }
   }
+  const expanded = [];
+  const errors = [];
+  for (const job of jobs) {
+    const refs = [...job.name.matchAll(/\$\{\{\s*matrix\.([A-Za-z0-9_-]+)\s*\}\}/g)].map((x) => x[1]);
+    if (!job.matrix) {
+      if (refs.length) errors.push(`${job.id}: name uses ${refs.map((r) => `matrix.${r}`).join(', ')} but the job has no strategy.matrix`);
+      expanded.push({ id: job.id, name: job.name, optional: job.optional, advisory: job.advisory });
+      continue;
+    }
+    const axes = Object.keys(job.matrix.axes);
+    if (job.matrix.unsupported.length) { errors.push(`${job.id}: matrix key(s) ${job.matrix.unsupported.join(', ')} cannot be expanded (only a plain list per axis is supported)`); continue; }
+    if (!axes.length) { errors.push(`${job.id}: strategy.matrix has no axis`); continue; }
+    if (axes.length > 1) { errors.push(`${job.id}: a matrix with more than one axis (${axes.join(', ')}) is not supported`); continue; }
+    const [axis] = axes;
+    if (refs.some((r) => r !== axis)) { errors.push(`${job.id}: name uses matrix.${refs.find((r) => r !== axis)}, which is not an axis of the matrix (${axis})`); continue; }
+    if (!refs.length) { errors.push(`${job.id}: a matrix job whose name does not use matrix.${axis} reports one check per value under a name this parser cannot predict`); continue; }
+    const names = job.matrix.axes[axis].map((value) => [value, job.name.replace(/\$\{\{\s*matrix\.[A-Za-z0-9_-]+\s*\}\}/g, () => value)]);
+    if (names.some(([, n]) => n.includes('${{'))) { errors.push(`${job.id}: name still contains an expression after matrix expansion`); continue; }
+    for (const [value, name] of names) expanded.push({ id: job.id, name, optional: job.optional, advisory: job.advisory, matrixValue: value });
+  }
   return {
-    jobs,
-    required: jobs.filter((j) => !j.optional && !j.advisory).map((j) => j.name),
-    advisory: jobs.filter((j) => j.advisory).map((j) => j.name),
-    optional: jobs.filter((j) => j.optional && !j.advisory).map((j) => j.name),
+    jobs: expanded,
+    errors,
+    required: expanded.filter((j) => !j.optional && !j.advisory).map((j) => j.name),
+    advisory: expanded.filter((j) => j.advisory).map((j) => j.name),
+    optional: expanded.filter((j) => j.optional && !j.advisory).map((j) => j.name),
   };
 }
 
@@ -162,6 +238,7 @@ export function resolvePr(prArg, roadmapPr) {
 export function ciCommand(root, pr, { wait = false, timeoutMin = 30, mutationBlocking = false, out = process.stdout } = {}) {
   const checks = projectChecks(root, { mutationBlocking });
   if (!checks) return refuse(out, [`no ${WORKFLOW}: run /zi-bootstrap first`]);
+  if (checks.errors.length) return refuse(out, [`${WORKFLOW}: cannot tell which checks GitHub reports`, ...checks.errors]);
   const r = wait
     ? waitForChecks(root, pr, checks, { timeoutMin, log: (l) => out.write(l + '\n') })
     : (() => { const info = prInfo(root, pr); return { info, res: evaluate(checkRuns(root, info.headRefOid), checks), timedOut: false }; })();
@@ -180,6 +257,7 @@ export function mergeCommand(root, pr, { by, timeoutMin = 30, mutationBlocking =
   if (!by || !String(by).trim()) return refuse(out, ['--by <name> is required: the human who decided to merge']);
   const checks = projectChecks(root, { mutationBlocking });
   if (!checks) return refuse(out, [`no ${WORKFLOW}: run /zi-bootstrap first`]);
+  if (checks.errors.length) return refuse(out, [`${WORKFLOW}: cannot tell which checks GitHub reports; not merging`, ...checks.errors]);
   const first = prInfo(root, pr);
   if (first.state !== 'OPEN') return refuse(out, [`PR #${first.number} is ${first.state.toLowerCase()}, not open`]);
   if (first.isDraft) return refuse(out, [`PR #${first.number} is a draft; mark it ready first`]);

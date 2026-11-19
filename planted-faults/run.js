@@ -603,6 +603,14 @@ export function main(argv) {
     const none48 = G.evaluate([], req48);
     const red48 = G.evaluate(req48.required.map((name, i) => ({ id: i + 1, name, status: 'completed', conclusion: i === 0 ? 'failure' : 'success' })), req48);
     record(48, 'a pull request with no checks reported yet, or one red check, is read as mergeable', 'lane.js merge waits for every required job of the workflow (pr_gate evaluate)', none48.state === 'pending' && none48.missing.length === req48.required.length && red48.state === 'red', `none: ${none48.state}, one red: ${red48.state}`);
+
+    // 49 a matrix job's name is required unexpanded (`… (node ${{ matrix.node }})`), which GitHub never reports: lane.js merge
+    //    would wait out its timeout and protection would block every PR (0016 E.11). The kit's own workflow is the fixture.
+    const wf49 = G.workflowChecks(fs.readFileSync(path.join(ROOT, '.github', 'workflows', 'kit.yml'), 'utf8'));
+    const bad49 = wf49.required.filter((n) => n.includes('${{'));
+    const ok49 = (wf49.errors ?? []).length === 0 && bad49.length === 0 && wf49.required.includes('script unit tests (node 20)') && wf49.required.includes('script unit tests (node 22)');
+    record(49, 'a matrix job is required under its unexpanded name, which no check run ever reports', 'pr_gate workflowChecks expands strategy.matrix into one required name per value, or refuses', ok49, ok49 ? `required: ${wf49.required.join(' | ')}` : `unexpanded: ${bad49.join(' | ')}; errors: ${(wf49.errors ?? []).join('; ')}`);
+
   } finally {
     if (a.keep) process.stderr.write(`fixtures kept at ${tmp}\n`);
     else fs.rmSync(tmp, { recursive: true, force: true });

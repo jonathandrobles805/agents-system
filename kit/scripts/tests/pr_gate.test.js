@@ -34,6 +34,69 @@ test('evaluate: green only when every required check reported and passed', () =>
   for (const c of ['cancelled', 'timed_out', 'action_required', 'stale']) assert.equal(G.evaluate([run(1, 'tests', 'completed', c), run(2, 'kit-checks'), run(3, 'secrets')], CHECKS).state, 'red', c);
 });
 
+test('workflowChecks: a matrix job is required once per value, named as GitHub reports it (0016 E.11)', () => {
+  // This repo's own workflow: the name GitHub reports is `script unit tests (node 20)`, never the unexpanded form.
+  const kit = G.workflowChecks(fs.readFileSync(path.join(process.cwd(), '.github', 'workflows', 'kit.yml'), 'utf8'));
+  assert.deepEqual(kit.errors, []);
+  assert.ok(kit.required.includes('script unit tests (node 20)') && kit.required.includes('script unit tests (node 22)'));
+  assert.ok(!kit.required.some((n) => n.includes('${{')), 'no unexpanded matrix expression may be required');
+  // PR #88's real check runs (head 2d18a29) were green on both node values; before the fix this evaluated as pending.
+  const runs = [run(1, 'script unit tests (node 20)'), run(2, 'script unit tests (node 22)'), run(3, 'kit docs validate themselves'), run(4, 'eval smoke set (agents, skills, templates, workflows, eval)')];
+  assert.equal(G.evaluate(runs, kit).state, 'green');
+  // Values keep their quoting rules and the job's if:/continue-on-error flags.
+  const wf = (name, matrix, extra = '') => `jobs:\n  t:\n    name: ${name}\n${extra}    strategy:\n      matrix:\n${matrix}    steps: []\n`;
+  let c = G.workflowChecks(wf('tests (${{ matrix.os }})', "        os: ['ubuntu-latest', \"macos-14\"]\n", '    continue-on-error: true\n'));
+  assert.deepEqual(c.advisory, ['tests (ubuntu-latest)', 'tests (macos-14)']);
+  assert.deepEqual(c.required, []);
+  // Refusals, each with a reason: the caller must not guess a required list.
+  const err = (name, matrix, extra) => { const r = G.workflowChecks(wf(name, matrix, extra)); assert.equal(r.errors.length, 1, JSON.stringify(r)); return r.errors[0]; };
+  assert.match(err('t (${{ matrix.node }})', '        node: [20]\n        os: [ubuntu]\n'), /more than one axis/);
+  assert.match(err('t (${{ matrix.node }})', '        include:\n          - node: 20\n'), /include.*cannot be expanded/);
+  assert.match(err('t (${{ matrix.node }})', '        node: ${{ fromJSON(inputs.m) }}\n'), /cannot be expanded/);
+  assert.match(err('t (${{ matrix.other }})', '        node: [20]\n'), /matrix\.other, which is not an axis/);
+  assert.match(err('t', '        node: [20, 22]\n'), /does not use matrix\.node/);
+  // Unquoted numbers print as YAML numbers in the check name (3.10 reports as 3.1); quoted ones are verbatim.
+  c = G.workflowChecks(wf('py (${{ matrix.v }})', '        v: [3.10, "3.10", 20, 1.0]\n'));
+  assert.deepEqual(c.errors, []);
+  assert.deepEqual(c.required, ['py (3.1)', 'py (3.10)', 'py (20)', 'py (1)']);
+  // A quoted value with a comma, an inline mapping, and a `matrix:` outside strategy are refused or ignored, never required wrong.
+  assert.match(err('t (${{ matrix.v }})', '        v: ["a, b", c]\n'), /quoted value contains a comma/);
+  c = G.workflowChecks('jobs:\n  t:\n    name: t (${{ matrix.node }})\n    strategy:\n      matrix: { node: [20, 22] }\n    steps: []\n');
+  assert.equal(c.errors.length, 1);
+  assert.match(c.errors[0], /inline mapping/);
+  assert.deepEqual(c.required, []);
+  c = G.workflowChecks('jobs:\n  t:\n    name: T\n    env:\n      matrix:\n        node: [20, 22]\n    steps: []\n');
+  assert.deepEqual([c.errors, c.required], [[], ['T']]);
+  // An inline `strategy: {…}`, a comment line inside strategy/matrix, a collection value and a replacement pattern: no silent wrong name.
+  c = G.workflowChecks('jobs:\n  s:\n    strategy: { matrix: { v: [1, 2] } }\n    steps: []\n');
+  assert.match(c.errors[0] ?? '', /strategy \(inline mapping/);
+  assert.deepEqual(c.required, []);
+  c = G.workflowChecks('jobs:\n  t:\n    name: t (${{ matrix.v }})\n    strategy:\n    # a comment\n      matrix:\n      # another\n        v: [1, 2]\n    steps: []\n');
+  assert.deepEqual([c.errors, c.required], [[], ['t (1)', 't (2)']]);
+  assert.match(err('t (${{ matrix.v }})', '        v: [{a: 1}, 2]\n'), /collection or a non-decimal/);
+  assert.match(err('t (${{ matrix.v }})', '        v: [0x10, 2]\n'), /collection or a non-decimal/);
+  c = G.workflowChecks(wf('t (${{ matrix.v }})', "        v: ['c$&d']\n"));
+  assert.deepEqual(c.required, ['t (c$&d)']);
+  // Booleans and nulls print as the runner prints them; unusual YAML is refused, not required wrong.
+  c = G.workflowChecks(wf('t (${{ matrix.v }})', '        v: [True, FALSE, null, ~]\n'));
+  assert.deepEqual([c.errors, c.required], [[], ['t (true)', 't (false)', 't ()', 't ()']]);
+  assert.match(err('t (${{ matrix.v }}) ${{ github.ref }}', '        v: [1]\n'), /still contains an expression/);
+  c = G.workflowChecks('jobs:\n  t:\n    name: tests\n    strategy:\n        matrix:\n          v: [1, 2]\n    steps: []\n');
+  assert.match(c.errors[0] ?? '', /non-standard indentation/);
+  assert.deepEqual(c.required, []);
+  assert.match(err('t (${{ matrix.v }})', '        v: [1]\n        w.x: [1, 2]\n'), /unparsed matrix line/);
+  assert.match(err('t (${{ matrix.v }})', '        v: []\n'), /empty list/);
+  assert.match(err('t (${{ matrix.v }})', '        v: [",", x]\n'), /quoted value contains a comma/);
+  assert.match(err('t (${{ matrix.v }})', "        v: ['it''s', b]\n"), /escape or a key/);
+  assert.match(err('t (${{ matrix.v }})', '        v: [a: b]\n'), /escape or a key/);
+  // A name that uses matrix.* in a job without a matrix is an error too (and the job is still listed).
+  const r = G.workflowChecks('jobs:\n  t:\n    name: t (${{ matrix.node }})\n    steps: []\n');
+  assert.equal(r.errors.length, 1);
+  assert.match(r.errors[0], /no strategy\.matrix/);
+  // A workflow without any matrix is unchanged.
+  assert.deepEqual(G.workflowChecks('jobs:\n  a:\n    name: A\n  b:\n    if: x\n  c:\n').required, ['A', 'c']);
+});
+
 /** A bootstrapped project with a GitHub origin and a ROADMAP row pointing at PR #4. */
 function project(t) {
   const root = F.nodeApi(path.join(tmpPath(t), 'proj'));

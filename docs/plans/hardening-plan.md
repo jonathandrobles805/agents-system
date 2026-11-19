@@ -50,7 +50,7 @@ All five were settled by you in chat on 2026-11-17. Each is compared with GitHub
 
 Repo links point to `main` at [`3a34247`](https://github.com/jonathandrobles805/agents-system/tree/3a34247f08515ed8f3b328f01bb9531970cbb222), checked 2026-11-17 22:50. Between `f1da557` (PR #54) and `3a34247` only docs changed, so every code line cited here is the same as at `f1da557`. Code has changed on `main` since (#62, #79, #80, #81); this baseline stays at `3a34247`, and later facts give their own commit.
 
-**Checks on this code (at `3a34247`; on `main` at `4fa12cf`: 367 of 367 tests, 48 of 48 faults):**
+**Checks on this code (at `3a34247`; on `main` at `4fa12cf`: 367 of 367 tests, 48 of 48 faults; after PR #90: 368 and 49):**
 
 - `npm test`: 347 of 347 pass.
 - `planted-faults/run.js`: 46 of 46 caught.
@@ -220,7 +220,7 @@ Steps 1–9 of the skills work are done on branch `commands-to-skills`: 23 `zi-`
 
 ### Step 1. Judge: GitHub enforces you (0016 step 1, plus D1)
 
-- [ ] Fix the matrix job names first: the kit must name each matrix value as GitHub reports it (`script unit tests (node 20)`, `(node 22)`), not `script unit tests (node ${{ matrix.node }})` ([pr_gate.js L26–48](https://github.com/jonathandrobles805/agents-system/blob/4fa12cf51030656bba5aef5c73522bfb95be965e/kit/scripts/pr_gate.js#L26-L48)). Until then `lane.js merge` on this repo stops after 30 minutes, and protection built from that name would block every PR (0016 E.11).
+- [x] Fix the matrix job names first (PR #90, planted fault 49): the kit must name each matrix value as GitHub reports it (`script unit tests (node 20)`, `(node 22)`), not `script unit tests (node ${{ matrix.node }})` ([pr_gate.js L26–48](https://github.com/jonathandrobles805/agents-system/blob/4fa12cf51030656bba5aef5c73522bfb95be965e/kit/scripts/pr_gate.js#L26-L48)). Until then `lane.js merge` on this repo stops after 30 minutes, and protection built from that name would block every PR (0016 E.11).
 - [ ] Use kit-test as the test project on GitHub (Step 0 ran there). Create the GitHub App (contents, pull requests and workflows: write), and install it on the test project and this repo.
 - [ ] Move the Anthropic keys into an environment limited to `main`; move the real-agent eval from pull requests to `main` and the weekly workflow, each job naming the environment and failing when the keys are missing.
 - [ ] Add a ruleset so the App may push only `wt/*` and `spec/*` branches.
@@ -386,7 +386,7 @@ A control counts only when a planted fault shows it catching a deliberate bypass
 
 **Where each fault runs:**
 
-- **Kit CI:** script faults. Today `planted-faults/run.js` catches 48 of 48.
+- **Kit CI:** script faults. Today `planted-faults/run.js` catches 49 of 49.
 - **Test project:** GitHub faults, run as a scripted check, because they need a live repo and the App.
 - **Eval set:** reviewer faults, because a reviewer's catch rate is model behaviour.
 
