@@ -67,6 +67,16 @@ test('workflowChecks: a matrix job is required once per value, named as GitHub r
   assert.deepEqual(c.required, []);
   c = G.workflowChecks('jobs:\n  t:\n    name: T\n    env:\n      matrix:\n        node: [20, 22]\n    steps: []\n');
   assert.deepEqual([c.errors, c.required], [[], ['T']]);
+  // An inline `strategy: {…}`, a comment line inside strategy/matrix, a collection value and a replacement pattern: no silent wrong name.
+  c = G.workflowChecks('jobs:\n  s:\n    strategy: { matrix: { v: [1, 2] } }\n    steps: []\n');
+  assert.match(c.errors[0] ?? '', /strategy \(inline mapping/);
+  assert.deepEqual(c.required, []);
+  c = G.workflowChecks('jobs:\n  t:\n    name: t (${{ matrix.v }})\n    strategy:\n    # a comment\n      matrix:\n      # another\n        v: [1, 2]\n    steps: []\n');
+  assert.deepEqual([c.errors, c.required], [[], ['t (1)', 't (2)']]);
+  assert.match(err('t (${{ matrix.v }})', '        v: [{a: 1}, 2]\n'), /collection or a non-decimal/);
+  assert.match(err('t (${{ matrix.v }})', '        v: [0x10, 2]\n'), /collection or a non-decimal/);
+  c = G.workflowChecks(wf('t (${{ matrix.v }})', "        v: ['c$&d']\n"));
+  assert.deepEqual(c.required, ['t (c$&d)']);
   // A name that uses matrix.* in a job without a matrix is an error too (and the job is still listed).
   const r = G.workflowChecks('jobs:\n  t:\n    name: t (${{ matrix.node }})\n    steps: []\n');
   assert.equal(r.errors.length, 1);

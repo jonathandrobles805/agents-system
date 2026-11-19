@@ -67,11 +67,13 @@ export function workflowChecks(text) {
       if (/^ {4}continue-on-error:/.test(line)) job.advisory = true;
       // strategy.matrix: axes are the 8-space keys under the 6-space `matrix:` key, itself under the job's `strategy:`.
       if (/^ {4}strategy:\s*$/.test(line)) { inStrategy = true; continue; }
-      if (inStrategy && /^ {4}\S/.test(line)) inStrategy = false;
+      // `strategy: { matrix: … }` or `strategy: # comment` hides the matrix from this parser: refuse, never require the bare name.
+      if (/^ {4}strategy:\s*\S/.test(line)) { job.matrix = { axes: {}, unsupported: ['strategy (inline mapping or trailing comment)'] }; continue; }
+      if (inStrategy && /^ {4}[^\s#]/.test(line)) inStrategy = false;
       if (inStrategy && /^ {6}matrix:\s*$/.test(line)) { inMatrix = true; job.matrix = { axes: {}, unsupported: [] }; continue; }
       if (inStrategy && /^ {6}matrix:\s*\S/.test(line)) { job.matrix = { axes: {}, unsupported: ['matrix (inline mapping)'] }; continue; }
       if (inMatrix) {
-        if (/^ {6}\S/.test(line) || /^ {4}\S/.test(line)) inMatrix = false;
+        if (/^ {6}[^\s#]/.test(line) || /^ {4}[^\s#]/.test(line)) inMatrix = false;
         else {
           m = /^ {8}([A-Za-z0-9_-]+):\s*(.*?)\s*$/.exec(line);
           if (m) {
@@ -81,6 +83,7 @@ export function workflowChecks(text) {
               const pieces = raw.slice(1, -1).split(',').map((v) => v.trim()).filter(Boolean);
               // A quoted value holding a comma would be split in two: refuse rather than require two wrong names.
               if (pieces.some((x) => /^['"]/.test(x) !== /['"]$/.test(x))) job.matrix.unsupported.push(`${axis} (a quoted value contains a comma)`);
+              else if (pieces.some((x) => /^[\[{]/.test(x) || /^0[xob]/i.test(x) || /^[.+-]?\.(inf|nan)$/i.test(x))) job.matrix.unsupported.push(`${axis} (a value is a collection or a non-decimal number)`);
               else job.matrix.axes[axis] = pieces.map(matrixValue);
             }
           }
@@ -105,7 +108,7 @@ export function workflowChecks(text) {
     if (refs.some((r) => r !== axis)) { errors.push(`${job.id}: name uses matrix.${refs.find((r) => r !== axis)}, which is not an axis of the matrix (${axis})`); continue; }
     if (!refs.length) { errors.push(`${job.id}: a matrix job whose name does not use matrix.${axis} reports one check per value under a name this parser cannot predict`); continue; }
     for (const value of job.matrix.axes[axis]) {
-      expanded.push({ id: job.id, name: job.name.replace(/\$\{\{\s*matrix\.[A-Za-z0-9_-]+\s*\}\}/g, value), optional: job.optional, advisory: job.advisory, matrixValue: value });
+      expanded.push({ id: job.id, name: job.name.replace(/\$\{\{\s*matrix\.[A-Za-z0-9_-]+\s*\}\}/g, () => value), optional: job.optional, advisory: job.advisory, matrixValue: value });
     }
   }
   return {
