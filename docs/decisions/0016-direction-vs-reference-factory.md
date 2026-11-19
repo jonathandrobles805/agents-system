@@ -80,7 +80,7 @@ The review was given to the owner in a session on 2026-11-15 and is not committe
 | Gate before merge, after syncing with base | **Theirs better** | We rely on strict up-to-date checks in GitHub [verified: bootstrap.js:1397] and a best-effort merge queue [verified: bootstrap.js:1406-1410], which also covers this when it is enabled; their version works without a GitHub plan feature. |
 | Test-first red runs, done-criteria table | **Different goal** | We want proof a test fails for the right reason before the code exists; they do not try. Our implementation of it caused #30, #31, #39, #47, #48. Keep the goal, move the proof to CI (E.2). |
 | Tool-call and hour budgets per stage | **Ours aims higher, theirs works** | Their bound is `max_rounds` [read: factory/config.json:3], counted by the script that owns the state. Ours is counted inside the lane, can be reset by the lane, and does not stop a call [verified: hook_budget_check.js:47-84; kitlib.js:763-767] (#41, #53, 0015 §1b). |
-| Human merges every PR | **Different goal** | They auto-merge what the approver approves [read: .claude/agents/approver.md:13-15]. We keep the human merge (constraint "No self-approval" [verified: docs/OPERATING-MODEL.md:252]) and should make GitHub enforce it (E.2). |
+| Human merges every PR | **Different goal** | They auto-merge what the approver approves [read: .claude/agents/approver.md:13-15]. We keep the human merge (constraint "No self-approval" [verified: docs/OPERATING-MODEL.md:252]) and should make GitHub enforce it (E.2). *(E.10: the owner's yes is enforced by Claude Code; GitHub enforces green CI.)* |
 | Intake decides worth and scope once, on an expensive model | **Theirs better, small** | Our `/start` agrees a goal with the human; their intake can reject or rescope before any spec work [read: .claude/agents/intake.md:28-48]. Optional addition. |
 | Reviewer routing by risk and surface from a config table | **Equal** | Both are tables, not prompts [read: factory/bin/route:35-43] [verified: lane.js:966-992]. *(See E.6: specialist reviewers routed from the actual diff.)* |
 | Cost per job from transcripts | **Theirs visible, ours more robust** | Theirs is shown everywhere but depends on an undocumented format [read: DESIGN.md:124-125]; ours uses OpenTelemetry but only for launched lanes and is never rendered (A). |
@@ -202,7 +202,7 @@ Removing done-check, post-edit evidence, budget and read-log takes about 511 lin
 
 | Step | Adds | Removes | Why it is not weaker |
 |---|---|---|---|
-| 1. Judge | Test project on GitHub; bot identity *(amended by E.7: a GitHub App)*; protection with 1 approval and `enforce_admins`; CODEOWNERS additions | — | Only adds. |
+| 1. Judge | Test project on GitHub; bot identity *(amended by E.7: a GitHub App)*; protection with 1 approval and `enforce_admins`; CODEOWNERS additions *(amended by E.10: green CI and `enforce_admins`, no required approval or code-owner review)* | — | Only adds. |
 | 2. Spine | `advance`, transition table, store; dashboard reads it | `lane.js stage` becomes a call to `advance` | Same callers, now refused when illegal. Old hooks still run. |
 | 3. Gate | `lane.js gate` bound to SHA; done-check reads the gate's verdict instead of the log | — | done-check still blocks; its input is now computed, not claimed. |
 | 4. CI recompute | Scope from base; red run recomputed; review report demoted | — | CI only gets stricter. |
@@ -227,7 +227,7 @@ Between steps 1 and 6 the in-lane hooks and the new gates both run. Feedback ins
 
 - **§1 options A–E:** A, B, C and D are no longer needed: nothing the judge uses is read from lane-writable state. Keep E's first half (stop granting lane agents the mutating `lane.js` subcommands) as a guardrail.
 - **§1b:** dropped with tool-call budgets; the bound is rounds and wall time, enforced by the orchestrator not resuming an agent.
-- **§1c:** the ask rule is dropped as the mechanism for "a person decided". The human decides at GitHub, as a separate identity from the agents. Stage moves are `advance` calls, legal or refused, with no prompt; this also clears the scheduled and `--queue` conflict in B.3.
+- **§1c:** the ask rule is dropped as the mechanism for "a person decided". The human decides at GitHub, as a separate identity from the agents. Stage moves are `advance` calls, legal or refused, with no prompt; this also clears the scheduled and `--queue` conflict in B.3. *(Amended by E.10: the human's merge decision is an `ask` prompt on `kit merge`; stage moves stay prompt-free. A scheduled or headless session cannot merge, because nobody is there to answer the prompt.)*
 - **§2–§4 (binding by `agent_id`, `KIT_LANE`):** needed only to label events on the dashboard; drop it from budget and evidence.
 - **§7 probes:** P4 (can a hook write outside `allowWrite` under `srt`) stays relevant to the wall; P2-full (launch, stdin) stays relevant to unattended lanes; P5, P6, P7 are no longer needed.
 - If 0016 is accepted, mark 0015 "superseded in part by 0016" and keep it for its probe results.
@@ -278,8 +278,8 @@ Issue #56 lists (c), "one orchestrator skill", as paused work that this decision
 
 **Decision. This amends E.1 Add 4 and Add 5.**
 1. **A GitHub App is the agents' identity**, in place of the "separate bot identity" of E.1 Add 4. Permissions: contents, pull requests and workflows, write (workflows lets it change `.github/workflows/`, Open question 6); installed only on the repos the owner chooses.
-2. **One layer uses it:** pushing a lane or spec branch and opening its PR. That step runs on the owner's machine, outside the container, with a short-lived App token. Local work and tests need no GitHub identity; the gate and `lane.js start` fetch the base host-side with read access, never with the App; CI uses GitHub Actions' own token; the owner approves and merges with the owner's own account.
-3. **A ruleset lets the App push only `wt/*` and `spec/*` branches**: the kit's lane branches [verified: kit/scripts/lane.js:559] and the branches where specs are proposed [verified: kit/commands/plan.md:42]. It restricts creating, updating and deleting every other branch, a tag ruleset stops it creating tags, and only the owner is on the bypass list; these rules sit in their own ruleset, apart from the approval rules.
+2. **One layer uses it:** pushing a lane or spec branch and opening its PR. That step runs on the owner's machine, outside the container, with a short-lived App token. Local work and tests need no GitHub identity; the gate and `lane.js start` fetch the base host-side with read access, never with the App; CI uses GitHub Actions' own token; Claude merges with the owner's account through `kit merge`, on the owner's yes (E.10).
+3. **A ruleset lets the App push only `wt/*` and `spec/*` branches, so it cannot merge into `main`**: the kit's lane branches [verified: kit/scripts/lane.js:559] and the branches where specs are proposed [verified: kit/commands/plan.md:42]. It restricts creating, updating and deleting every other branch, a tag ruleset stops it creating tags, and only the owner is on the bypass list; these rules sit in their own ruleset, apart from branch protection.
 4. **Protection, for projects and for this repo alike:** the required checks from E.8 item 5; "Do not allow bypassing the above settings" (`enforce_admins: true`); no force push and no deletion; no required approving review and no code-owner review, because the owner says yes to each merge in Claude Code instead (E.10). Protected branches on a private repo need a paid plan; for this personally owned repo that is GitHub Pro [docs: docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/managing-protected-branches/about-protected-branches].
 5. **Every lane that pushes runs in the container, attended or not**, extending E.1 Add 5 beyond unattended lanes: only the worktree and scratch mounted [verified: kit/scripts/sandbox.js:141-146], plus the main repo's `.git` with `hooks/` and `config` read-only (Open question 5), none of the owner's credentials inside, and network access limited. This also covers issue #55 (secret reads through Bash on macOS) and makes Open question 4 moot. Done when E.1 Add 5's four attempts fail, a lane cannot write the main repo's `.git/hooks` or `.git/config`, and `lane.js launch <slug> --exec` starts `claude -p "/zi-run <slug>"` in the container (E.10). How a lane works inside the container is answered under Open question 5.
 
@@ -316,7 +316,7 @@ Issue #56 lists (c), "one orchestrator skill", as paused work that this decision
 | Planted fault | Must be caught by | Runs in | E.2 step (or amendment) |
 |---|---|---|---|
 | A merge while a required check is red or pending, from any account | GitHub refuses (protection, admins included) | Test project | 1 |
-| App pushes to `main`, or to a branch outside `wt/*` and `spec/*` | GitHub refuses (protection, ruleset) | Test project | 1 |
+| App pushes to or merges into `main`, or pushes to a branch outside `wt/*` and `spec/*` | GitHub refuses (protection, ruleset) | Test project | 1 |
 | Required check name that no job reports | Bootstrap read-back fails | Test project | 1 |
 | A workflow on an App branch reads the Anthropic keys | The environment limited to `main` withholds them | Test project | 1 |
 | Agent writes the spec's approval line | `lane.js` ignores it; only the owner's yes to the spec PR's merge counts | Kit CI | 1 |
@@ -350,7 +350,9 @@ Issue #56 lists (c), "one orchestrator skill", as paused work that this decision
 
 ### E.10 Merging on the owner's word (amendment, 2026-11-19, PR #88)
 
-**Why.** The owner does not open GitHub to approve and merge each PR: Claude asks, the owner says yes, Claude merges (owner, in chat, 2026-11-18 and 2026-11-19; first written into the work order by PR #87). E.7 item 4 required an approving review on GitHub, which no session may give, so every merge would have needed the owner on GitHub. `lane.js merge` already merges only after every required check passed on the PR head, pinned to that commit [verified: kit/scripts/pr_gate.js:177-191], and the bash guard blocks every other merge command [verified: kit/scripts/hook_guard_bash.js:32-34].
+**Pins for E.10.** `main` at 65cc526.
+
+**Why.** The owner does not open GitHub to approve and merge each PR: Claude asks, the owner says yes, Claude merges (owner, in chat, 2026-11-18 and 2026-11-19; first written into the work order by PR #87). E.7 item 4 required an approving review on GitHub, which no session may give, so every merge would have needed the owner on GitHub. `lane.js merge` already merges only after every required check passed on the PR head, pinned to that commit [verified: kit/scripts/pr_gate.js:177-191], and the bash guard blocks `gh pr merge` and its `gh api` PUT and GraphQL forms when they start a command [verified: kit/scripts/hook_guard_bash.js:32-34], a guardrail: prefixes such as `env` slip past it, so the permission rules of E.8 item 7 carry the denial.
 
 **Decision.**
 1. **The owner's yes.** Claude merges only through `kit merge` (today `lane.js merge`), and a Claude Code `ask` permission rule on that command prompts the owner before every merge; the model cannot skip it. The rule needs the `kit` launcher (E.8 item 7, issue #63).
