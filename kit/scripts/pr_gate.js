@@ -23,6 +23,20 @@ export const WORKFLOW = path.join('.github', 'workflows', 'kit.yml');
 const OK = new Set(['success', 'neutral', 'skipped']);
 
 /**
+ * One matrix value as the runner prints it into the check name. A quoted scalar is taken verbatim; an unquoted
+ * number is a YAML number and the runner formats it as such, so `3.10` reports as `3.1` and `1.0` as `1` (the
+ * setup-python gotcha); YAML booleans print as `true`/`false` and nulls as empty. Anything else is a plain string.
+ */
+function matrixValue(v) {
+  const q = /^(['"])(.*)\1$/.exec(v);
+  if (q) return q[2];
+  if (/^(true|True|TRUE)$/.test(v)) return 'true';
+  if (/^(false|False|FALSE)$/.test(v)) return 'false';
+  if (/^(null|Null|NULL|~)$/.test(v)) return '';
+  return /^[-+]?(\d+\.?\d*|\.\d+)([eE][-+]?\d+)?$/.test(v) ? String(Number(v)) : v;
+}
+
+/**
  * The jobs of a GitHub Actions workflow, by the name GitHub reports, with their required/advisory/optional lists.
  * A job with a `strategy.matrix` reports one check per matrix value, with `${{ matrix.<axis> }}` in its name
  * replaced by the value (this repo: `script unit tests (node 20)`, `(node 22)`), so a matrix job expands to one
@@ -32,17 +46,6 @@ const OK = new Set(['success', 'neutral', 'skipped']);
  * axis the name does not use) is a parse error, not a guess: the caller must refuse, since a wrong required list
  * blocks every PR or waits forever.
  */
-/**
- * One matrix value as the runner prints it into the check name. A quoted scalar is taken verbatim; an unquoted
- * number is a YAML number and the runner formats it as such, so `3.10` reports as `3.1` and `1.0` as `1` (the
- * setup-python gotcha). Anything else is a plain string.
- */
-function matrixValue(v) {
-  const q = /^(['"])(.*)\1$/.exec(v);
-  if (q) return q[2];
-  return /^[-+]?(\d+\.?\d*|\.\d+)([eE][-+]?\d+)?$/.test(v) ? String(Number(v)) : v;
-}
-
 export function workflowChecks(text) {
   const jobs = [];
   const lines = String(text).split('\n');
@@ -72,18 +75,22 @@ export function workflowChecks(text) {
       if (inStrategy && /^ {4}[^\s#]/.test(line)) inStrategy = false;
       if (inStrategy && /^ {6}matrix:\s*$/.test(line)) { inMatrix = true; job.matrix = { axes: {}, unsupported: [] }; continue; }
       if (inStrategy && /^ {6}matrix:\s*\S/.test(line)) { job.matrix = { axes: {}, unsupported: ['matrix (inline mapping)'] }; continue; }
+      if (inStrategy && /^ {5,}matrix:/.test(line) && !/^ {6}matrix:/.test(line)) { job.matrix = { axes: {}, unsupported: ['matrix (non-standard indentation)'] }; continue; }
       if (inMatrix) {
         if (/^ {6}[^\s#]/.test(line) || /^ {4}[^\s#]/.test(line)) inMatrix = false;
         else {
           m = /^ {8}([A-Za-z0-9_-]+):\s*(.*?)\s*$/.exec(line);
+          if (!m && /^ {8}[^\s#]/.test(line)) job.matrix.unsupported.push('an unparsed matrix line');
           if (m) {
             const [, axis, raw] = m;
             if (axis === 'include' || axis === 'exclude' || raw === '' || !/^\[.*\]$/.test(raw) || raw.includes('${{')) job.matrix.unsupported.push(axis);
             else {
               const pieces = raw.slice(1, -1).split(',').map((v) => v.trim()).filter(Boolean);
               // A quoted value holding a comma would be split in two: refuse rather than require two wrong names.
-              if (pieces.some((x) => /^['"]/.test(x) !== /['"]$/.test(x))) job.matrix.unsupported.push(`${axis} (a quoted value contains a comma)`);
+              if (!pieces.length) job.matrix.unsupported.push(`${axis} (empty list)`);
+              else if (pieces.some((x) => (/^['"]/.test(x) || /['"]$/.test(x)) && !/^(['"]).+\1$/.test(x))) job.matrix.unsupported.push(`${axis} (a quoted value contains a comma)`);
               else if (pieces.some((x) => /^[\[{]/.test(x) || /^0[xob]/i.test(x) || /^[.+-]?\.(inf|nan)$/i.test(x))) job.matrix.unsupported.push(`${axis} (a value is a collection or a non-decimal number)`);
+              else if (pieces.some((x) => /\\|''|""|: |:$/.test(x))) job.matrix.unsupported.push(`${axis} (a value with an escape or a key: value pair)`);
               else job.matrix.axes[axis] = pieces.map(matrixValue);
             }
           }
@@ -107,9 +114,9 @@ export function workflowChecks(text) {
     const [axis] = axes;
     if (refs.some((r) => r !== axis)) { errors.push(`${job.id}: name uses matrix.${refs.find((r) => r !== axis)}, which is not an axis of the matrix (${axis})`); continue; }
     if (!refs.length) { errors.push(`${job.id}: a matrix job whose name does not use matrix.${axis} reports one check per value under a name this parser cannot predict`); continue; }
-    for (const value of job.matrix.axes[axis]) {
-      expanded.push({ id: job.id, name: job.name.replace(/\$\{\{\s*matrix\.[A-Za-z0-9_-]+\s*\}\}/g, () => value), optional: job.optional, advisory: job.advisory, matrixValue: value });
-    }
+    const names = job.matrix.axes[axis].map((value) => [value, job.name.replace(/\$\{\{\s*matrix\.[A-Za-z0-9_-]+\s*\}\}/g, () => value)]);
+    if (names.some(([, n]) => n.includes('${{'))) { errors.push(`${job.id}: name still contains an expression after matrix expansion`); continue; }
+    for (const [value, name] of names) expanded.push({ id: job.id, name, optional: job.optional, advisory: job.advisory, matrixValue: value });
   }
   return {
     jobs: expanded,

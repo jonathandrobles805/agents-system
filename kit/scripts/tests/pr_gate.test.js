@@ -77,6 +77,18 @@ test('workflowChecks: a matrix job is required once per value, named as GitHub r
   assert.match(err('t (${{ matrix.v }})', '        v: [0x10, 2]\n'), /collection or a non-decimal/);
   c = G.workflowChecks(wf('t (${{ matrix.v }})', "        v: ['c$&d']\n"));
   assert.deepEqual(c.required, ['t (c$&d)']);
+  // Booleans and nulls print as the runner prints them; unusual YAML is refused, not required wrong.
+  c = G.workflowChecks(wf('t (${{ matrix.v }})', '        v: [True, FALSE, null, ~]\n'));
+  assert.deepEqual([c.errors, c.required], [[], ['t (true)', 't (false)', 't ()', 't ()']]);
+  assert.match(err('t (${{ matrix.v }}) ${{ github.ref }}', '        v: [1]\n'), /still contains an expression/);
+  c = G.workflowChecks('jobs:\n  t:\n    name: tests\n    strategy:\n        matrix:\n          v: [1, 2]\n    steps: []\n');
+  assert.match(c.errors[0] ?? '', /non-standard indentation/);
+  assert.deepEqual(c.required, []);
+  assert.match(err('t (${{ matrix.v }})', '        v: [1]\n        w.x: [1, 2]\n'), /unparsed matrix line/);
+  assert.match(err('t (${{ matrix.v }})', '        v: []\n'), /empty list/);
+  assert.match(err('t (${{ matrix.v }})', '        v: [",", x]\n'), /quoted value contains a comma/);
+  assert.match(err('t (${{ matrix.v }})', "        v: ['it''s', b]\n"), /escape or a key/);
+  assert.match(err('t (${{ matrix.v }})', '        v: [a: b]\n'), /escape or a key/);
   // A name that uses matrix.* in a job without a matrix is an error too (and the job is still listed).
   const r = G.workflowChecks('jobs:\n  t:\n    name: t (${{ matrix.node }})\n    steps: []\n');
   assert.equal(r.errors.length, 1);
