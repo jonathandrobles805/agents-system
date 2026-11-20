@@ -447,9 +447,9 @@ export function main(argv) {
     F.git(['remote', 'add', 'origin', 'https://github.com/o/proj.git'], root30);
     const gh30 = path.join(tmp, 'gh-30');
     fs.mkdirSync(gh30, { recursive: true });
-    const protect30 = (drift) => {
+    const protect30 = (drift, rulesetDrift = {}) => {
       const state = path.join(gh30, 'state.json');
-      write(state, JSON.stringify({ drift }));
+      write(state, JSON.stringify({ drift, rulesetDrift }));
       write(path.join(gh30, 'gh'), `#!/usr/bin/env node
 const fs = require('fs');
 const st = JSON.parse(fs.readFileSync(${JSON.stringify(state)}, 'utf8'));
@@ -465,13 +465,23 @@ if (j.includes('/protection')) {
   }));
   process.exit(0);
 }
-if (j.includes('/rulesets')) process.exit(0);
+if (j === 'api repos/o/proj') { process.stdout.write(JSON.stringify({ owner: { login: 'o', type: 'User' } })); process.exit(0); }
+if (j === 'api user') { process.stdout.write(JSON.stringify({ login: 'o', id: 4242 })); process.exit(0); }
+const save = () => fs.writeFileSync(${JSON.stringify(state)}, JSON.stringify(st));
+st.rulesets = st.rulesets || [];
+const api = args.filter((a) => !a.startsWith('-') && a !== 'api' && a !== 'PUT' && a !== 'POST')[0] || '';
+const byId = /\\/rulesets\\/(\\d+)$/.exec(api);
+if (api.endsWith('/rulesets') && !args.includes('POST')) { process.stdout.write(JSON.stringify(st.rulesets.map(({ id, name }) => ({ id, name })))); process.exit(0); }
+if (api.endsWith('/rulesets')) { const rs = { id: 100 + st.rulesets.length, ...JSON.parse(fs.readFileSync(0, 'utf8')) }; st.rulesets.push(rs); save(); process.stdout.write(JSON.stringify(rs)); process.exit(0); }
+if (byId && args.includes('PUT')) { const i = st.rulesets.findIndex((x) => String(x.id) === byId[1]); st.rulesets[i] = { id: st.rulesets[i].id, ...JSON.parse(fs.readFileSync(0, 'utf8')) }; save(); process.stdout.write(JSON.stringify(st.rulesets[i])); process.exit(0); }
+if (byId) { const rs = st.rulesets.find((x) => String(x.id) === byId[1]); const d = (st.rulesetDrift || {})[rs.name] || {}; process.stdout.write(JSON.stringify({ ...rs, ...d })); process.exit(0); }
 process.stderr.write('fake gh: unexpected ' + j); process.exit(9);
 `);
       fs.chmodSync(path.join(gh30, 'gh'), 0o755);
       const r = run('bootstrap.js', ['--repo', root30, '--upgrade', '--protect', '--json'], { env: { PATH: `${gh30}${path.delimiter}${process.env.PATH}` } });
       const bp = r.stdout ? (JSON.parse(r.stdout).branch_protection ?? {}) : {};
-      return { bp, sent: JSON.parse(read(state)).put ?? {} };
+      const st = JSON.parse(read(state));
+      return { bp, sent: st.put ?? {}, rulesets: st.rulesets ?? [] };
     };
     const good30 = protect30({});
     const sent30 = good30.sent;
@@ -479,7 +489,18 @@ process.stderr.write('fake gh: unexpected ' + j); process.exit(9);
     const admin30 = protect30({ enforce_admins: false });
     const ghost30 = protect30({ contexts: ['ghost', ...(sent30.required_status_checks?.contexts ?? [])] });
     const caught30 = admin30.bp.ok === false && /enforce_admins is not enabled/.test(admin30.bp.reason ?? '') && ghost30.bp.ok === false && /"ghost" is not a job the workflow reports/.test(ghost30.bp.reason ?? '');
-    record(30, 'branch protection lets an admin merge on red CI, or GitHub holds other settings than the kit set', 'bootstrap --protect: enforce_admins on, no required review, settings read back from GitHub and compared (GitHub enforces)', faithful && caught30, `sent enforce_admins=${sent30.enforce_admins}, code_owner=${sent30.required_pull_request_reviews?.require_code_owner_reviews}, approvals=${sent30.required_pull_request_reviews?.required_approving_review_count}; read-back ok=${good30.bp.ok}; admin bypass -> ${admin30.bp.ok === false ? 'refused' : 'accepted'}; unknown check -> ${ghost30.bp.ok === false ? 'refused' : 'accepted'}`, 'tool-level');
+    // the ruleset half: the agents' identity may create, update or delete only wt/* and spec/* branches and no tag;
+    // only the owner is on the bypass list; a second bypass actor GitHub holds is refused
+    const rsBranches = good30.rulesets.find((x) => x.name === 'kit agent branches') ?? {};
+    const rsTags = good30.rulesets.find((x) => x.name === 'kit tags') ?? {};
+    const types = (rs) => (rs.rules ?? []).map((x) => x.type).sort().join(',');
+    const ownerOnly = (rs) => (rs.bypass_actors ?? []).length === 1 && rs.bypass_actors[0].actor_type === 'User' && rs.bypass_actors[0].actor_id === 4242;
+    const rulesetsSent = rsBranches.target === 'branch' && rsBranches.enforcement === 'active' && types(rsBranches) === 'creation,deletion,update' && ownerOnly(rsBranches)
+      && (rsBranches.conditions?.ref_name?.include ?? []).join() === '~ALL' && (rsBranches.conditions?.ref_name?.exclude ?? []).join() === 'refs/heads/wt/*,refs/heads/spec/*'
+      && rsTags.target === 'tag' && rsTags.enforcement === 'active' && types(rsTags) === 'creation,deletion,update' && ownerOnly(rsTags) && (rsTags.conditions?.ref_name?.exclude ?? []).length === 0;
+    const extra30 = protect30({}, { 'kit agent branches': { bypass_actors: [{ actor_id: 4242, actor_type: 'User', bypass_mode: 'always' }, { actor_id: 5840689, actor_type: 'Integration', bypass_mode: 'always' }] } });
+    const rulesetDriftCaught = extra30.bp.ok === false && /kit agent branches: bypass list is User 4242, Integration 5840689, not only the owner/.test(extra30.bp.reason ?? '');
+    record(30, 'branch protection lets an admin merge on red CI, GitHub holds other settings than the kit set, or the agents\' identity can push outside wt/* and spec/*', 'bootstrap --protect: enforce_admins on, no required review, rulesets that keep every other branch and every tag to the owner; all read back from GitHub and compared (GitHub enforces)', faithful && caught30 && rulesetsSent && rulesetDriftCaught, `sent enforce_admins=${sent30.enforce_admins}, code_owner=${sent30.required_pull_request_reviews?.require_code_owner_reviews}, approvals=${sent30.required_pull_request_reviews?.required_approving_review_count}; read-back ok=${good30.bp.ok}; admin bypass -> ${admin30.bp.ok === false ? 'refused' : 'accepted'}; unknown check -> ${ghost30.bp.ok === false ? 'refused' : 'accepted'}; rulesets as planned=${rulesetsSent}; a second bypass actor -> ${extra30.bp.ok === false ? 'refused' : 'accepted'}`, 'tool-level');
 
     // 31 coverage below the floor, or the floor lowered -> ci_coverage_floor fails
     const kj31 = path.join(root, '.claude', 'kit.json');

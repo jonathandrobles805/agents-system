@@ -1407,6 +1407,78 @@ export function readBackProtection(owner, repo, branch, checks) {
   return { ok: m.length === 0, mismatches: m, checks: got };
 }
 
+/** gh api as JSON: { ok, data, reason }. Never throws. */
+function ghJson(args, input) {
+  const r = spawnSync('gh', ['api', ...args], { input, encoding: 'utf8', timeout: 60000 });
+  if (r.error) return { ok: false, data: null, reason: failText(r.error, ['gh', 'api', ...args], 60) };
+  if (r.status !== 0) return { ok: false, data: null, reason: Array.from(pyStrip(r.stderr ?? '')).slice(0, 200).join('') || `gh api ${args[0]} exited ${r.status}` };
+  try { return { ok: true, data: r.stdout.trim() ? JSON.parse(r.stdout) : null, reason: '' }; } catch { return { ok: false, data: null, reason: 'GitHub returned no JSON' }; }
+}
+
+/** Create the ruleset, or update the one with the same name, so running --protect twice never duplicates it. */
+export function upsertRuleset(owner, repo, ruleset) {
+  const list = ghJson([`repos/${owner}/${repo}/rulesets`]);
+  if (!list.ok) return { ok: false, reason: `could not list rulesets: ${list.reason}` };
+  const existing = (Array.isArray(list.data) ? list.data : []).find((x) => x && x.name === ruleset.name);
+  const r = existing
+    ? ghJson(['-X', 'PUT', `repos/${owner}/${repo}/rulesets/${existing.id}`, '--input', '-'], K.jsonDumps(ruleset))
+    : ghJson(['-X', 'POST', `repos/${owner}/${repo}/rulesets`, '--input', '-'], K.jsonDumps(ruleset));
+  if (!r.ok) return { ok: false, reason: r.reason };
+  return { ok: true, id: r.data?.id ?? existing?.id ?? null, action: existing ? 'updated' : 'created', reason: '' };
+}
+
+/** The ref patterns the agents' identity may create, update and delete: lane branches and spec branches. */
+export const AGENT_BRANCHES = ['refs/heads/wt/*', 'refs/heads/spec/*'];
+
+/**
+ * Two repository rulesets keep the agents' identity (the GitHub App) to lane and spec branches (hardening plan D1,
+ * 0016 E.7): outside `wt/*` and `spec/*` no branch may be created, updated or deleted, and no tag may be created,
+ * updated or deleted, except by the one actor on the bypass list, the owner running this command (an organization's
+ * admins when the repository belongs to one). The App is not on the list, so it cannot push to `main` or anywhere
+ * else. Each ruleset is then read back and compared; any difference fails the result. Never throws.
+ */
+export function agentRulesets(owner, repo) {
+  const fail = (reason) => ({ ok: false, reason, rulesets: {} });
+  const meta = ghJson([`repos/${owner}/${repo}`]);
+  if (!meta.ok) return fail(`could not read the repository: ${meta.reason}`);
+  let bypass;
+  if (meta.data?.owner?.type === 'Organization') bypass = { actor_id: 1, actor_type: 'OrganizationAdmin', bypass_mode: 'always' };
+  else {
+    const me = ghJson(['user']);
+    if (!me.ok || typeof me.data?.id !== 'number') return fail(`could not read the user gh is logged in as: ${me.reason || 'no id'}`);
+    bypass = { actor_id: me.data.id, actor_type: 'User', bypass_mode: 'always' };
+  }
+  const refRules = [{ type: 'creation' }, { type: 'update', parameters: { update_allows_fetch_and_merge: false } }, { type: 'deletion' }];
+  const wanted = {
+    branches: { name: 'kit agent branches', target: 'branch', enforcement: 'active', bypass_actors: [bypass], conditions: { ref_name: { include: ['~ALL'], exclude: AGENT_BRANCHES } }, rules: refRules },
+    tags: { name: 'kit tags', target: 'tag', enforcement: 'active', bypass_actors: [bypass], conditions: { ref_name: { include: ['~ALL'], exclude: [] } }, rules: refRules },
+  };
+  const out = { ok: true, reason: '', bypass, rulesets: {} };
+  const mismatches = [];
+  for (const [key, ruleset] of Object.entries(wanted)) {
+    const up = upsertRuleset(owner, repo, ruleset);
+    if (!up.ok) return fail(`${ruleset.name}: ${up.reason}`);
+    out.rulesets[key] = { id: up.id, action: up.action };
+    const back = ghJson([`repos/${owner}/${repo}/rulesets/${up.id}`]);
+    if (!back.ok) return fail(`${ruleset.name}: could not read it back: ${back.reason}`);
+    const g = back.data ?? {};
+    const sorted = (xs) => (Array.isArray(xs) ? xs.map(String).sort() : []);
+    if (g.enforcement !== 'active') mismatches.push(`${ruleset.name}: enforcement is ${g.enforcement}, not active`);
+    if (g.target !== ruleset.target) mismatches.push(`${ruleset.name}: target is ${g.target}, not ${ruleset.target}`);
+    const types = sorted((g.rules ?? []).map((x) => x?.type));
+    if (types.join(',') !== sorted(refRules.map((x) => x.type)).join(',')) mismatches.push(`${ruleset.name}: rules are [${types.join(', ')}], not [creation, deletion, update]`);
+    const inc = sorted(g.conditions?.ref_name?.include), exc = sorted(g.conditions?.ref_name?.exclude);
+    if (inc.join(',') !== '~ALL') mismatches.push(`${ruleset.name}: include is [${inc.join(', ')}], not [~ALL]`);
+    if (exc.join(',') !== sorted(ruleset.conditions.ref_name.exclude).join(',')) mismatches.push(`${ruleset.name}: exclude is [${exc.join(', ')}], not [${ruleset.conditions.ref_name.exclude.join(', ')}]`);
+    const actors = Array.isArray(g.bypass_actors) ? g.bypass_actors : [];
+    const same = (a) => a && a.actor_type === bypass.actor_type && (bypass.actor_type === 'OrganizationAdmin' || a.actor_id === bypass.actor_id) && (a.bypass_mode ?? 'always') === 'always';
+    if (actors.length !== 1 || !same(actors[0])) mismatches.push(`${ruleset.name}: bypass list is ${actors.length ? actors.map((a) => `${a.actor_type}${a.actor_id != null ? ` ${a.actor_id}` : ''}`).join(', ') : 'empty'}, not only the owner (${bypass.actor_type} ${bypass.actor_id})`);
+  }
+  if (mismatches.length) { out.ok = false; out.reason = `read back from GitHub differs from what the kit set: ${mismatches.join('; ')}`; }
+  out.mismatches = mismatches;
+  return out;
+}
+
 /** Set branch protection through gh. Returns a result dict; never throws. */
 export function protectBranch(root, branch, checks) {
   if (!which('gh')) return { ok: false, reason: 'gh not installed' };
@@ -1439,11 +1511,16 @@ export function protectBranch(root, branch, checks) {
       out.read_back = readBackProtection(owner, repo, branch, checks);
       if (!out.read_back.ok) { out.ok = false; out.reason = `protection read back from GitHub differs from what the kit set: ${out.read_back.mismatches.join('; ')}`; }
     }
+    // The agents' identity may push lane and spec branches and nothing else (hardening plan D1, 0016 E.7).
+    if (rc === 0) {
+      out.agent_rulesets = agentRulesets(owner, repo);
+      if (!out.agent_rulesets.ok) { out.ok = false; out.reason = [out.reason, `agent rulesets: ${out.agent_rulesets.reason}`].filter(Boolean).join('; '); }
+    }
     // Merge queue, best effort: a repository ruleset with a merge_queue rule (the branch-protection API cannot set it).
     if (rc === 0) {
       const ruleset = { name: 'kit merge queue', target: 'branch', enforcement: 'active', conditions: { ref_name: { include: [`refs/heads/${branch}`], exclude: [] } }, rules: [{ type: 'merge_queue', parameters: { check_response_timeout_minutes: 60, grouping_strategy: 'ALLGREEN', max_entries_to_build: 5, max_entries_to_merge: 5, merge_method: 'SQUASH', min_entries_to_merge: 1, min_entries_to_merge_wait_minutes: 5 } }] };
-      const q = spawnSync('gh', ['api', '-X', 'POST', `repos/${owner}/${repo}/rulesets`, '--input', '-'], { input: K.jsonDumps(ruleset), encoding: 'utf8', timeout: 60000 });
-      out.merge_queue = q.status === 0 ? 'enabled' : `not enabled: ${Array.from(pyStrip(q.stderr ?? '')).slice(0, 200).join('')} (merge queues need a GitHub plan that supports rulesets on this repository)`;
+      const q = upsertRuleset(owner, repo, ruleset);
+      out.merge_queue = q.ok ? 'enabled' : `not enabled: ${q.reason} (merge queues need a GitHub plan that supports rulesets on this repository)`;
     }
     return out;
   } catch (e) {
