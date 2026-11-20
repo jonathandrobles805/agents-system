@@ -87,15 +87,17 @@ jobs:
     if: github.event_name == 'pull_request'
     steps:
       - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }
       - uses: actions/setup-node@v4
         with:
           node-version: 22
       - name: harness self-check with recorded fixtures (proves the gate, not the agents)
         run: node kit/eval/harness.js run --set smoke --runner fixture
       - name: which gated paths this PR touches (the real-agent set runs on main after the merge)
+        env:
+          BASE_REF: ${{ github.base_ref }}
         run: |
-          git fetch --no-tags --depth=1 origin "${{ github.base_ref }}"
-          FILES=$(git diff --name-only "origin/${{ github.base_ref }}"...HEAD | grep -E '^kit/(agents|skills|templates|workflows|eval)/' | grep -v '^kit/eval/(results|fixtures)/' | tr '\n' ',' || true)
+          FILES=$(git diff --name-only "origin/$BASE_REF"...HEAD | grep -E '^kit/(agents|skills|templates|workflows|eval)/' | grep -Ev '^kit/eval/(results|fixtures)/' | tr '\n' ',' || true)
           if [ -n "$FILES" ]; then echo "::notice::this PR changes ${FILES}. The real-agent smoke set runs on main after the merge (eval-smoke-main); to see it before merging, run it locally: npm run eval:smoke -- --runner claude. KIT-SPEC 11A."; else echo "touched: none"; fi
 
   # main: the real-agent smoke set over what the merge touched, with the credentials from the `main` environment.
@@ -117,11 +119,10 @@ jobs:
         run: |
           BEFORE="${{ github.event.before }}"
           if [ -z "$BEFORE" ] || ! git cat-file -e "$BEFORE^{commit}" 2>/dev/null; then BEFORE="HEAD~1"; fi
-          FILES=$(git diff --name-only "$BEFORE"...HEAD | grep -E '^kit/(agents|skills|templates|workflows|eval)/' | grep -v '^kit/eval/(results|fixtures)/' | tr '\n' ',' || true)
+          FILES=$(git diff --name-only "$BEFORE"...HEAD | grep -E '^kit/(agents|skills|templates|workflows|eval)/' | grep -Ev '^kit/eval/(results|fixtures)/' | tr '\n' ',' || true)
           echo "files=$FILES" >> "$GITHUB_OUTPUT"
           echo "touched: ${FILES:-none}"
-      - name: credentials from the main environment (required here)
-        if: steps.touched.outputs.files != ''
+      - name: credentials from the main environment (required on every push, touched or not)
         env:
           CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
@@ -135,11 +136,12 @@ jobs:
         env:
           CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          TOUCHED: ${{ steps.touched.outputs.files }}
         run: |
           if [ -n "$CLAUDE_CODE_OAUTH_TOKEN" ]; then unset ANTHROPIC_API_KEY; echo "auth: subscription token"; else echo "auth: API key"; fi
           npm install -g @anthropic-ai/claude-code @anthropic-ai/sandbox-runtime
           sudo apt-get install -y bubblewrap socat
-          node kit/eval/harness.js run --set smoke --runner claude --touched "${{ steps.touched.outputs.files }}"
+          node kit/eval/harness.js run --set smoke --runner claude --touched "$TOUCHED"
 
   docs:
     name: kit docs validate themselves
