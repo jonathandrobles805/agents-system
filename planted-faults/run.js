@@ -669,6 +669,18 @@ process.stderr.write('fake gh: unexpected ' + j); process.exit(9);
     const ok49 = (wf49.errors ?? []).length === 0 && bad49.length === 0 && wf49.required.includes('script unit tests (node 20)') && wf49.required.includes('script unit tests (node 22)');
     record(49, 'a matrix job is required under its unexpanded name, which no check run ever reports', 'pr_gate workflowChecks expands strategy.matrix into one required name per value, or refuses', ok49, ok49 ? `required: ${wf49.required.join(' | ')}` : `unexpanded: ${bad49.join(' | ')}; errors: ${(wf49.errors ?? []).join('; ')}`);
 
+    // 50 a skill tells the agent to push or open the PR with the owner's login instead of as the App (0016 E.7): the
+    //    skills must name lane.js publish and no `git push` / `gh pr create`; publish must refuse other branches and
+    //    keep the token out of the command line (GIT_ASKPASS, GH_TOKEN). This is a static check of the skills and the
+    //    source; the behaviour (a real push through GIT_ASKPASS, gh under GH_TOKEN) is proven in tests/app_token.test.js.
+    const skillDir = path.join(ROOT, 'kit', 'skills');
+    const skillText = fs.readdirSync(skillDir).map((d) => path.join(skillDir, d, 'SKILL.md')).filter((p) => fs.existsSync(p)).map((p) => `${p}\n${read(p)}`).join('\n');
+    const rawPush = [...skillText.matchAll(/git push|gh pr create/g)].length;
+    const named = ['zi-implement', 'zi-run', 'zi-plan'].every((s) => read(path.join(skillDir, s, 'SKILL.md')).includes('lane.js') && read(path.join(skillDir, s, 'SKILL.md')).includes('publish'));
+    const laneSrc = read(path.join(SCRIPTS, 'lane.js'));
+    const tokenKept = laneSrc.includes("GIT_ASKPASS") && laneSrc.includes("GH_TOKEN: tok.token") && laneSrc.includes("'credential.helper='") && !/x-access-token:\$\{/.test(laneSrc);
+    const refuses50 = /\^\(wt\|spec\)\\\//.test(laneSrc);
+    record(50, 'a skill pushes or opens the PR with the owner\'s login instead of as the App', 'lane.js publish: the only push path the skills name; App token minted on the host, scoped to one repository, passed through the environment only', rawPush === 0 && named && tokenKept && refuses50, `raw git push / gh pr create in skills: ${rawPush}; skills name publish: ${named}; token through GIT_ASKPASS/GH_TOKEN, helpers off, never in a URL: ${tokenKept}; refuses branches outside wt/* and spec/*: ${refuses50}`, 'tool-level');
   } finally {
     if (a.keep) process.stderr.write(`fixtures kept at ${tmp}\n`);
     else fs.rmSync(tmp, { recursive: true, force: true });

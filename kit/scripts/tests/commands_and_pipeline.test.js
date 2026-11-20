@@ -34,7 +34,7 @@ test('all 23 skills exist, each a SKILL.md named after its folder, with a descri
 });
 
 test('commands reference real scripts and subcommands', () => {
-  const laneSubs = new Set(['precheck', 'start', 'stage', 'wip', 'unknowns', 'merged', 'incident', 'next-step', 'next', 'goal-set', 'roadmap-set', 'index', 'finish', 'launch', 'resume', 'stop', 'resume-all', 'profiles', 'agent-for', 'scope', 'ci', 'merge']);
+  const laneSubs = new Set(['precheck', 'start', 'stage', 'wip', 'unknowns', 'merged', 'incident', 'next-step', 'next', 'goal-set', 'roadmap-set', 'index', 'finish', 'launch', 'resume', 'stop', 'resume-all', 'profiles', 'agent-for', 'scope', 'ci', 'merge', 'publish']);
   for (const p of COMMANDS) {
     const text = read(p);
     for (const m of text.matchAll(/kit\/scripts\/([a-z_]+\.js)/g)) {
