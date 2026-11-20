@@ -1417,7 +1417,8 @@ function ghJson(args, input) {
 
 /** Create the ruleset, or update the one with the same name, so running --protect twice never duplicates it. */
 export function upsertRuleset(owner, repo, ruleset) {
-  const list = ghJson([`repos/${owner}/${repo}/rulesets`]);
+  // this repository's own rulesets only (an organization's would be found by name and then refused on PUT), all of them
+  const list = ghJson([`repos/${owner}/${repo}/rulesets?includes_parents=false&per_page=100`]);
   if (!list.ok) return { ok: false, reason: `could not list rulesets: ${list.reason}` };
   const existing = (Array.isArray(list.data) ? list.data : []).find((x) => x && x.name === ruleset.name);
   const r = existing
@@ -1438,7 +1439,8 @@ export const AGENT_BRANCHES = ['refs/heads/wt/*', 'refs/heads/spec/*'];
  * else. Each ruleset is then read back and compared; any difference fails the result. Never throws.
  */
 export function agentRulesets(owner, repo) {
-  const fail = (reason) => ({ ok: false, reason, rulesets: {} });
+  const rulesets = {};
+  const fail = (reason) => ({ ok: false, reason, rulesets });
   const meta = ghJson([`repos/${owner}/${repo}`]);
   if (!meta.ok) return fail(`could not read the repository: ${meta.reason}`);
   let bypass;
@@ -1453,12 +1455,12 @@ export function agentRulesets(owner, repo) {
     branches: { name: 'kit agent branches', target: 'branch', enforcement: 'active', bypass_actors: [bypass], conditions: { ref_name: { include: ['~ALL'], exclude: AGENT_BRANCHES } }, rules: refRules },
     tags: { name: 'kit tags', target: 'tag', enforcement: 'active', bypass_actors: [bypass], conditions: { ref_name: { include: ['~ALL'], exclude: [] } }, rules: refRules },
   };
-  const out = { ok: true, reason: '', bypass, rulesets: {} };
+  const out = { ok: true, reason: '', bypass, rulesets };
   const mismatches = [];
   for (const [key, ruleset] of Object.entries(wanted)) {
     const up = upsertRuleset(owner, repo, ruleset);
     if (!up.ok) return fail(`${ruleset.name}: ${up.reason}`);
-    out.rulesets[key] = { id: up.id, action: up.action };
+    rulesets[key] = { id: up.id, action: up.action };
     const back = ghJson([`repos/${owner}/${repo}/rulesets/${up.id}`]);
     if (!back.ok) return fail(`${ruleset.name}: could not read it back: ${back.reason}`);
     const g = back.data ?? {};
@@ -1520,7 +1522,7 @@ export function protectBranch(root, branch, checks) {
     if (rc === 0) {
       const ruleset = { name: 'kit merge queue', target: 'branch', enforcement: 'active', conditions: { ref_name: { include: [`refs/heads/${branch}`], exclude: [] } }, rules: [{ type: 'merge_queue', parameters: { check_response_timeout_minutes: 60, grouping_strategy: 'ALLGREEN', max_entries_to_build: 5, max_entries_to_merge: 5, merge_method: 'SQUASH', min_entries_to_merge: 1, min_entries_to_merge_wait_minutes: 5 } }] };
       const q = upsertRuleset(owner, repo, ruleset);
-      out.merge_queue = q.ok ? 'enabled' : `not enabled: ${q.reason} (merge queues need a GitHub plan that supports rulesets on this repository)`;
+      out.merge_queue = q.ok ? 'enabled' : `not enabled: ${q.reason} (merge queues need an organization-owned repository: public, or private on GitHub Enterprise Cloud)`;
     }
     return out;
   } catch (e) {

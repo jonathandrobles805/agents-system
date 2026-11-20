@@ -469,7 +469,7 @@ if (j === 'api repos/o/proj') { process.stdout.write(JSON.stringify({ owner: { l
 if (j === 'api user') { process.stdout.write(JSON.stringify({ login: 'o', id: 4242 })); process.exit(0); }
 const save = () => fs.writeFileSync(${JSON.stringify(state)}, JSON.stringify(st));
 st.rulesets = st.rulesets || [];
-const api = args.filter((a) => !a.startsWith('-') && a !== 'api' && a !== 'PUT' && a !== 'POST')[0] || '';
+const api = (args.filter((a) => !a.startsWith('-') && a !== 'api' && a !== 'PUT' && a !== 'POST')[0] || '').split('?')[0];
 const byId = /\\/rulesets\\/(\\d+)$/.exec(api);
 if (api.endsWith('/rulesets') && !args.includes('POST')) { process.stdout.write(JSON.stringify(st.rulesets.map(({ id, name }) => ({ id, name })))); process.exit(0); }
 if (api.endsWith('/rulesets')) { const rs = { id: 100 + st.rulesets.length, ...JSON.parse(fs.readFileSync(0, 'utf8')) }; st.rulesets.push(rs); save(); process.stdout.write(JSON.stringify(rs)); process.exit(0); }

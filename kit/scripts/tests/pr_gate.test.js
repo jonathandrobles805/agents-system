@@ -165,7 +165,7 @@ if (j === 'api repos/o/proj') { process.stdout.write(JSON.stringify({ owner: { l
 if (j === 'api user') { process.stdout.write(JSON.stringify({ login: 'o', id: 4242 })); process.exit(0); }
 const save = () => fs.writeFileSync(${JSON.stringify(state)}, JSON.stringify(st));
 st.rulesets = st.rulesets || [];
-const api = args.filter((a) => !a.startsWith('-') && a !== 'api' && a !== 'PUT' && a !== 'POST')[0] || '';
+const api = (args.filter((a) => !a.startsWith('-') && a !== 'api' && a !== 'PUT' && a !== 'POST')[0] || '').split('?')[0];
 const byId = /\\/rulesets\\/(\\d+)$/.exec(api);
 if (api.endsWith('/rulesets') && !args.includes('POST')) { process.stdout.write(JSON.stringify(st.rulesets.map(({ id, name }) => ({ id, name })))); process.exit(0); }
 if (api.endsWith('/rulesets') && args.includes('POST')) {
@@ -285,6 +285,8 @@ test('bootstrap --protect: the agents\' identity may create, update or delete on
   const bp = JSON.parse(r.stdout).branch_protection;
   assert.equal(bp.ok, true, JSON.stringify(bp));
   const posts = calls().filter((c) => c.args.includes('POST') && c.args.some((a) => a.endsWith('/rulesets'))).map((c) => JSON.parse(c.input));
+  const listed = calls().filter((c) => c.args.some((a) => a.startsWith('repos/o/proj/rulesets?')));
+  assert.ok(listed.length >= 2 && listed.every((c) => c.args.some((a) => a.endsWith('/rulesets?includes_parents=false&per_page=100'))), 'lists only this repository\'s rulesets, all of them');
   const branches = posts.find((x) => x.name === 'kit agent branches');
   const tags = posts.find((x) => x.name === 'kit tags');
   assert.ok(branches && tags, 'both rulesets were created');
@@ -305,6 +307,19 @@ test('bootstrap --protect: the agents\' identity may create, update or delete on
   assert.equal(bp2.ok, true, JSON.stringify(bp2));
   assert.deepEqual(bp2.agent_rulesets.rulesets, { branches: { id: 100, action: 'updated' }, tags: { id: 101, action: 'updated' } });
   assert.equal(calls().filter((c) => c.args.includes('POST') && c.args.some((a) => a.endsWith('/rulesets'))).length, 3, 'three creates in all: two agent rulesets and the merge queue, none repeated');
+});
+
+test('bootstrap --protect: on an organization\'s repository the bypass actor is OrganizationAdmin', (t) => {
+  const root = project(t);
+  const { env, calls } = fakeGh(t, { pr: PR, polls: [[]], ownerType: 'Organization' });
+  const r = runScript('bootstrap.js', ['--repo', root, '--upgrade', '--protect', '--json'], { env });
+  const bp = JSON.parse(r.stdout).branch_protection;
+  assert.equal(bp.ok, true, JSON.stringify(bp));
+  assert.deepEqual(bp.agent_rulesets.bypass, { actor_id: 1, actor_type: 'OrganizationAdmin', bypass_mode: 'always' });
+  const posts = calls().filter((c) => c.args.includes('POST') && c.args.some((a) => a.endsWith('/rulesets'))).map((c) => JSON.parse(c.input)).filter((x) => x.name.startsWith('kit agent') || x.name === 'kit tags');
+  assert.equal(posts.length, 2);
+  for (const rs of posts) assert.deepEqual(rs.bypass_actors, [{ actor_id: 1, actor_type: 'OrganizationAdmin', bypass_mode: 'always' }]);
+  assert.ok(!calls().some((c) => c.args.join(' ') === 'api user'), 'the user id is not needed for an organization');
 });
 
 test('bootstrap --protect: an agent ruleset GitHub holds differently, or cannot create, fails the result', (t) => {
