@@ -421,7 +421,7 @@ export function main(argv) {
       record(36, 'kill switch set while a lane is live', 'guard-edit + guard-bash + next-step + start refuse; resume-all --by lifts', before36 === 0 && during.returncode === 2 && during.stderr.includes('kill switch') && bash36.returncode === 2 && next36.stage === 'stopped' && noName.returncode === 2 && after36 === 0, `edit before ${before36}, during ${during.returncode}, bash ${bash36.returncode}, next ${next36.stage}, after ${after36}`);
     }
 
-    // 32 an agent prompt edited to skip the red run -> the eval smoke set's hard metric red_before_green fails the kit PR
+    // 32 an agent prompt edited to skip the red run -> the eval smoke set's hard metric red_before_green fails the run (on main after the merge, and locally before it; 0016 E.11)
     //    (proven with the recorded 'skips-red-run' outcome; the claude runner would produce the same events from a real session)
     const harness = path.join(ROOT, 'kit', 'eval', 'harness.js');
     const ev32 = sh(process.execPath, [harness, 'run', '--set', 'smoke', '--runner', 'fixture', '--variant', 'skips-red-run', '--out', path.join(tmp, 'eval-32'), '--json'], { env: childEnv() });

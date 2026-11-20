@@ -78,6 +78,9 @@ jobs:
           test "$(cat "$CLAUDE_HOME/commands/sync.md")" = "my own sync"
           test -f "$CLAUDE_HOME"/kit-backup/commands-*/research.md
           ./install.sh
+  # Pull requests: the recorded-fixture self-check only. No credential reaches a pull request, because a PR from a
+  # branch in this repo runs its own workflow file with the repo's secrets, and an agent could edit it to read them
+  # (0016 E.11 item 3; hardening plan Step 1). The real-agent set runs after the merge, in eval-smoke-main.
   eval-smoke:
     name: eval smoke set (agents, skills, templates, workflows, eval)
     runs-on: ubuntu-latest
@@ -88,28 +91,57 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-      - name: harness self-check with recorded fixtures (always; proves the gate, not the agents)
+      - name: harness self-check with recorded fixtures (proves the gate, not the agents)
         run: node kit/eval/harness.js run --set smoke --runner fixture
-      - name: which gated paths this PR touches
+      - name: which gated paths this PR touches (the real-agent set runs on main after the merge)
+        env:
+          BASE_REF: ${{ github.base_ref }}
+        run: |
+          FILES=$(git diff --name-only "origin/$BASE_REF"...HEAD | grep -E '^kit/(agents|skills|templates|workflows|eval)/' | grep -Ev '^kit/eval/(results|fixtures)/' | tr '\n' ',' || true)
+          if [ -n "$FILES" ]; then echo "::notice::this PR changes ${FILES}. The real-agent smoke set runs on main after the merge (eval-smoke-main); to see it before merging, run it locally: npm run eval:smoke -- --runner claude. KIT-SPEC 11A."; else echo "touched: none"; fi
+
+  # main: the real-agent smoke set over what the merge touched, with the credentials from the `main` environment.
+  # The environment is limited to the main branch, so no other ref can read the keys. Missing keys fail the job:
+  # a silent skip here would mean the real-agent set never runs anywhere in CI.
+  eval-smoke-main:
+    name: eval smoke set against the real agents (main)
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    environment: main
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: which gated paths this push touches
         id: touched
         run: |
-          FILES=$(git diff --name-only origin/${{ github.base_ref }}...HEAD | grep -E '^kit/(agents|skills|templates|workflows|eval)/' | grep -v '^kit/eval/(results|fixtures)/' | tr '\n' ',' || true)
+          BEFORE="${{ github.event.before }}"
+          if [ -z "$BEFORE" ] || ! git cat-file -e "$BEFORE^{commit}" 2>/dev/null; then BEFORE="HEAD~1"; fi
+          FILES=$(git diff --name-only "$BEFORE"...HEAD | grep -E '^kit/(agents|skills|templates|workflows|eval)/' | grep -Ev '^kit/eval/(results|fixtures)/' | tr '\n' ',' || true)
           echo "files=$FILES" >> "$GITHUB_OUTPUT"
           echo "touched: ${FILES:-none}"
-      - name: "eval smoke set against the real agents (optional; runs when a credential secret exists)"
-        if: steps.touched.outputs.files != ''
+      - name: credentials from the main environment (required on every push, touched or not)
         env:
           CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
         run: |
           if [ -z "$CLAUDE_CODE_OAUTH_TOKEN" ] && [ -z "$ANTHROPIC_API_KEY" ]; then
-            echo "::notice::this PR changes agents, skills, templates, the workflow table or the eval. No credential secret is set, so the real-agent smoke set did not run here. Run it locally before merging: npm run eval:smoke -- --runner claude (uses your Claude Code login). To run it in CI instead, add CLAUDE_CODE_OAUTH_TOKEN (claude setup-token) or ANTHROPIC_API_KEY as a repository secret. KIT-SPEC 11A."
-            exit 0
+            echo "::error::no credential reached this job. Add CLAUDE_CODE_OAUTH_TOKEN (claude setup-token) or ANTHROPIC_API_KEY as a secret of the 'main' environment (Settings → Environments → main). KIT-SPEC 11A."
+            exit 1
           fi
+      - name: eval smoke set against the real agents
+        if: steps.touched.outputs.files != ''
+        env:
+          CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          TOUCHED: ${{ steps.touched.outputs.files }}
+        run: |
           if [ -n "$CLAUDE_CODE_OAUTH_TOKEN" ]; then unset ANTHROPIC_API_KEY; echo "auth: subscription token"; else echo "auth: API key"; fi
           npm install -g @anthropic-ai/claude-code @anthropic-ai/sandbox-runtime
           sudo apt-get install -y bubblewrap socat
-          node kit/eval/harness.js run --set smoke --runner claude --touched "${{ steps.touched.outputs.files }}"
+          node kit/eval/harness.js run --set smoke --runner claude --touched "$TOUCHED"
 
   docs:
     name: kit docs validate themselves
