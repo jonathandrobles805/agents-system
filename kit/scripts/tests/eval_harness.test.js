@@ -6,7 +6,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { CORE_ROLES, compare, loadTasks, runSet, selectTasks, summarize, writeBaseline } from '../../eval/harness.js';
+import { CORE_ROLES, compare, fmt, loadTasks, runSet, selectTasks, summarize, writeBaseline } from '../../eval/harness.js';
 import { CHECKS, score } from '../../eval/score.js';
 import * as fixture from '../../eval/runners/fixture.js';
 import * as claude from '../../eval/runners/claude.js';
@@ -109,6 +109,21 @@ test('full run against a baseline: a seeded quality drop is a regression; a base
   const stats = summarize([{ scored: { score: 1, rubric: { score: 1 }, hard_ok: true } }, { scored: { score: 0, rubric: { score: 0 }, hard_ok: false } }]);
   assert.equal(stats.score.mean, 0.5);
   assert.ok(stats.score.std > 0.7);
+});
+
+test('the report keeps each worker session\'s exit status and stderr tail, and the text output names a session that exited non-zero', async (t) => {
+  const out = path.join(tmpPath(t), 'w');
+  const rep = await runSet({ set: 'smoke', runner: 'fixture', out });
+  for (const r of Object.values(rep.results)) for (const a of r.attempts) assert.deepEqual(a.worker, { status: null, stderr: '' }, 'the fixture runner has no worker session');
+  assert.ok(!fmt(rep).includes('WORKER'), 'nothing to report when no session failed');
+  // a claude session that never started: the runner returns the exit status and stderr, the harness keeps and prints them
+  const broken = JSON.parse(JSON.stringify(rep));
+  const first = Object.keys(broken.results)[0];
+  broken.results[first].attempts[0].worker = { status: 1, stderr: 'bwrap: setting up uid map: Permission denied\nclaude: sandbox failed\n' };
+  const text = fmt(broken);
+  assert.match(text, new RegExp(`WORKER ${first} attempt 0: exit 1; stderr: bwrap: setting up uid map: Permission denied \\| claude: sandbox failed`));
+  const saved = JSON.parse(fs.readFileSync(path.join(out, 'report.json'), 'utf8'));
+  assert.deepEqual(saved.results[first].attempts[0].worker, { status: null, stderr: '' }, 'the worker record is written to report.json');
 });
 
 test('claude runner reports why it is unavailable instead of running unsandboxed or keyless', () => {

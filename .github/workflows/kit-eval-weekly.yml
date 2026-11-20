@@ -28,7 +28,19 @@ jobs:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
         run: |
           if [ -z "$CLAUDE_CODE_OAUTH_TOKEN" ] && [ -z "$ANTHROPIC_API_KEY" ]; then echo "::error::no credential reached this job. Add CLAUDE_CODE_OAUTH_TOKEN or ANTHROPIC_API_KEY as a secret of the 'main' environment. KIT-SPEC 11A."; exit 1; fi
-      - run: npm install -g @anthropic-ai/claude-code @anthropic-ai/sandbox-runtime && sudo apt-get install -y bubblewrap socat
+      - name: sandbox runtime self-check (bubblewrap needs an unprivileged user namespace; Ubuntu 24.04 restricts it)
+        run: |
+          sudo apt-get install -y bubblewrap socat
+          if bwrap --ro-bind / / --dev /dev --unshare-user --unshare-pid true 2>/tmp/bwrap.err; then
+            echo "bwrap: user namespace ok"
+          else
+            echo "::warning::bwrap cannot create a user namespace: $(tr '\n' ' ' </tmp/bwrap.err). Loading Ubuntu's bwrap-userns-restrict AppArmor profile."
+            sudo apt-get install -y apparmor-profiles apparmor-utils
+            sudo install -m 0644 /usr/share/apparmor/extra-profiles/bwrap-userns-restrict /etc/apparmor.d/bwrap-userns-restrict
+            sudo apparmor_parser -r /etc/apparmor.d/bwrap-userns-restrict
+            bwrap --ro-bind / / --dev /dev --unshare-user --unshare-pid true && echo "bwrap: user namespace ok after the profile"
+          fi
+      - run: npm install -g @anthropic-ai/claude-code @anthropic-ai/sandbox-runtime
       - name: full set
         env:
           CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
