@@ -159,7 +159,28 @@ if (j.includes('/protection')) {
   }
   process.stderr.write(st.protection === 'on' ? '' : 'gh: Branch not protected (HTTP 404)'); process.exit(st.protection === 'on' ? 0 : 1);
 }
-if (j.includes('/rulesets')) process.exit(0);
+// repository rulesets: a list, create, update and read by id, kept in the state file; st.rulesetDrift is merged
+// into the read-back of the ruleset of that name (the kit must notice); st.rulesetsFail refuses every write
+if (j === 'api repos/o/proj') { process.stdout.write(JSON.stringify({ owner: { login: 'o', type: st.ownerType || 'User' } })); process.exit(0); }
+if (j === 'api user') { process.stdout.write(JSON.stringify({ login: 'o', id: 4242 })); process.exit(0); }
+const save = () => fs.writeFileSync(${JSON.stringify(state)}, JSON.stringify(st));
+st.rulesets = st.rulesets || [];
+const api = (args.filter((a) => !a.startsWith('-') && a !== 'api' && a !== 'PUT' && a !== 'POST')[0] || '').split('?')[0];
+const byId = /\\/rulesets\\/(\\d+)$/.exec(api);
+if (api.endsWith('/rulesets') && !args.includes('POST')) { process.stdout.write(JSON.stringify(st.rulesets.map(({ id, name }) => ({ id, name })))); process.exit(0); }
+if (api.endsWith('/rulesets') && args.includes('POST')) {
+  if (st.rulesetsFail) { process.stderr.write('gh: Upgrade to GitHub Pro or make this repository public to enable this feature. (HTTP 403)'); process.exit(1); }
+  const rs = { id: 100 + st.rulesets.length, ...JSON.parse(input) }; st.rulesets.push(rs); save(); process.stdout.write(JSON.stringify(rs)); process.exit(0);
+}
+if (byId && args.includes('PUT')) {
+  const i = st.rulesets.findIndex((x) => String(x.id) === byId[1]); if (i < 0) { process.stderr.write('gh: Not Found (HTTP 404)'); process.exit(1); }
+  st.rulesets[i] = { id: st.rulesets[i].id, ...JSON.parse(input) }; save(); process.stdout.write(JSON.stringify(st.rulesets[i])); process.exit(0);
+}
+if (byId) {
+  const rs = st.rulesets.find((x) => String(x.id) === byId[1]); if (!rs) { process.stderr.write('gh: Not Found (HTTP 404)'); process.exit(1); }
+  const d = (st.rulesetDrift || {})[rs.name] || {};
+  process.stdout.write(JSON.stringify({ ...rs, ...d, conditions: d.conditions ? { ref_name: { ...rs.conditions.ref_name, ...d.conditions.ref_name } } : rs.conditions })); process.exit(0);
+}
 process.stderr.write('fake gh: unexpected ' + j); process.exit(9);
 `, { mode: 0o755 });
   const env = { ...process.env, PATH: `${dir}${path.delimiter}${process.env.PATH}`, KIT_PR_GATE_POLL_SECONDS: '0' };
@@ -254,6 +275,71 @@ test('bootstrap --protect: nobody bypasses CI, no review is required, and the se
   const bp = JSON.parse(r.stdout).branch_protection;
   assert.equal(bp.ok, true, JSON.stringify(bp));
   assert.deepEqual(bp.read_back, { ok: true, mismatches: [], checks: G.projectChecks(root).required });
+});
+
+test('bootstrap --protect: the agents\' identity may create, update or delete only wt/* and spec/* branches, and no tag; only the owner bypasses (D1, 0016 E.7)', (t) => {
+  const root = project(t);
+  const { env, calls } = fakeGh(t, { pr: PR, polls: [[]] });
+  const r = runScript('bootstrap.js', ['--repo', root, '--upgrade', '--protect', '--json'], { env });
+  assert.equal(r.returncode, 0, r.stderr);
+  const bp = JSON.parse(r.stdout).branch_protection;
+  assert.equal(bp.ok, true, JSON.stringify(bp));
+  const posts = calls().filter((c) => c.args.includes('POST') && c.args.some((a) => a.endsWith('/rulesets'))).map((c) => JSON.parse(c.input));
+  const listed = calls().filter((c) => c.args.some((a) => a.startsWith('repos/o/proj/rulesets?')));
+  assert.ok(listed.length >= 2 && listed.every((c) => c.args.some((a) => a.endsWith('/rulesets?includes_parents=false&per_page=100'))), 'lists only this repository\'s rulesets, all of them');
+  const branches = posts.find((x) => x.name === 'kit agent branches');
+  const tags = posts.find((x) => x.name === 'kit tags');
+  assert.ok(branches && tags, 'both rulesets were created');
+  for (const rs of [branches, tags]) {
+    assert.equal(rs.enforcement, 'active');
+    assert.deepEqual(rs.rules.map((x) => x.type), ['creation', 'update', 'deletion']);
+    assert.deepEqual(rs.bypass_actors, [{ actor_id: 4242, actor_type: 'User', bypass_mode: 'always' }], 'only the owner, by user id');
+    assert.deepEqual(rs.conditions.ref_name.include, ['~ALL']);
+  }
+  assert.equal(branches.target, 'branch');
+  assert.deepEqual(branches.conditions.ref_name.exclude, ['refs/heads/wt/*', 'refs/heads/spec/*']);
+  assert.equal(tags.target, 'tag');
+  assert.deepEqual(tags.conditions.ref_name.exclude, []);
+  assert.deepEqual(bp.agent_rulesets.rulesets, { branches: { id: 100, action: 'created' }, tags: { id: 101, action: 'created' } });
+  // a second run updates the same rulesets instead of adding duplicates
+  const r2 = runScript('bootstrap.js', ['--repo', root, '--upgrade', '--protect', '--json'], { env });
+  const bp2 = JSON.parse(r2.stdout).branch_protection;
+  assert.equal(bp2.ok, true, JSON.stringify(bp2));
+  assert.deepEqual(bp2.agent_rulesets.rulesets, { branches: { id: 100, action: 'updated' }, tags: { id: 101, action: 'updated' } });
+  assert.equal(calls().filter((c) => c.args.includes('POST') && c.args.some((a) => a.endsWith('/rulesets'))).length, 3, 'three creates in all: two agent rulesets and the merge queue, none repeated');
+});
+
+test('bootstrap --protect: on an organization\'s repository the bypass actor is OrganizationAdmin', (t) => {
+  const root = project(t);
+  const { env, calls } = fakeGh(t, { pr: PR, polls: [[]], ownerType: 'Organization' });
+  const r = runScript('bootstrap.js', ['--repo', root, '--upgrade', '--protect', '--json'], { env });
+  const bp = JSON.parse(r.stdout).branch_protection;
+  assert.equal(bp.ok, true, JSON.stringify(bp));
+  assert.deepEqual(bp.agent_rulesets.bypass, { actor_id: 1, actor_type: 'OrganizationAdmin', bypass_mode: 'always' });
+  const posts = calls().filter((c) => c.args.includes('POST') && c.args.some((a) => a.endsWith('/rulesets'))).map((c) => JSON.parse(c.input)).filter((x) => x.name.startsWith('kit agent') || x.name === 'kit tags');
+  assert.equal(posts.length, 2);
+  for (const rs of posts) assert.deepEqual(rs.bypass_actors, [{ actor_id: 1, actor_type: 'OrganizationAdmin', bypass_mode: 'always' }]);
+  assert.ok(!calls().some((c) => c.args.join(' ') === 'api user'), 'the user id is not needed for an organization');
+});
+
+test('bootstrap --protect: an agent ruleset GitHub holds differently, or cannot create, fails the result', (t) => {
+  const root = project(t);
+  const cases = [
+    [{ rulesetDrift: { 'kit agent branches': { bypass_actors: [{ actor_id: 4242, actor_type: 'User', bypass_mode: 'always' }, { actor_id: 77, actor_type: 'Integration', bypass_mode: 'always' }] } } }, /kit agent branches: bypass list is User 4242, Integration 77, not only the owner \(User 4242\)/],
+    [{ rulesetDrift: { 'kit agent branches': { conditions: { ref_name: { exclude: ['refs/heads/wt/*'] } } } } }, /kit agent branches: exclude is \[refs\/heads\/wt\/\*\], not \[refs\/heads\/wt\/\*, refs\/heads\/spec\/\*\]/],
+    [{ rulesetDrift: { 'kit tags': { enforcement: 'disabled' } } }, /kit tags: enforcement is disabled, not active/],
+    [{ rulesetDrift: { 'kit tags': { rules: [{ type: 'creation' }] } } }, /kit tags: rules are \[creation\], not \[creation, deletion, update\]/],
+    [{ rulesetsFail: true }, /kit agent branches: gh: Upgrade to GitHub Pro/],
+  ];
+  for (const [scenario, re] of cases) {
+    const { env } = fakeGh(t, { pr: PR, polls: [[]], ...scenario });
+    const r = runScript('bootstrap.js', ['--repo', root, '--upgrade', '--protect', '--json'], { env });
+    const bp = JSON.parse(r.stdout).branch_protection;
+    assert.equal(bp.ok, false, `${JSON.stringify(scenario)} must fail`);
+    assert.equal(r.returncode, 1);
+    assert.match(bp.reason, /agent rulesets: /);
+    assert.match(bp.reason, re);
+  }
 });
 
 test('bootstrap --protect: a read-back that differs from what the kit set fails the result and the exit code', (t) => {
