@@ -226,7 +226,7 @@ Steps 1–9 of the skills work are done on branch `commands-to-skills`: 23 `zi-`
 - [ ] Add a ruleset so the App may push only `wt/*` and `spec/*` branches. Code in PR #93 (`agentRulesets` in bootstrap.js: `kit agent branches` restricts create, update and delete outside those patterns; `kit tags` the same for every tag; only the owner on the bypass list; both read back); proven when it runs on kit-test and the App's push to `main` is refused (done-when below).
 - [ ] Set protection as in D1, with `enforce_admins` on. Build the required checks from the real job names (`kit-checks`, not its 7 steps; done since #81, [bootstrap.js L1578–1586](https://github.com/jonathandrobles805/agents-system/blob/4fa12cf51030656bba5aef5c73522bfb95be965e/kit/scripts/bootstrap.js#L1578-L1586)). Read the settings back from GitHub. Code done in PR #92 (`protectBranch` sends `enforce_admins: true`, no code-owner review; `readBackProtection` compares what GitHub holds and fails on any difference); running it on kit-test and this repo is the done-when below.
 - [ ] Rewrite planted fault 30, which tests the code-owner review 0016 E.10 removed, to test the ruleset and protection. Protection half in PR #92 (admin bypass and an unknown required check are planted against a fake `gh`; both refused; MISSED on the old code). Ruleset half in PR #93 (what is sent is checked; a second bypass actor is planted and refused; MISSED on the code before it).
-- [ ] The push-and-open-PR step runs on your machine with an App token.
+- [ ] The push-and-open-PR step runs on your machine with an App token. Code in PR #94: `lane.js publish <slug> [--branch spec/<slug>]` mints a ten-minute JWT from the App's key (`~/.claude/kit-app.json` or `KIT_APP_ID` + `KIT_APP_PRIVATE_KEY`, outside every repo), exchanges it for an installation token limited to that repository, pushes through `GIT_ASKPASS` and opens the PR under `GH_TOKEN`; `zi-implement`, `zi-run` and `zi-plan` call it instead of `git push` + `gh pr create` (planted fault 50). Proven when a lane on kit-test publishes as `agents-system-bot` (done-when below).
 - **Done when, tested on the test project (and, for the merge, on this repo):**
     - GitHub refuses a merge while a required check is red or pending, admins included;
     - the App can't push to `main`, or to any branch outside `wt/*` and `spec/*`;
@@ -386,7 +386,7 @@ A control counts only when a planted fault shows it catching a deliberate bypass
 
 **Where each fault runs:**
 
-- **Kit CI:** script faults. Today `planted-faults/run.js` catches 49 of 49.
+- **Kit CI:** script faults. Today `planted-faults/run.js` catches 50 of 50.
 - **Test project:** GitHub faults, run as a scripted check, because they need a live repo and the App.
 - **Eval set:** reviewer faults, because a reviewer's catch rate is model behaviour.
 

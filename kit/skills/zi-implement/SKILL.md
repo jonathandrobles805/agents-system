@@ -46,9 +46,8 @@ Read `docs/specs/$slug.progress.md` in the worktree.
 - Escalation filled: `node "$HOME/.claude/kit/scripts/lane.js" roadmap-set $slug escalated --repo <main repo>`, show the human the Escalation section, and stop. Nothing else.
 - All criteria green: run the full test command from `.claude/kit.json` once more in the worktree and confirm green. Then:
 ```
-cd <worktree> && git push -u origin wt/$slug
-gh pr create --title "$slug: <feature>" --body-file docs/specs/$slug.progress.md --base <default branch>
-node "$HOME/.claude/kit/scripts/lane.js" roadmap-set $slug in-review --repo <main repo> --pr <PR url>
+node "$HOME/.claude/kit/scripts/lane.js" publish $slug --repo <main repo>
+node "$HOME/.claude/kit/scripts/lane.js" roadmap-set $slug in-review --repo <main repo> --pr <PR url it printed>
 node "$HOME/.claude/kit/scripts/lane.js" stage $slug review --repo <main repo>
 ```
 Then run `/zi-review $slug`.
