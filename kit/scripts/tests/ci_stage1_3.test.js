@@ -1,5 +1,5 @@
 // Step 4 (KIT-SPEC 7.4): CI stages 1–3 in the generated workflow, the coverage floor that only rises, CODEOWNERS for CI
-// and kit configuration, and a protection body that requires a code owner's review.
+// and kit configuration (the review is requested, not required: 0016 E.10).
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';

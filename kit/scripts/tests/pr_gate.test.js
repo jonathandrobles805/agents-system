@@ -256,21 +256,23 @@ test('bootstrap --protect: nobody bypasses CI, no review is required, and the se
   assert.deepEqual(bp.read_back, { ok: true, mismatches: [], checks: G.projectChecks(root).required });
 });
 
-test('bootstrap --protect: a read-back that differs from what the kit set fails the result', (t) => {
+test('bootstrap --protect: a read-back that differs from what the kit set fails the result and the exit code', (t) => {
+  const root = project(t);
+  const required = G.projectChecks(root).required;
   const cases = [
     [{ enforce_admins: false }, /enforce_admins is not enabled/],
-    [{ contexts: ['ghost', ...G.projectChecks(project(t)).required] }, /required check "ghost" is not a job the workflow reports/],
+    [{ contexts: ['ghost', ...required] }, /required check "ghost" is not a job the workflow reports/],
     [{ contexts: ['tests'] }, /required check "kit-checks" is missing on GitHub/],
     [{ reviews: { require_code_owner_reviews: true, required_approving_review_count: 0 } }, /require_code_owner_reviews is not false/],
     [{ reviews: { require_code_owner_reviews: false, required_approving_review_count: 1 } }, /required_approving_review_count is 1, not 0/],
     [{ reviews: null }, /required_pull_request_reviews is missing/],
   ];
   for (const [drift, re] of cases) {
-    const root = project(t);
     const { env } = fakeGh(t, { pr: PR, polls: [[]], drift });
     const r = runScript('bootstrap.js', ['--repo', root, '--upgrade', '--protect', '--json'], { env });
     const bp = JSON.parse(r.stdout).branch_protection;
     assert.equal(bp.ok, false, `drift ${JSON.stringify(drift)} must fail`);
+    assert.equal(r.returncode, 1, 'a failed protection is an exit 1');
     assert.match(bp.reason, /protection read back from GitHub differs/);
     assert.match(bp.reason, re);
   }
