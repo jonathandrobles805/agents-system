@@ -144,7 +144,21 @@ if (j.includes('/check-runs')) {
   process.exit(0);
 }
 if (j.startsWith('pr merge')) { process.exit(st.mergeFails ? 1 : 0); }
-if (j.includes('/protection')) { process.stderr.write(st.protection === 'on' ? '' : 'gh: Branch not protected (HTTP 404)'); process.exit(st.protection === 'on' ? 0 : 1); }
+if (j.includes('/protection') && args.includes('PUT')) { st.put = JSON.parse(input); fs.writeFileSync(${JSON.stringify(state)}, JSON.stringify(st)); process.exit(0); }
+if (j.includes('/protection')) {
+  // after a PUT, answer the read-back with what was sent, in the shape GET returns, plus any planted drift
+  if (st.put) {
+    const b = st.put, d = st.drift || {};
+    process.stdout.write(JSON.stringify({
+      required_status_checks: { strict: b.required_status_checks.strict, contexts: d.contexts || b.required_status_checks.contexts },
+      enforce_admins: { enabled: 'enforce_admins' in d ? d.enforce_admins : b.enforce_admins },
+      required_pull_request_reviews: 'reviews' in d ? d.reviews : b.required_pull_request_reviews,
+      allow_force_pushes: { enabled: b.allow_force_pushes }, allow_deletions: { enabled: b.allow_deletions },
+    }));
+    process.exit(0);
+  }
+  process.stderr.write(st.protection === 'on' ? '' : 'gh: Branch not protected (HTTP 404)'); process.exit(st.protection === 'on' ? 0 : 1);
+}
 if (j.includes('/rulesets')) process.exit(0);
 process.stderr.write('fake gh: unexpected ' + j); process.exit(9);
 `, { mode: 0o755 });
@@ -220,4 +234,46 @@ test('bootstrap --protect requires the workflow job names (#68)', (t) => {
   const put = calls().find((c) => c.args.includes('PUT') && c.args.some((a) => a.endsWith('/branches/main/protection')));
   assert.ok(put, 'protection was set');
   assert.deepEqual(JSON.parse(put.input).required_status_checks.contexts, G.projectChecks(root).required);
+});
+
+test('bootstrap --protect: nobody bypasses CI, no review is required, and the settings are read back (hardening plan D1, 0016 E.10)', (t) => {
+  const root = project(t);
+  const { env, calls } = fakeGh(t, { pr: PR, polls: [[]] });
+  const r = runScript('bootstrap.js', ['--repo', root, '--upgrade', '--protect', '--json'], { env });
+  assert.equal(r.returncode, 0, r.stderr);
+  const put = calls().find((c) => c.args.includes('PUT') && c.args.some((a) => a.endsWith('/branches/main/protection')));
+  const body = JSON.parse(put.input);
+  assert.equal(body.enforce_admins, true, 'admins included');
+  assert.equal(body.required_pull_request_reviews.require_code_owner_reviews, false, 'no code-owner review (0016 E.10)');
+  assert.equal(body.required_pull_request_reviews.required_approving_review_count, 0, 'no approving review');
+  assert.equal(body.allow_force_pushes, false);
+  assert.equal(body.allow_deletions, false);
+  assert.equal(body.required_status_checks.strict, true);
+  const get = calls().filter((c) => c.args.some((a) => a.endsWith('/branches/main/protection')) && !c.args.includes('PUT'));
+  assert.equal(get.length, 1, 'protection is read back once');
+  const bp = JSON.parse(r.stdout).branch_protection;
+  assert.equal(bp.ok, true, JSON.stringify(bp));
+  assert.deepEqual(bp.read_back, { ok: true, mismatches: [], checks: G.projectChecks(root).required });
+});
+
+test('bootstrap --protect: a read-back that differs from what the kit set fails the result and the exit code', (t) => {
+  const root = project(t);
+  const required = G.projectChecks(root).required;
+  const cases = [
+    [{ enforce_admins: false }, /enforce_admins is not enabled/],
+    [{ contexts: ['ghost', ...required] }, /required check "ghost" is not a job the workflow reports/],
+    [{ contexts: ['tests'] }, /required check "kit-checks" is missing on GitHub/],
+    [{ reviews: { require_code_owner_reviews: true, required_approving_review_count: 0 } }, /require_code_owner_reviews is not false/],
+    [{ reviews: { require_code_owner_reviews: false, required_approving_review_count: 1 } }, /required_approving_review_count is 1, not 0/],
+    [{ reviews: null }, /required_pull_request_reviews is missing/],
+  ];
+  for (const [drift, re] of cases) {
+    const { env } = fakeGh(t, { pr: PR, polls: [[]], drift });
+    const r = runScript('bootstrap.js', ['--repo', root, '--upgrade', '--protect', '--json'], { env });
+    const bp = JSON.parse(r.stdout).branch_protection;
+    assert.equal(bp.ok, false, `drift ${JSON.stringify(drift)} must fail`);
+    assert.equal(r.returncode, 1, 'a failed protection is an exit 1');
+    assert.match(bp.reason, /protection read back from GitHub differs/);
+    assert.match(bp.reason, re);
+  }
 });
