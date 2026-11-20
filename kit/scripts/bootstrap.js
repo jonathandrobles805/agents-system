@@ -1193,7 +1193,7 @@ fi
     return lines.join('\n');
   }
 
-  /** .github/CODEOWNERS: CI and kit configuration need the owner's review (KIT-SPEC 7.4). Human-owned: written once, never overwritten. */
+  /** .github/CODEOWNERS: GitHub requests the owner's review on CI and kit configuration; not required (0016 E.10; KIT-SPEC 7.4). Human-owned: written once, never overwritten. */
   codeowners() {
     let owner = get(this.answers, 'owner', null);
     if (!owner) {
@@ -1378,6 +1378,34 @@ function failText(e, args, timeout) {
   return String(e && e.message !== undefined ? e.message : e);
 }
 
+/**
+ * Read the branch protection GitHub holds and compare it with what the kit requires: exactly the required checks
+ * (a name no job reports would block every PR, a missing one would let red CI merge), no bypass for admins, no force
+ * push, no deletion, a pull request without a required review. Returns { ok, mismatches, checks }; never throws.
+ */
+export function readBackProtection(owner, repo, branch, checks) {
+  const r = spawnSync('gh', ['api', `repos/${owner}/${repo}/branches/${branch}/protection`], { encoding: 'utf8', timeout: 60000 });
+  if (r.error || r.status !== 0) return { ok: false, mismatches: [`could not read protection back: ${r.error ? failText(r.error, ['gh'], 60) : Array.from(pyStrip(r.stderr ?? '')).slice(0, 200).join('')}`], checks: [] };
+  let p;
+  try { p = JSON.parse(r.stdout); } catch { return { ok: false, mismatches: ['could not read protection back: GitHub returned no JSON'], checks: [] }; }
+  const m = [];
+  const got = Array.isArray(p.required_status_checks?.contexts) ? p.required_status_checks.contexts.map(String) : [];
+  const want = new Set(checks);
+  for (const c of got) if (!want.has(c)) m.push(`required check "${c}" is not a job the workflow reports`);
+  for (const c of checks) if (!got.includes(c)) m.push(`required check "${c}" is missing on GitHub`);
+  if (p.required_status_checks?.strict !== true) m.push('required_status_checks.strict is not true');
+  if (p.enforce_admins?.enabled !== true) m.push('enforce_admins is not enabled: an admin could merge on red CI');
+  if (p.allow_force_pushes?.enabled !== false) m.push('allow_force_pushes is not false');
+  if (p.allow_deletions?.enabled !== false) m.push('allow_deletions is not false');
+  const rev = p.required_pull_request_reviews;
+  if (!rev || typeof rev !== 'object') m.push('required_pull_request_reviews is missing: changes could skip the pull request');
+  else {
+    if (rev.require_code_owner_reviews !== false) m.push('require_code_owner_reviews is not false (0016 E.10: the owner says yes in Claude Code, not with a review)');
+    if (rev.required_approving_review_count !== 0) m.push(`required_approving_review_count is ${rev.required_approving_review_count}, not 0`);
+  }
+  return { ok: m.length === 0, mismatches: m, checks: got };
+}
+
 /** Set branch protection through gh. Returns a result dict; never throws. */
 export function protectBranch(root, branch, checks) {
   if (!which('gh')) return { ok: false, reason: 'gh not installed' };
@@ -1392,11 +1420,12 @@ export function protectBranch(root, branch, checks) {
     const m = /github\.com[:/]([^/]+)\/([^/.]+)/.exec(remote);
     if (!m) return { ok: false, reason: `origin is not GitHub: ${remote}` };
     const [owner, repo] = [m[1], m[2]];
-    // KIT-SPEC 7.4: required checks, no force pushes, and a code owner's review for the paths CODEOWNERS names
-    // (required_approving_review_count 0 keeps ordinary PRs review-free; only CODEOWNERS paths need an owner).
+    // KIT-SPEC 7.4, hardening plan D1 (0016 E.10): the required checks are the real job names; nobody bypasses them,
+    // the owner included (enforce_admins); no force push, no deletion; a pull request is required but no review is,
+    // because the owner says yes to each merge in Claude Code instead of approving on GitHub.
     const body = {
-      required_status_checks: { strict: true, contexts: checks }, enforce_admins: false,
-      required_pull_request_reviews: { require_code_owner_reviews: true, required_approving_review_count: 0, dismiss_stale_reviews: true },
+      required_status_checks: { strict: true, contexts: checks }, enforce_admins: true,
+      required_pull_request_reviews: { required_approving_review_count: 0, require_code_owner_reviews: false, dismiss_stale_reviews: true },
       restrictions: null, allow_force_pushes: false, allow_deletions: false,
     };
     const args = ['gh', 'api', '-X', 'PUT', `repos/${owner}/${repo}/branches/${branch}/protection`, '--input', '-'];
@@ -1404,6 +1433,11 @@ export function protectBranch(root, branch, checks) {
     if (r.error) throw Object.assign(new Error(failText(r.error, args, 60)), { pyText: true });
     const rc = r.status ?? -1;
     const out = { ok: rc === 0, reason: rc !== 0 ? Array.from(pyStrip(r.stderr ?? '')).slice(0, 300).join('') : '', repo: `${owner}/${repo}` };
+    // Read the settings back: what GitHub holds is what enforces, not what was sent (hardening plan Step 1).
+    if (rc === 0) {
+      out.read_back = readBackProtection(owner, repo, branch, checks);
+      if (!out.read_back.ok) { out.ok = false; out.reason = `protection read back from GitHub differs from what the kit set: ${out.read_back.mismatches.join('; ')}`; }
+    }
     // Merge queue, best effort: a repository ruleset with a merge_queue rule (the branch-protection API cannot set it).
     if (rc === 0) {
       const ruleset = { name: 'kit merge queue', target: 'branch', enforcement: 'active', conditions: { ref_name: { include: [`refs/heads/${branch}`], exclude: [] } }, rules: [{ type: 'merge_queue', parameters: { check_response_timeout_minutes: 60, grouping_strategy: 'ALLGREEN', max_entries_to_build: 5, max_entries_to_merge: 5, merge_method: 'SQUASH', min_entries_to_merge: 1, min_entries_to_merge_wait_minutes: 5 } }] };

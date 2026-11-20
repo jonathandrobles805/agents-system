@@ -438,11 +438,49 @@ export function main(argv) {
     const dropRep = drop.stdout ? JSON.parse(drop.stdout) : {};
     record(33, 'a kit change that lowers a quality metric', 'eval full set vs committed baseline (nightly; tag blocked)', drop.returncode === 1 && (dropRep.regressions ?? []).some((r) => r.task === 'implementer-red-then-green') && (dropRep.violations ?? []).length === 0, `regressions: ${(dropRep.regressions ?? []).map((r) => `${r.task}.${r.metric} ${r.run.toFixed(2)}<${r.baseline.toFixed(2)}`).join(', ')}`, 'kit CI');
 
-    // 30 PR changes CI or kit configuration without the owner's review -> CODEOWNERS covers the paths; protection requires a code owner (GitHub enforces)
-    const co = read(path.join(root, '.github', 'CODEOWNERS'));
-    const wf30 = read(path.join(root, '.github', 'workflows', 'kit.yml'));
-    const bootstrapSrc = read(path.join(SCRIPTS, 'bootstrap.js'));
-    record(30, 'PR changes kit.yml or .claude/ without owner review', 'CODEOWNERS + require_code_owner_reviews in --protect (GitHub enforces)', co.includes('/.github/workflows/') && co.includes('/.claude/') && bootstrapSrc.includes('require_code_owner_reviews: true') && wf30.includes('merge_group:'), `CODEOWNERS covers workflows and .claude; protection body requires code-owner reviews; workflow runs on merge_group`, 'tool-level');
+    // 30 branch protection that lets someone merge on red CI, or that GitHub holds differently from what the kit set
+    //    (hardening plan D1, 0016 E.10) -> --protect sends enforce_admins: true with no required review, then reads the
+    //    settings back from GitHub and fails on any difference. gh is a fake on PATH: the real check is GitHub's, this
+    //    proves what the kit sends and that drift is caught.
+    const root30 = F.nodeApi(path.join(tmp, 'node-api-30'));
+    run('bootstrap.js', ['--repo', root30]);
+    F.git(['remote', 'add', 'origin', 'https://github.com/o/proj.git'], root30);
+    const gh30 = path.join(tmp, 'gh-30');
+    fs.mkdirSync(gh30, { recursive: true });
+    const protect30 = (drift) => {
+      const state = path.join(gh30, 'state.json');
+      write(state, JSON.stringify({ drift }));
+      write(path.join(gh30, 'gh'), `#!/usr/bin/env node
+const fs = require('fs');
+const st = JSON.parse(fs.readFileSync(${JSON.stringify(state)}, 'utf8'));
+const args = process.argv.slice(2), j = args.join(' ');
+if (j.includes('/protection') && args.includes('PUT')) { st.put = JSON.parse(fs.readFileSync(0, 'utf8')); fs.writeFileSync(${JSON.stringify(state)}, JSON.stringify(st)); process.exit(0); }
+if (j.includes('/protection')) {
+  const b = st.put, d = st.drift || {};
+  process.stdout.write(JSON.stringify({
+    required_status_checks: { strict: b.required_status_checks.strict, contexts: d.contexts || b.required_status_checks.contexts },
+    enforce_admins: { enabled: 'enforce_admins' in d ? d.enforce_admins : b.enforce_admins },
+    required_pull_request_reviews: b.required_pull_request_reviews,
+    allow_force_pushes: { enabled: b.allow_force_pushes }, allow_deletions: { enabled: b.allow_deletions },
+  }));
+  process.exit(0);
+}
+if (j.includes('/rulesets')) process.exit(0);
+process.stderr.write('fake gh: unexpected ' + j); process.exit(9);
+`);
+      fs.chmodSync(path.join(gh30, 'gh'), 0o755);
+      const r = run('bootstrap.js', ['--repo', root30, '--upgrade', '--protect', '--json'], { env: { PATH: `${gh30}${path.delimiter}${process.env.PATH}` } });
+      const bp = r.stdout ? (JSON.parse(r.stdout).branch_protection ?? {}) : {};
+      return { bp, sent: JSON.parse(st30().put ?? '{}') };
+    };
+    const st30 = () => { const st = JSON.parse(read(path.join(gh30, 'state.json'))); return { put: st.put ? JSON.stringify(st.put) : null }; };
+    const good30 = protect30({});
+    const sent30 = good30.sent;
+    const faithful = sent30.enforce_admins === true && sent30.required_pull_request_reviews?.require_code_owner_reviews === false && sent30.required_pull_request_reviews?.required_approving_review_count === 0 && sent30.allow_force_pushes === false && sent30.allow_deletions === false && good30.bp.ok === true;
+    const admin30 = protect30({ enforce_admins: false });
+    const ghost30 = protect30({ contexts: ['ghost', ...(sent30.required_status_checks?.contexts ?? [])] });
+    const caught30 = admin30.bp.ok === false && /enforce_admins is not enabled/.test(admin30.bp.reason ?? '') && ghost30.bp.ok === false && /"ghost" is not a job the workflow reports/.test(ghost30.bp.reason ?? '');
+    record(30, 'branch protection lets an admin merge on red CI, or GitHub holds other settings than the kit set', 'bootstrap --protect: enforce_admins on, no required review, settings read back from GitHub and compared (GitHub enforces)', faithful && caught30, `sent enforce_admins=${sent30.enforce_admins}, code_owner=${sent30.required_pull_request_reviews?.require_code_owner_reviews}, approvals=${sent30.required_pull_request_reviews?.required_approving_review_count}; read-back ok=${good30.bp.ok}; admin bypass -> ${admin30.bp.ok === false ? 'refused' : 'accepted'}; unknown check -> ${ghost30.bp.ok === false ? 'refused' : 'accepted'}`, 'tool-level');
 
     // 31 coverage below the floor, or the floor lowered -> ci_coverage_floor fails
     const kj31 = path.join(root, '.claude', 'kit.json');
