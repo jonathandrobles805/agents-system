@@ -155,7 +155,7 @@ test('publish ignores the owner\'s git configuration: a global pushInsteadOf can
   // silently push over SSH as the owner (here: to a closed port, so the push would fail instead of landing)
   const gcfg = path.join(tmpPath(t), 'gitconfig');
   fs.writeFileSync(gcfg, `[url "ssh://nobody@localhost:1/"]\n\tpushInsteadOf = ${bare}\n`);
-  const control = spawnSync('git', ['-c', `url.ssh://nobody@localhost:1/.pushInsteadOf=${bare}`, 'push', bare, 'wt/refund-route:wt/refund-route'], { cwd: wt, encoding: 'utf8', env: { ...process.env, GIT_TERMINAL_PROMPT: '0', GIT_SSH_COMMAND: 'false' } });
+  const control = spawnSync('git', ['push', bare, 'wt/refund-route:wt/refund-route'], { cwd: wt, encoding: 'utf8', env: { ...process.env, GIT_CONFIG_GLOBAL: gcfg, GIT_TERMINAL_PROMPT: '0', GIT_SSH_COMMAND: 'false' } });
   assert.notEqual(control.status, 0, 'control: the rewrite does divert a plain push');
   assert.match(control.stderr, /ssh/i, control.stderr);
   setEnv(t, 'GIT_CONFIG_GLOBAL', gcfg);
@@ -173,6 +173,14 @@ test('publish ignores the owner\'s git configuration: a global pushInsteadOf can
     assert.equal(await publish(root, { slug: 'refund-route' }, { token, pushTarget: () => bare }), 2);
   } finally { process.stderr.write = e; }
   assert.match(errs.at(-1), /rewrites or authenticates pushes itself.*pushinsteadof/i);
+  // an unscoped auth header in the repository's config would authenticate the push as the owner before askpass is asked
+  git(['config', '--unset', 'url.ssh://nobody@localhost:1/.pushInsteadOf'], wt);
+  git(['config', 'http.extraHeader', 'Authorization: basic b3duZXI6c2VjcmV0'], wt);
+  process.stderr.write = (s) => { errs.push(String(s)); return true; };
+  try {
+    assert.equal(await publish(root, { slug: 'refund-route' }, { token, pushTarget: () => bare }), 2);
+  } finally { process.stderr.write = e; }
+  assert.match(errs.at(-1), /rewrites or authenticates pushes itself.*http\.extraheader/i);
 });
 
 test('publish refuses: a branch outside wt/* and spec/*, a dirty worktree, no App configured, a token GitHub refused', async (t) => {

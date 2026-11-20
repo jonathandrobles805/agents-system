@@ -1238,8 +1238,11 @@ export async function publish(root, { slug, branch, title, bodyFile, body, base 
   // http.*.extraHeader or a credential helper there would route it through the owner's identity unnoticed
   const pushEnv = { ...process.env, GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_NOSYSTEM: '1', GIT_ASKPASS: askpass, GIT_TERMINAL_PROMPT: '0', KIT_APP_TOKEN: tok.token };
   let rewrites = '';
-  try { rewrites = pyStrip(K.git(['config', '--get-regexp', '^(url\\..*\\.(push)?insteadof|http\\..*\\.extraheader)$'], cwd, pushEnv)); } catch { rewrites = ''; }
-  if (rewrites) { fs.rmSync(dir, { recursive: true, force: true }); return refuse([`the repository's git config rewrites or authenticates pushes itself, so the push could leave as the owner; remove it first: ${rewrites.split('\n').join('; ')}`]); }
+  // GIT_CONFIG_GLOBAL needs git 2.32 (2021); an older git would read the owner's configuration after all
+  const gv = /(\d+)\.(\d+)/.exec(pyStrip(K.git(['--version'], cwd)));
+  if (gv && (Number(gv[1]) < 2 || (Number(gv[1]) === 2 && Number(gv[2]) < 32))) { fs.rmSync(dir, { recursive: true, force: true }); return refuse([`git ${gv[0]} is too old: publish needs git 2.32 or newer to ignore the owner's git configuration for the push`]); }
+  try { rewrites = pyStrip(K.git(['config', '--get-regexp', '^(url\\..*\\.(push)?insteadof|http\\.(.*\\.)?extraheader)$'], cwd, pushEnv)); } catch { rewrites = ''; }
+  if (rewrites) { fs.rmSync(dir, { recursive: true, force: true }); return refuse([`the repository's git config (or GIT_CONFIG_* in the environment) rewrites or authenticates pushes itself, so the push could leave as the owner; remove it first: ${rewrites.split('\n').join('; ')}`]); }
   try {
     K.git(['-c', 'credential.helper=', 'push', target, `${branch}:${branch}`], cwd, pushEnv);
   } catch (e) {
