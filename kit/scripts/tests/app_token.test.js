@@ -3,6 +3,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
+import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import { git, commitAll } from './fixtures.js';
@@ -138,11 +139,40 @@ test('publish: pushes the lane branch with the App token through GIT_ASKPASS and
   const pr = calls().find((c) => c.args[0] === 'pr' && c.args[1] === 'create');
   assert.ok(pr, 'a PR was opened');
   assert.equal(pr.token, 'ghs_secret', 'gh ran as the App, not as the owner');
-  assert.deepEqual(pr.args.slice(2, 8), ['--head', 'wt/refund-route', '--base', 'main', '--title', 'refund-route: Refund route']);
-  assert.equal(pr.args[8], '--body-file');
-  assert.ok(pr.args[9].endsWith(path.join('docs', 'specs', 'refund-route.progress.md')));
+  assert.deepEqual(pr.args.slice(2, 10), ['--repo', 'o/proj', '--head', 'wt/refund-route', '--base', 'main', '--title', 'refund-route: Refund route']);
+  assert.equal(pr.args[10], '--body-file');
+  assert.ok(pr.args[11].endsWith(path.join('docs', 'specs', 'refund-route.progress.md')));
   assert.deepEqual(out, ['https://github.com/o/proj/pull/12\n']);
-  // (the upstream is set after a fetch from origin, which here points at github.com and is unreachable: best effort, not asserted)
+  // the upstream is recorded from what was pushed, with no fetch (nothing in publish runs as the owner)
+  assert.equal(git(['rev-parse', '--abbrev-ref', 'wt/refund-route@{upstream}'], wt).trim(), 'origin/wt/refund-route');
+  assert.equal(git(['rev-parse', 'refs/remotes/origin/wt/refund-route'], wt).trim(), git(['rev-parse', 'HEAD'], wt).trim());
+});
+
+test('publish ignores the owner\'s git configuration: a global pushInsteadOf cannot divert the push to the owner\'s identity; a local one is refused', async (t) => {
+  const { root, wt, bare } = laneProject(t);
+  fakeGh(t);
+  // the common "fetch over HTTPS, push over SSH" setup, aimed at the test's push target: without protection git would
+  // silently push over SSH as the owner (here: to a closed port, so the push would fail instead of landing)
+  const gcfg = path.join(tmpPath(t), 'gitconfig');
+  fs.writeFileSync(gcfg, `[url "ssh://nobody@localhost:1/"]\n\tpushInsteadOf = ${bare}\n`);
+  const control = spawnSync('git', ['-c', `url.ssh://nobody@localhost:1/.pushInsteadOf=${bare}`, 'push', bare, 'wt/refund-route:wt/refund-route'], { cwd: wt, encoding: 'utf8', env: { ...process.env, GIT_TERMINAL_PROMPT: '0', GIT_SSH_COMMAND: 'false' } });
+  assert.notEqual(control.status, 0, 'control: the rewrite does divert a plain push');
+  assert.match(control.stderr, /ssh/i, control.stderr);
+  setEnv(t, 'GIT_CONFIG_GLOBAL', gcfg);
+  const token = async () => ({ ok: true, token: 'ghs_secret', reason: '' });
+  const quiet = async (fn) => { const w = process.stdout.write.bind(process.stdout); process.stdout.write = () => true; try { return await fn(); } finally { process.stdout.write = w; } };
+  const rc = await quiet(() => publish(root, { slug: 'refund-route' }, { token, pushTarget: () => bare }));
+  assert.equal(rc, 0);
+  assert.equal(git(['rev-parse', 'wt/refund-route'], bare).trim(), git(['rev-parse', 'HEAD'], wt).trim(), 'the push landed where publish aimed, not where the owner\'s config pointed');
+  // the same rewrite in the repository's own config is refused before anything is pushed
+  git(['config', 'url.ssh://nobody@localhost:1/.pushInsteadOf', bare], wt);
+  const errs = [];
+  const e = process.stderr.write.bind(process.stderr);
+  process.stderr.write = (s) => { errs.push(String(s)); return true; };
+  try {
+    assert.equal(await publish(root, { slug: 'refund-route' }, { token, pushTarget: () => bare }), 2);
+  } finally { process.stderr.write = e; }
+  assert.match(errs.at(-1), /rewrites or authenticates pushes itself.*pushinsteadof/i);
 });
 
 test('publish refuses: a branch outside wt/* and spec/*, a dirty worktree, no App configured, a token GitHub refused', async (t) => {

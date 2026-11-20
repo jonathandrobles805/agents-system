@@ -1192,14 +1192,15 @@ export function indexAdd(root, question, slug, keywords, files, commit) {
   return 0;
 }
 
-const GITHUB_REMOTE_RE = /github\.com[:/]([^/\s]+)\/([^/\s]+?)(?:\.git)?\/?$/;
+const GITHUB_REMOTE_RE = /^(?:https?:\/\/|ssh:\/\/)?(?:[^@/\s]+@)?github\.com[:/]([^/\s]+)\/([^/\s]+?)(?:\.git)?\/?$/;
 
 /**
  * lane.js publish: push a lane (`wt/<slug>`) or spec (`spec/<slug>`) branch and open its PR as the kit's GitHub App
  * (hardening plan D1, 0016 E.7). Host side, on the owner's machine: the App's private key never enters a lane. The
- * installation token lives in the children's environment only; git gets it through GIT_ASKPASS with the owner's
- * credential helpers switched off, gh through GH_TOKEN, and neither is ever printed. The branch must be checked out
- * with nothing uncommitted. `deps` is for tests: `token` mints the token, `pushTarget` names where to push.
+ * installation token lives in the children's environment only; git gets it through GIT_ASKPASS with the owner's git
+ * configuration ignored (no credential helper, no URL rewrite, no auth header can route the push through the owner's
+ * identity), gh through GH_TOKEN, and neither is ever printed. The branch must be checked out with nothing
+ * uncommitted. `deps` is for tests: `token` mints the token, `pushTarget` names where to push.
  */
 export async function publish(root, { slug, branch, title, bodyFile, body, base } = {}, deps = {}) {
   const kit = asDict(K.loadKitJson(root));
@@ -1207,14 +1208,14 @@ export async function publish(root, { slug, branch, title, bodyFile, body, base 
   if (!/^(wt|spec)\/\S+$/.test(branch)) return refuse([`branch '${branch}' is not a lane (wt/*) or spec (spec/*) branch; the App may push nothing else, by the repository's rulesets`]);
   const cwd = branch.startsWith('wt/') ? laneWorktree(root, kit, slug) : root;
   if (!cwd) return refuse([`no lane for ${slug}; run lane.js start ${slug} first`]);
-  let head, dirty, remote;
+  let head, dirty, remote = '';
   try {
     head = pyStrip(K.git(['rev-parse', '--abbrev-ref', 'HEAD'], cwd));
     dirty = pyStrip(K.git(['status', '--porcelain'], cwd));
-    remote = pyStrip(K.git(['config', '--get', 'remote.origin.url'], cwd));
   } catch (e) {
     return refuse([`git in ${cwd}: ${String(e.stderr || e.message).trim().split('\n')[0]}`]);
   }
+  try { remote = pyStrip(K.git(['remote', 'get-url', 'origin'], cwd)); } catch { remote = ''; }
   if (head !== branch) return refuse([`${cwd} has '${head}' checked out, not '${branch}'`]);
   if (dirty) return refuse([`${cwd} has uncommitted changes; commit them first`]);
   const m = GITHUB_REMOTE_RE.exec(remote);
@@ -1225,36 +1226,42 @@ export async function publish(root, { slug, branch, title, bodyFile, body, base 
   const key = APP.readPrivateKey(config, root);
   if (!key.pem) return refuse([key.reason]);
   const mint = deps.token ?? APP.installationToken;
-  const tok = await mint({ appId: config.app_id, privateKeyPem: key.pem, owner, repo });
+  let tok;
+  try { tok = await mint({ appId: config.app_id, privateKeyPem: key.pem, owner, repo }); } catch (e) { tok = { ok: false, reason: `could not mint the App's token: ${String(e && e.message || e).split('\n')[0]}` }; }
   if (!tok.ok) return refuse([tok.reason]);
   // push: the token through GIT_ASKPASS (never in the command line), the owner's credential helpers off
   const dir = fs.mkdtempSync(pjoin(os.tmpdir(), 'kit-askpass-'));
   const askpass = pjoin(dir, 'askpass.sh');
   fs.writeFileSync(askpass, '#!/bin/sh\ncase "$1" in *sername*) echo x-access-token ;; *) printf %s "$KIT_APP_TOKEN" ;; esac\n', { mode: 0o700 });
   const target = (deps.pushTarget ?? ((o, r) => `https://github.com/${o}/${r}.git`))(owner, repo);
+  // the owner's global and system git configuration is ignored for the push: a url.*.pushInsteadOf, an
+  // http.*.extraHeader or a credential helper there would route it through the owner's identity unnoticed
+  const pushEnv = { ...process.env, GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_NOSYSTEM: '1', GIT_ASKPASS: askpass, GIT_TERMINAL_PROMPT: '0', KIT_APP_TOKEN: tok.token };
+  let rewrites = '';
+  try { rewrites = pyStrip(K.git(['config', '--get-regexp', '^(url\\..*\\.(push)?insteadof|http\\..*\\.extraheader)$'], cwd, pushEnv)); } catch { rewrites = ''; }
+  if (rewrites) { fs.rmSync(dir, { recursive: true, force: true }); return refuse([`the repository's git config rewrites or authenticates pushes itself, so the push could leave as the owner; remove it first: ${rewrites.split('\n').join('; ')}`]); }
   try {
-    K.git(['-c', 'credential.helper=', 'push', target, `${branch}:${branch}`], cwd, { ...process.env, GIT_ASKPASS: askpass, GIT_TERMINAL_PROMPT: '0', KIT_APP_TOKEN: tok.token });
+    K.git(['-c', 'credential.helper=', 'push', target, `${branch}:${branch}`], cwd, pushEnv);
   } catch (e) {
     const err = String(e.stderr || e.message).replaceAll(tok.token, '***');
     return refuse([`push of ${branch} refused: ${err.trim().split('\n').filter(Boolean).slice(-3).join(' | ')}`]);
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }
-  try { K.git(['fetch', 'origin', branch], cwd); K.git(['branch', `--set-upstream-to=origin/${branch}`, branch], cwd); } catch { /* upstream is a convenience; the push is done */ }
+  // record what was pushed and set the upstream, with no fetch: nothing here touches the network as the owner
+  try { K.git(['update-ref', `refs/remotes/origin/${branch}`, pyStrip(K.git(['rev-parse', 'HEAD'], cwd))], cwd); K.git(['branch', `--set-upstream-to=origin/${branch}`, branch], cwd); } catch { /* upstream is a convenience; the push is done */ }
   // the PR, opened by the App
   const row = roadmapRows(root).find((r) => r.slug === slug);
   const baseBranch = base || kget(kit, 'default_branch', 'main');
   const progress = pjoin(cwd, K.workRoot(root), `${slug}.progress.md`);
   const bodyArgs = bodyFile ? ['--body-file', bodyFile] : body ? ['--body', body] : K.isFile(progress) ? ['--body-file', progress] : ['--body', `Opened by lane.js publish for ${slug}.`];
-  const args = ['pr', 'create', '--head', branch, '--base', baseBranch, '--title', title || `${slug}: ${row?.feature ?? slug}`, ...bodyArgs];
-  const r = spawnSync('gh', args, { cwd, encoding: 'utf8', timeout: 120000, env: { ...process.env, GH_TOKEN: tok.token, GITHUB_TOKEN: tok.token } });
+  const args = ['pr', 'create', '--repo', `${owner}/${repo}`, '--head', branch, '--base', baseBranch, '--title', title || `${slug}: ${row?.feature ?? slug}`, ...bodyArgs];
+  const r = spawnSync('gh', args, { cwd, encoding: 'utf8', timeout: 120000, env: { ...process.env, GH_TOKEN: tok.token } });
   if (r.error) return refuse([r.error.code === 'ENOENT' ? 'gh is not installed' : `gh pr create: ${r.error.message}`]);
   const urlOf = (t) => (/(https:\/\/github\.com\/\S+\/pull\/\d+)/.exec(t || '') ?? [])[1];
   let url = urlOf(r.stdout);
-  if (r.status !== 0) {
-    url = /already exists/i.test(r.stderr) ? urlOf(r.stderr) : null;
-    if (!url) return refuse([`gh pr create: ${(r.stderr || r.stdout).replaceAll(tok.token, '***').trim().slice(0, 300)}`]);
-  }
+  if (r.status !== 0) url = /already exists/i.test(r.stderr) ? urlOf(r.stderr) : null;
+  if (!url) return refuse([`gh pr create: ${(r.stderr || r.stdout || 'printed no PR URL').replaceAll(tok.token, '***').trim().slice(0, 300)}`]);
   process.stdout.write(`${url}\n`);
   return 0;
 }

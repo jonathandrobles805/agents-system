@@ -671,7 +671,8 @@ process.stderr.write('fake gh: unexpected ' + j); process.exit(9);
 
     // 50 a skill tells the agent to push or open the PR with the owner's login instead of as the App (0016 E.7): the
     //    skills must name lane.js publish and no `git push` / `gh pr create`; publish must refuse other branches and
-    //    keep the token out of the command line (GIT_ASKPASS, GH_TOKEN). The fake token proves the plumbing offline.
+    //    keep the token out of the command line (GIT_ASKPASS, GH_TOKEN). This is a static check of the skills and the
+    //    source; the behaviour (a real push through GIT_ASKPASS, gh under GH_TOKEN) is proven in tests/app_token.test.js.
     const skillDir = path.join(ROOT, 'kit', 'skills');
     const skillText = fs.readdirSync(skillDir).map((d) => path.join(skillDir, d, 'SKILL.md')).filter((p) => fs.existsSync(p)).map((p) => `${p}\n${read(p)}`).join('\n');
     const rawPush = [...skillText.matchAll(/git push|gh pr create/g)].length;

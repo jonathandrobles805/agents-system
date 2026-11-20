@@ -54,26 +54,37 @@ async function call(fetchFn, url, token, init = {}) {
  * the environment only. `fetchFn` is injectable for tests.
  */
 export async function installationToken({ appId, privateKeyPem, owner, repo, fetchFn = globalThis.fetch, now }) {
-  const jwt = appJwt(appId, privateKeyPem, now);
-  const inst = await call(fetchFn, `${API}/repos/${owner}/${repo}/installation`, jwt);
+  let jwt;
+  try { jwt = appJwt(appId, privateKeyPem, now); } catch (e) { return { ok: false, reason: `could not sign the App's JWT with the private key: ${String(e && e.message || e).split('\n')[0]}` }; }
+  let inst;
+  try { inst = await call(fetchFn, `${API}/repos/${owner}/${repo}/installation`, jwt); } catch (e) { return { ok: false, reason: `could not reach ${API}: ${String(e && e.cause?.message || e && e.message || e).split('\n')[0]}` }; }
   if (inst.status !== 200 || typeof inst.data?.id !== 'number') {
     const why = inst.status === 404 ? `the App is not installed on ${owner}/${repo} (install it from the App's settings page)` : inst.data?.message || `HTTP ${inst.status}`;
     return { ok: false, reason: `could not find the App's installation on ${owner}/${repo}: ${why}` };
   }
-  const tok = await call(fetchFn, `${API}/app/installations/${inst.data.id}/access_tokens`, jwt, {
-    method: 'POST', body: JSON.stringify({ repositories: [repo], permissions: { contents: 'write', pull_requests: 'write' } }),
-  });
+  let tok;
+  try {
+    tok = await call(fetchFn, `${API}/app/installations/${inst.data.id}/access_tokens`, jwt, {
+      method: 'POST', body: JSON.stringify({ repositories: [repo], permissions: { contents: 'write', pull_requests: 'write' } }),
+    });
+  } catch (e) { return { ok: false, reason: `could not reach ${API}: ${String(e && e.cause?.message || e && e.message || e).split('\n')[0]}` }; }
   if (tok.status !== 201 || typeof tok.data?.token !== 'string') {
     return { ok: false, reason: `could not create an installation token: ${tok.data?.message || `HTTP ${tok.status}`}` };
   }
   return { ok: true, token: tok.data.token, expires_at: tok.data.expires_at ?? null, installation_id: inst.data.id, reason: '' };
 }
 
-/** Read the private key named by the config. Refuses a key inside the repository: it must never be committed. */
+/**
+ * Read the private key named by the config. Refuses a key inside the repository or its lanes folder (`<repo>-lanes`,
+ * which lanes can write): it must never be committed or readable from a lane. Symlinks are resolved first.
+ */
 export function readPrivateKey(config, repoRoot) {
-  const p = path.resolve(config.private_key.startsWith('~/') ? path.join(os.homedir(), config.private_key.slice(2)) : config.private_key);
-  if (repoRoot && (p === path.resolve(repoRoot) || p.startsWith(path.resolve(repoRoot) + path.sep))) return { pem: null, reason: `the App's private key ${p} is inside the repository; move it outside (it must never be committed)` };
-  if (!fs.existsSync(p)) return { pem: null, reason: `the App's private key ${p} does not exist` };
+  const named = path.resolve(config.private_key.startsWith('~/') ? path.join(os.homedir(), config.private_key.slice(2)) : config.private_key);
+  if (!fs.existsSync(named)) return { pem: null, reason: `the App's private key ${named} does not exist` };
+  const p = fs.realpathSync(named);
+  const under = (dir) => { const d = fs.existsSync(dir) ? fs.realpathSync(dir) : path.resolve(dir); return p === d || p.startsWith(d + path.sep); };
+  if (repoRoot && under(repoRoot)) return { pem: null, reason: `the App's private key ${p} is inside the repository; move it outside (it must never be committed)` };
+  if (repoRoot && under(path.join(path.dirname(path.resolve(repoRoot)), `${path.basename(path.resolve(repoRoot))}-lanes`))) return { pem: null, reason: `the App's private key ${p} is inside the lanes folder, which lanes can write; move it outside` };
   const pem = fs.readFileSync(p, 'utf8');
   if (!/-----BEGIN (RSA )?PRIVATE KEY-----/.test(pem)) return { pem: null, reason: `${p} is not a PEM private key` };
   return { pem, reason: '' };
