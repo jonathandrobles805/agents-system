@@ -6,7 +6,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { CORE_ROLES, compare, loadTasks, runSet, selectTasks, summarize, writeBaseline } from '../../eval/harness.js';
+import { CORE_ROLES, compare, fmt, loadTasks, runSet, selectTasks, summarize, writeBaseline } from '../../eval/harness.js';
 import { CHECKS, score } from '../../eval/score.js';
 import * as fixture from '../../eval/runners/fixture.js';
 import * as claude from '../../eval/runners/claude.js';
@@ -109,6 +109,30 @@ test('full run against a baseline: a seeded quality drop is a regression; a base
   const stats = summarize([{ scored: { score: 1, rubric: { score: 1 }, hard_ok: true } }, { scored: { score: 0, rubric: { score: 0 }, hard_ok: false } }]);
   assert.equal(stats.score.mean, 0.5);
   assert.ok(stats.score.std > 0.7);
+});
+
+test('the report keeps each worker session\'s exit status and stderr tail, and the text output names a session that exited non-zero', async (t) => {
+  const out = path.join(tmpPath(t), 'w');
+  const rep = await runSet({ set: 'smoke', runner: 'fixture', out });
+  for (const r of Object.values(rep.results)) for (const a of r.attempts) { assert.deepEqual(a.worker, { status: null, signal: null, error: null, stderr: '' }, 'the fixture runner has no worker session'); assert.equal(a.judge_session, null); }
+  assert.ok(!fmt(rep).includes('WORKER') && !fmt(rep).includes('JUDGE'), 'nothing to report when no real session ran');
+  // real sessions that failed in the three ways spawnSync reports: the harness prints each, and never for the fixture runner
+  const broken = JSON.parse(JSON.stringify(rep));
+  const [first, second, third] = Object.keys(broken.results);
+  broken.results[first].attempts[0].runner = 'claude';
+  broken.results[first].attempts[0].worker = { status: 1, signal: null, error: null, stderr: 'bwrap: setting up uid map: Permission denied\nclaude: sandbox failed\n' };
+  broken.results[second].attempts[0].runner = 'claude';
+  broken.results[second].attempts[0].worker = { status: null, signal: 'SIGTERM', error: null, stderr: '' };
+  broken.results[third].attempts[0].runner = 'claude';
+  broken.results[third].attempts[0].worker = { status: 0, signal: null, error: null, stderr: '' };
+  broken.results[third].attempts[0].judge_session = { status: null, signal: null, error: 'ENOENT', stderr: '' };
+  const text = fmt(broken);
+  assert.match(text, new RegExp(`WORKER ${first} attempt 0: exit 1; stderr: bwrap: setting up uid map: Permission denied \\| claude: sandbox failed`));
+  assert.match(text, new RegExp(`WORKER ${second} attempt 0: killed by SIGTERM \\(timed out\\); stderr: \\(empty\\)`));
+  assert.ok(!text.includes(`WORKER ${third}`), 'a worker that exited 0 is not reported');
+  assert.match(text, new RegExp(`JUDGE ${third} attempt 0: not started \\(ENOENT\\)`));
+  const saved = JSON.parse(fs.readFileSync(path.join(out, 'report.json'), 'utf8'));
+  assert.deepEqual(saved.results[first].attempts[0].worker, { status: null, signal: null, error: null, stderr: '' }, 'the worker record is written to report.json');
 });
 
 test('claude runner reports why it is unavailable instead of running unsandboxed or keyless', () => {

@@ -131,6 +131,21 @@ jobs:
             echo "::error::no credential reached this job. Add CLAUDE_CODE_OAUTH_TOKEN (claude setup-token) or ANTHROPIC_API_KEY as a secret of the 'main' environment (Settings → Environments → main). KIT-SPEC 11A."
             exit 1
           fi
+      - name: sandbox runtime self-check (bubblewrap needs an unprivileged user namespace; Ubuntu 24.04 restricts it)
+        if: steps.touched.outputs.files != ''
+        run: |
+          sudo apt-get install -y bubblewrap socat
+          # what the sandbox runtime needs: a user+pid namespace from bwrap, and a nested user namespace inside it
+          # (its seccomp helper unshares again); Ubuntu 24.04 restricts both through AppArmor
+          probe() { bwrap --ro-bind / / --dev /dev --proc /proc --unshare-user --unshare-pid unshare -Ur true; }
+          if probe 2>/tmp/bwrap.err; then
+            echo "sandbox: user namespaces ok"
+          else
+            echo "::warning::bwrap cannot create the namespaces the sandbox needs: $(tr '\n' ' ' </tmp/bwrap.err). Applying the sandbox runtime's documented fix: kernel.apparmor_restrict_unprivileged_userns=0."
+            sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+            probe 2>/tmp/bwrap.err || { echo "::error::the sandbox still cannot create user namespaces: $(tr '\n' ' ' </tmp/bwrap.err)"; exit 1; }
+            echo "sandbox: user namespaces ok after the sysctl"
+          fi
       - name: eval smoke set against the real agents
         if: steps.touched.outputs.files != ''
         env:
@@ -140,8 +155,15 @@ jobs:
         run: |
           if [ -n "$CLAUDE_CODE_OAUTH_TOKEN" ]; then unset ANTHROPIC_API_KEY; echo "auth: subscription token"; else echo "auth: API key"; fi
           npm install -g @anthropic-ai/claude-code @anthropic-ai/sandbox-runtime
-          sudo apt-get install -y bubblewrap socat
-          node kit/eval/harness.js run --set smoke --runner claude --touched "$TOUCHED"
+          node kit/eval/harness.js run --set smoke --runner claude --touched "$TOUCHED" --out "$RUNNER_TEMP/eval-smoke"
+      - name: keep the report (each worker session's exit status and stderr tail are in it)
+        if: always() && steps.touched.outputs.files != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: eval-smoke-main-${{ github.sha }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/eval-smoke/report.json
+          retention-days: 30
+          if-no-files-found: warn
 
   docs:
     name: kit docs validate themselves

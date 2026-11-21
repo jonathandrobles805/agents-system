@@ -120,7 +120,10 @@ export async function runSet({ set, runner = 'fixture', n = set === 'full' ? 3 :
     for (let i = 0; i < n; i++) {
       const outcome = await R.run(task, { attempt: i, ...(variant ? { variant } : {}) });
       const scored = score(task, outcome);
-      attempts.push({ attempt: i, runner: outcome.runner, variant: outcome.variant ?? null, ms: outcome.ms, scored });
+      // the worker session's exit status and the tail of its stderr travel with the attempt: a session that never
+      // started (no sandbox, no credential, a refused token) must be diagnosable from the report alone
+      const worker = { status: outcome.worker_status ?? null, signal: outcome.worker_signal ?? null, error: outcome.worker_error ?? null, stderr: String(outcome.worker_stderr ?? '').slice(-2000) };
+      attempts.push({ attempt: i, runner: outcome.runner, variant: outcome.variant ?? null, ms: outcome.ms, worker, judge_session: outcome.judge_session ?? null, scored });
       if (!scored.hard_ok) violations.push({ task: task.id, attempt: i, checks: scored.violations, why: scored.violations.map((v) => `${v}: ${scored.hard[v].why}`) });
     }
     results[task.id] = { role: task.role ?? null, kind: task.kind ?? null, runner, attempts, summary: summarize(attempts) };
@@ -144,12 +147,22 @@ export function writeBaseline(reportPath, outPath, kitVersion) {
   return baseline;
 }
 
-function fmt(rep) {
+export function fmt(rep) {
   if (rep.error) return `eval: ${rep.error}\n`;
   const lines = [`eval ${rep.set} (${rep.runner}, n=${rep.n}): ${rep.tasks} task(s)`];
   for (const [id, r] of Object.entries(rep.results)) lines.push(`  ${id.padEnd(34)} score ${r.summary.score.mean.toFixed(2)} ±${r.summary.score.std.toFixed(2)}  hard ${r.summary.hard_ok.mean === 1 ? 'ok' : 'VIOLATION'}`);
   for (const v of rep.violations) lines.push(`  VIOLATION ${v.task} attempt ${v.attempt}: ${v.why.join('; ')}`);
   for (const r of rep.regressions) lines.push(`  REGRESSION ${r.task} ${r.metric}: ${r.run.toFixed(2)} < ${r.baseline.toFixed(2)} − ${r.allowed.toFixed(2)}`);
+  // a real session that did not exit 0 (non-zero, timed out, or never spawned) is the first thing to read when
+  // every task violates; the fixture runner has no session and prints nothing here
+  const how = (w) => (w.status !== null ? `exit ${w.status}` : w.signal ? `killed by ${w.signal} (timed out)` : `not started (${w.error || 'unknown'})`);
+  const tail = (s) => String(s || '').trim().split('\n').filter(Boolean).slice(-3).join(' | ') || '(empty)';
+  for (const [id, r] of Object.entries(rep.results)) {
+    for (const a of r.attempts ?? []) {
+      if (a.runner === 'claude' && a.worker && a.worker.status !== 0) lines.push(`  WORKER ${id} attempt ${a.attempt}: ${how(a.worker)}; stderr: ${tail(a.worker.stderr)}`);
+      if (a.runner === 'claude' && a.judge_session && a.judge_session.status !== 0) lines.push(`  JUDGE ${id} attempt ${a.attempt}: ${how(a.judge_session)}; stderr: ${tail(a.judge_session.stderr)}`);
+    }
+  }
   lines.push(rep.ok ? 'eval: PASS' : 'eval: FAIL');
   return lines.join('\n') + '\n';
 }
