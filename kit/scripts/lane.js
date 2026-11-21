@@ -586,7 +586,8 @@ export function start(root, slug, base) {
   let startPoint;
   if (hasOrigin) {
     try {
-      K.git(['fetch', '-q', 'origin', base], root);
+      // an explicit refspec: a fetch by branch name alone updates origin/<base> only when the remote's refspec covers it
+      K.git(['fetch', '-q', 'origin', `+refs/heads/${base}:refs/remotes/origin/${base}`], root);
       startPoint = `origin/${base}`;
     } catch (e) {
       if (!isCalledProcessError(e)) throw e;
@@ -652,7 +653,7 @@ export function start(root, slug, base) {
   const startCommit = pyStrip(K.git(['rev-parse', 'HEAD'], wt));
   const lane = {
     feature: slug, spec: `${work}/${slug}.md`, stage: reproFirst ? 'reproduce' : 'build', started: now, created: now,
-    base, base_ref: startPoint, base_commit: baseCommit, ...(hasOrigin ? {} : { local_only: true }), branch, start_commit: startCommit, budget: kget(kget(kit, 'budgets', {}), 'build', {}),
+    base, base_commit: baseCommit, branch, start_commit: startCommit, budget: kget(kget(kit, 'budgets', {}), 'build', {}),
     risk: highRisk ? 'high' : 'normal',
     work_type: fields.work_type, size: fields.size, domain: fields.domain,
     sandbox: { runtime: sandbox.runtime, state: sandbox.state, how: sandbox.how, settings: relativeTo(wt, sandboxSettings), allowed_domains: sandbox.allowedDomains.length,

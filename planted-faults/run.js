@@ -674,7 +674,7 @@ process.stderr.write('fake gh: unexpected ' + j); process.exit(9);
     record(49, 'a matrix job is required under its unexpanded name, which no check run ever reports', 'pr_gate workflowChecks expands strategy.matrix into one required name per value, or refuses', ok49, ok49 ? `required: ${wf49.required.join(' | ')}` : `unexpanded: ${bad49.join(' | ')}; errors: ${(wf49.errors ?? []).join('; ')}`);
 
     // 51 a lane starts from a stale base: the fetch failed, or there is no origin and nobody said the repo is local-only
-    //    (hardening plan D3) -> lane.js start refuses both and creates nothing; a reachable origin is used and recorded
+    //    (hardening plan D3) -> lane.js start refuses both and creates nothing
     const r51 = path.join(tmp, 'node-api-51');
     F.nodeApi(r51);
     run('bootstrap.js', ['--repo', r51]);
@@ -687,7 +687,8 @@ process.stderr.write('fake gh: unexpected ' + j); process.exit(9);
     const fetchFail51 = run('lane.js', ['start', 'refund-route', '--repo', r51]);
     F.git(['remote', 'remove', 'origin'], r51);
     const noOrigin51 = run('lane.js', ['start', 'refund-route', '--repo', r51]);
-    const refused51 = fetchFail51.returncode === 2 && /could not fetch/.test(fetchFail51.stderr) && noOrigin51.returncode === 2 && /no 'origin' remote/.test(noOrigin51.stderr) && !fs.existsSync(lanes51);
+    const untouched51 = F.git(['branch', '--list', 'wt/refund-route'], r51).trim() === '' && F.git(['status', '--porcelain'], r51).trim() === '';
+    const refused51 = fetchFail51.returncode === 2 && /could not fetch/.test(fetchFail51.stderr) && noOrigin51.returncode === 2 && /no 'origin' remote/.test(noOrigin51.stderr) && !fs.existsSync(lanes51) && untouched51;
     record(51, 'a lane starts from a stale base (fetch failed, or no origin on a repo not marked local-only)', 'lane.js start: refuses both, creates nothing (hardening plan D3)', refused51, `failed fetch -> exit ${fetchFail51.returncode} (${fetchFail51.stderr.trim().split('\n')[0]}); no origin -> exit ${noOrigin51.returncode} (${noOrigin51.stderr.trim().split('\n')[0]}); worktree created: ${fs.existsSync(lanes51)}`, 'tool-level');
 
     // 50 a skill tells the agent to push or open the PR with the owner's login instead of as the App (0016 E.7): the

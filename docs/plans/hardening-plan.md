@@ -243,7 +243,7 @@ Steps 1–9 of the skills work are done on branch `commands-to-skills`: 23 `zi-`
 - [ ] Rounds and wall time move into the store. `lane.js stage` becomes a call to `advance`.
 - [ ] Fix #63 first: add a `kit` launcher on `PATH`, prove with a probe that the new permission rules match, then narrow the lanes' rules (E.4) and the skills' `Bash` so lanes can't call `advance`, `gate`, `start` or a merge. Sessions outside the container keep `advance`, `gate` and `start`, and may merge only through `kit merge` behind an `ask` rule (D1, "Merging on your word"); they are denied an approving review, any other merge, and changes to protection or the ruleset (`gh pr review --approve`, `gh pr merge` and their `gh api` forms).
 - [ ] Fix #57 (stages a profile lacks are refused, not mapped to done), #58 (listed stages are produced or removed, and `requires` blocks) and #59 (`skill-development` is refused until its agent exists).
-- [ ] Make the lane start fail closed, with `local_only` (D3), and update the `lane.test.js` fixtures. Code in PR #100 (`lane.js start` refuses a failed fetch and, unless `"local_only": true`, a missing `origin`; records `base_ref` and `base_commit`; planted fault 51); ticked once merged.
+- [ ] Make the lane start fail closed, with `local_only` (D3), and update the `lane.test.js` fixtures. Code in PR #100 (`lane.js start` refuses a failed fetch and, unless `"local_only": true`, a missing `origin`; records `base_commit`; planted fault 51); ticked once merged.
 - **Done when:**
     - an illegal move is refused with a reason;
     - a round past the limit parks the lane;
