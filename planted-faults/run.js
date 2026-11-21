@@ -335,7 +335,7 @@ export function main(argv) {
     F.nodeApi(root23);
     run('bootstrap.js', ['--repo', root23]);
     const kj23 = path.join(root23, '.claude', 'kit.json');
-    write(kj23, K.jsonDumps({ ...JSON.parse(read(kj23)), wip_limit: 2 }));
+    write(kj23, K.jsonDumps({ ...JSON.parse(read(kj23)), wip_limit: 2, local_only: true })); // no remote (hardening plan D3)
     write(path.join(root23, 'ROADMAP.md'), read(path.join(root23, 'ROADMAP.md')).replaceAll('| TODO(bootstrap: ROADMAP.md — feature) | TODO(bootstrap: ROADMAP.md — slug) | M1 | queued | — | — | — |', '| Refund route | refund-route | M1 | queued | — | — | — |'));
     const c23 = F.commitAll(root23, 'bootstrap');
     write(path.join(root23, 'docs', 'specs', 'refund-route.md'), SPEC({ commit: c23.slice(0, 7) }));
@@ -372,6 +372,8 @@ export function main(argv) {
     const root34 = path.join(tmp, 'node-api-34');
     F.nodeApi(root34);
     run('bootstrap.js', ['--repo', root34]);
+    const kj34 = path.join(root34, '.claude', 'kit.json');
+    write(kj34, K.jsonDumps({ ...JSON.parse(read(kj34)), local_only: true })); // no remote (hardening plan D3)
     const goal34 = path.join(root34, 'docs', 'goals', 'refund-route.md');
     fs.mkdirSync(path.dirname(goal34), { recursive: true });
     fs.mkdirSync(path.join(root34, 'src', 'util'), { recursive: true });
@@ -628,6 +630,8 @@ process.stderr.write('fake gh: unexpected ' + j); process.exit(9);
     const g45 = path.join(r45, 'docs', 'goals', 'fix-it.md');
     writeP(g45, '# Goal: fix-it\n\n- Slug: fix-it\n- Date: 2026-11-11\n- Agreed by: J and Claude on 2026-11-11\n- Status: agreed\n- Work type: fix\n\n## What we want\n\nA fix.\n\n## Done looks like\n\n- G1. it works\n');
     run('bootstrap.js', ['--repo', r45]);
+    const kj45 = path.join(r45, '.claude', 'kit.json');
+    write(kj45, K.jsonDumps({ ...JSON.parse(read(kj45)), local_only: true })); // no remote (hardening plan D3)
     write(path.join(r45, 'ROADMAP.md'), read(path.join(r45, 'ROADMAP.md')).replace(/^\| TODO\(bootstrap: ROADMAP\.md — feature\).*$/m, '| fix it | fix-it | M1 | queued | — | — | — |'));
     F.commitAll(r45, 'goal');
     const s45 = run('lane.js', ['start', 'fix-it', '--repo', r45]);
@@ -668,6 +672,23 @@ process.stderr.write('fake gh: unexpected ' + j); process.exit(9);
     const bad49 = wf49.required.filter((n) => n.includes('${{'));
     const ok49 = (wf49.errors ?? []).length === 0 && bad49.length === 0 && wf49.required.includes('script unit tests (node 20)') && wf49.required.includes('script unit tests (node 22)');
     record(49, 'a matrix job is required under its unexpanded name, which no check run ever reports', 'pr_gate workflowChecks expands strategy.matrix into one required name per value, or refuses', ok49, ok49 ? `required: ${wf49.required.join(' | ')}` : `unexpanded: ${bad49.join(' | ')}; errors: ${(wf49.errors ?? []).join('; ')}`);
+
+    // 51 a lane starts from a stale base: the fetch failed, or there is no origin and nobody said the repo is local-only
+    //    (hardening plan D3) -> lane.js start refuses both and creates nothing; a reachable origin is used and recorded
+    const r51 = path.join(tmp, 'node-api-51');
+    F.nodeApi(r51);
+    run('bootstrap.js', ['--repo', r51]);
+    write(path.join(r51, 'ROADMAP.md'), read(path.join(r51, 'ROADMAP.md')).replaceAll('| TODO(bootstrap: ROADMAP.md — feature) | TODO(bootstrap: ROADMAP.md — slug) | M1 | queued | — | — | — |', '| Refund route | refund-route | M1 | queued | — | — | — |'));
+    const c51 = F.commitAll(r51, 'bootstrap');
+    write(path.join(r51, 'docs', 'specs', 'refund-route.md'), SPEC({ commit: c51.slice(0, 7) }));
+    F.commitAll(r51, 'spec');
+    const lanes51 = path.join(tmp, 'node-api-51-lanes', 'refund-route');
+    F.git(['remote', 'add', 'origin', path.join(tmp, 'gone-51.git')], r51);
+    const fetchFail51 = run('lane.js', ['start', 'refund-route', '--repo', r51]);
+    F.git(['remote', 'remove', 'origin'], r51);
+    const noOrigin51 = run('lane.js', ['start', 'refund-route', '--repo', r51]);
+    const refused51 = fetchFail51.returncode === 2 && /could not fetch/.test(fetchFail51.stderr) && noOrigin51.returncode === 2 && /no 'origin' remote/.test(noOrigin51.stderr) && !fs.existsSync(lanes51);
+    record(51, 'a lane starts from a stale base (fetch failed, or no origin on a repo not marked local-only)', 'lane.js start: refuses both, creates nothing (hardening plan D3)', refused51, `failed fetch -> exit ${fetchFail51.returncode} (${fetchFail51.stderr.trim().split('\n')[0]}); no origin -> exit ${noOrigin51.returncode} (${noOrigin51.stderr.trim().split('\n')[0]}); worktree created: ${fs.existsSync(lanes51)}`, 'tool-level');
 
     // 50 a skill tells the agent to push or open the PR with the owner's login instead of as the App (0016 E.7): the
     //    skills must name lane.js publish and no `git push` / `gh pr create`; publish must refuse other branches and

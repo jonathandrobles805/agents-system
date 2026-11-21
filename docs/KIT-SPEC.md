@@ -213,7 +213,7 @@ Preconditions are checked by a script the skill calls first; if a precondition f
 | `/zi-bootstrap [--upgrade]` | git repo; not bootstrapped unless `--upgrade` | detect stack → generate project layer from templates → draft ROADMAP, ARCHITECTURE, DESIGN from what it finds → ask you the questions in 7.3 → write `.claude/kit.json` → set branch protection via `gh` → run CI once | project layer, kit version stamp |
 | `/zi-research <topic or feature>` | bootstrapped | read INDEX → for each question: reuse (same commit), re-verify (cited files changed), or spawn researcher → parallel spawn → update INDEX | research files |
 | `/zi-plan <feature>` | research exists; WIP limit not hit | run planner → resolve unknowns → run spec-critic → write spec with one-screen summary | spec, status `waiting-approval` in ROADMAP |
-| `/zi-implement <feature>` | approval line present; Open questions empty; `main` fetched | create worktree `wt/<feature>` from fresh `main` → `/sync` → run implementer with lane hooks → on `done-check` pass, push branch and open PR | PR, progress file, log, events |
+| `/zi-implement <feature>` | approval line present; Open questions empty; `main` fetched (a failed fetch, or no `origin` unless `.claude/kit.json` has `"local_only": true`, refuses the start; the lane records `base_ref` and `base_commit`) | create worktree `wt/<feature>` from fresh `main` → `/sync` → run implementer with lane hooks → on `done-check` pass, push branch and open PR | PR, progress file, log, events |
 | `/zi-review <feature>` | PR exists | run reviewer → if `high-risk`, run second reviewer with a different model and the security/data checklist → write report → post fail list to PR | review report |
 | `/zi-sync` | in a worktree | `git fetch`, merge `main`, run tests, report | — |
 | `/zi-retro <feature>` | PR merged | run retro agent → show proposal → on your yes, write lesson and apply the proposed check | LESSONS entry, optional hook/lint/test change |
@@ -392,6 +392,7 @@ The kit is done when all of the following hold:
 | 48 | A pull request with no checks reported yet, or one red check, is read as mergeable | `lane.js merge` (`pr_gate` evaluate) | pending or red; merges only when every required job passed on the PR head |
 | 49 | A matrix job is required under its unexpanded name (`… (node ${{ matrix.node }})`), which no check run ever reports | `pr_gate.workflowChecks` | one required name per matrix value, as GitHub reports it; a matrix the parser cannot expand is refused with a reason (0016 E.11) |
 | 50 | A skill tells the agent to push or open the PR with the owner's login (`git push`, `gh pr create`) instead of as the App | `lane.js publish` is the only push path the skills name; the App token is minted on the host, scoped to one repository, passed through the environment | the skills route through `publish`; the token is never printed |
+| 51 | A lane starts from a stale base: the fetch failed, or there is no `origin` on a repo not marked `local_only` | `lane.js start` (hardening plan D3) | start refused, nothing created |
 
 ---
 
