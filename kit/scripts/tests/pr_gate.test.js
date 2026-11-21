@@ -157,7 +157,8 @@ if (j.includes('/protection')) {
     }));
     process.exit(0);
   }
-  process.stderr.write(st.protection === 'on' ? '' : 'gh: Branch not protected (HTTP 404)'); process.exit(st.protection === 'on' ? 0 : 1);
+  if (st.protection === 'on') { process.stdout.write(args.includes('.enforce_admins.enabled') ? String(st.enforceAdmins ?? true) + '\\n' : ''); process.exit(0); }
+  process.stderr.write('gh: Branch not protected (HTTP 404)'); process.exit(1);
 }
 // repository rulesets: a list, create, update and read by id, kept in the state file; st.rulesetDrift is merged
 // into the read-back of the ruleset of that name (the kit must notice); st.rulesetsFail refuses every write
@@ -206,6 +207,36 @@ test('lane.js merge waits through "no checks reported" and merges at the checked
   assert.deepEqual(merge.args.slice(0, 5), ['pr', 'merge', '4', '--squash', '--match-head-commit']);
   assert.equal(merge.args[5], PR.headRefOid);
   assert.ok(merge.args.join(' ').includes('for Jonathan'));
+});
+
+test('lane.js merge uses the owner\'s ruleset bypass (--admin) only after every check is green and only where GitHub enforces protection for admins', (t) => {
+  const root = project(t);
+  const mergeOf = (calls) => calls().find((c) => c.args[0] === 'pr' && c.args[1] === 'merge');
+  // enforce_admins on: --admin is passed, after the checks are green
+  let g = fakeGh(t, { pr: PR, polls: [[run(1, 'tests', 'in_progress', null)], all()], protection: 'on', enforceAdmins: true });
+  let r = lane(root, g.env, 'merge', 'footer', '--by', 'Jonathan');
+  assert.equal(r.returncode, 0, r.stderr + r.stdout);
+  assert.ok(mergeOf(g.calls).args.includes('--admin'), 'the owner bypass for the ruleset');
+  assert.match(r.stdout, /as the owner \(--admin: the ruleset bypass; GitHub enforces the checks for admins too\)/);
+  assert.doesNotMatch(r.stdout, /warning/);
+  const order = g.calls().map((c) => c.args.join(' '));
+  assert.ok(order.findIndex((c) => c.includes('.enforce_admins.enabled')) > order.findLastIndex((c) => c.includes('/check-runs')), 'read after the checks went green');
+  // enforce_admins off: never --admin (it would let an admin skip the checks), and a warning
+  g = fakeGh(t, { pr: PR, polls: [all()], protection: 'on', enforceAdmins: false });
+  r = lane(root, g.env, 'merge', 'footer', '--by', 'Jonathan');
+  assert.equal(r.returncode, 0, r.stderr + r.stdout);
+  assert.ok(!mergeOf(g.calls).args.includes('--admin'));
+  assert.match(r.stdout, /warning: branch protection on main does not apply to admins \(enforce_admins off\)/);
+  // no protection: never --admin, and the existing warning
+  g = fakeGh(t, { pr: PR, polls: [all()] });
+  r = lane(root, g.env, 'merge', 'footer', '--by', 'Jonathan');
+  assert.ok(!mergeOf(g.calls).args.includes('--admin'));
+  assert.match(r.stdout, /warning: branch protection on main is off/);
+  // red CI with enforce_admins on: no merge at all, so no --admin
+  g = fakeGh(t, { pr: PR, polls: [all('failure')], protection: 'on', enforceAdmins: true });
+  r = lane(root, g.env, 'merge', 'footer', '--by', 'Jonathan');
+  assert.notEqual(r.returncode, 0);
+  assert.equal(mergeOf(g.calls), undefined);
 });
 
 test('lane.js merge refuses red CI, a draft, a closed PR, no --by, and CI that never finishes', (t) => {

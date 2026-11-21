@@ -187,13 +187,17 @@ export function checkRuns(root, sha) {
   return out.split('\n').filter((l) => l.trim()).map((l) => JSON.parse(l));
 }
 
-/** 'on', 'off' (GitHub has no protection for the branch) or 'unknown' (the token may not read it). */
-export function protection(root, branch) {
+/**
+ * Whether GitHub enforces the base branch's protection for admins too: 'on', 'off', 'unprotected' (no protection),
+ * or 'unknown' (could not read it). With 'on', an admin merge still needs every required check green; GitHub refused
+ * `gh pr merge --admin` on a pending PR with "10 of 10 required status checks are expected" (kit-test #14).
+ */
+export function adminEnforced(root, branch) {
   try {
-    gh(root, ['api', `repos/{owner}/{repo}/branches/${branch}/protection`, '--jq', '.url']);
-    return 'on';
+    const v = String(gh(root, ['api', `repos/{owner}/{repo}/branches/${branch}/protection`, '--jq', '.enforce_admins.enabled']) ?? '').trim();
+    return v === 'true' ? 'on' : v === 'false' ? 'off' : 'unknown';
   } catch (e) {
-    return /\b404\b|Branch not protected/i.test(String(e.stderr ?? e.message)) ? 'off' : 'unknown';
+    return /\b404\b|Branch not protected/i.test(String(e.stderr ?? e.message)) ? 'unprotected' : 'unknown';
   }
 }
 
@@ -252,6 +256,10 @@ export function ciCommand(root, pr, { wait = false, timeoutMin = 30, mutationBlo
 /**
  * lane.js merge: the only way the kit merges. Refuses a closed or draft PR, waits for the checks, refuses red or
  * timed-out CI, and squash-merges with --match-head-commit so a push after the checks were read cannot slip in.
+ * The `kit agent branches` ruleset lets only the owner update the default branch, and a plain `gh pr merge` does not
+ * use the owner's bypass; `--admin` does. It is passed only when GitHub enforces protection for admins
+ * (`enforce_admins` on), so it uses the ruleset bypass and nothing else: GitHub still refuses an admin merge while a
+ * required check is red or pending. Without that, the kit never passes `--admin`.
  */
 export function mergeCommand(root, pr, { by, timeoutMin = 30, mutationBlocking = false, out = process.stdout } = {}) {
   if (!by || !String(by).trim()) return refuse(out, ['--by <name> is required: the human who decided to merge']);
@@ -266,13 +274,18 @@ export function mergeCommand(root, pr, { by, timeoutMin = 30, mutationBlocking =
     return refuse(out, [`PR #${info.number} not merged: CI ${timedOut ? `still pending after ${timeoutMin} min` : 'red'} on ${info.headRefOid.slice(0, 7)}`, ...describe(res)]);
   }
   const body = `Merged by lane.js merge for ${by} after every required check passed on ${info.headRefOid}.`;
-  gh(root, ['pr', 'merge', String(info.number), '--squash', '--match-head-commit', info.headRefOid, '--body', body]);
-  out.write(`PR #${info.number} merged (squash) at head ${info.headRefOid.slice(0, 7)}, all required checks green.\n`);
+  const admins = adminEnforced(root, info.baseRefName);
+  const args = ['pr', 'merge', String(info.number), '--squash', '--match-head-commit', info.headRefOid, '--body', body];
+  if (admins === 'on') args.push('--admin');
+  gh(root, args);
+  out.write(`PR #${info.number} merged (squash) at head ${info.headRefOid.slice(0, 7)}, all required checks green` +
+    `${admins === 'on' ? '; as the owner (--admin: the ruleset bypass; GitHub enforces the checks for admins too)' : ''}.\n`);
   for (const l of describe(res)) out.write(`  ${l}\n`);
-  const prot = protection(root, info.baseRefName);
-  if (prot !== 'on') {
-    out.write(`warning: branch protection on ${info.baseRefName} is ${prot}. A merge from the GitHub page is not blocked on red CI; ` +
+  if (admins === 'unprotected' || admins === 'unknown') {
+    out.write(`warning: branch protection on ${info.baseRefName} is ${admins === 'unprotected' ? 'off' : 'unknown'}. A merge from the GitHub page is not blocked on red CI; ` +
       'run /zi-bootstrap --protect (private repositories need a GitHub plan that offers branch protection).\n');
+  } else if (admins === 'off') {
+    out.write(`warning: branch protection on ${info.baseRefName} does not apply to admins (enforce_admins off): an admin can merge on red CI from the GitHub page; run /zi-bootstrap --protect.\n`);
   }
   return 0;
 }
