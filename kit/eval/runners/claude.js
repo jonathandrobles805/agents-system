@@ -41,11 +41,15 @@ function fixtureRepo(task, dir) {
   return root;
 }
 
+/** Credential-looking strings never reach a report, whatever a session printed. */
+const redact = (s) => s.replace(/sk-ant-[A-Za-z0-9_-]+/g, 'sk-ant-***').replace(/\bgh[pousr]_[A-Za-z0-9]{20,}\b/g, 'gh*_***');
+
 function headless(prompt, cwd, env, settingsPath, timeoutMs) {
   const cfg = { runtime: SB.detectRuntime(env).runtime, allowWrite: [cwd, os.tmpdir()], allowedDomains: [], engine: process.env.KIT_CONTAINER_ENGINE || 'docker' };
   const cmd = SB.launchCommand(cfg, { wt: cwd, settingsPath, prompt });
   const r = spawnSync(cmd[0], cmd.slice(1), { cwd, env, encoding: 'utf8', timeout: timeoutMs, maxBuffer: 64 * 1024 * 1024 });
-  return { status: r.status, stdout: r.stdout ?? '', stderr: r.stderr ?? '' };
+  // status is null when the session timed out (signal) or could not be spawned (error); both are kept
+  return { status: r.status, signal: r.signal ?? null, error: r.error ? (r.error.code || r.error.message) : null, stdout: r.stdout ?? '', stderr: redact(r.stderr ?? '') };
 }
 
 function snapshot(root) {
@@ -81,10 +85,12 @@ export async function run(task, { attempt = 0, timeoutMs = 20 * 60 * 1000 } = {}
     const git = { log: spawnSync('git', ['log', '--oneline', '-20'], { cwd: root, encoding: 'utf8' }).stdout.trim().split('\n') };
     // the judge: rubric + calibration examples + end state, never the worker's transcript
     let judge = {};
+    let judgeSession = null;
     if ((task.rubric ?? []).length) {
       const examples = task.calibration ? `\n\nCalibration examples:\n${JSON.stringify(task.calibration, null, 2)}` : '';
       const prompt = `You are grading the end state of a repository against a rubric. Answer ONLY with a JSON object mapping each criterion id to 1 (met) or 0 (not met).\n\nRubric:\n${task.rubric.map((c) => `- ${c.id}: ${c.text}`).join('\n')}${examples}\n\nFiles (path then content):\n${Object.entries(files).slice(0, 60).map(([p, t]) => `--- ${p}\n${t.slice(0, 4000)}`).join('\n')}\n\nGit log:\n${git.log.join('\n')}`;
       const j = headless(prompt, root, { ...env, KIT_EVAL_JUDGE: '1' }, settings, 5 * 60 * 1000);
+      judgeSession = { status: j.status, signal: j.signal, error: j.error, stderr: j.stderr.slice(-2000) };
       const m = /\{[\s\S]*\}/.exec(j.stdout);
       if (m) {
         try {
@@ -94,7 +100,7 @@ export async function run(task, { attempt = 0, timeoutMs = 20 * 60 * 1000 } = {}
         }
       }
     }
-    return { runner: name, variant: null, files, events, git, judge, ms: Date.now() - started, worker_status: work.status, worker_stderr: work.stderr.slice(-2000) };
+    return { runner: name, variant: null, files, events, git, judge, ms: Date.now() - started, worker_status: work.status, worker_signal: work.signal, worker_error: work.error, worker_stderr: work.stderr.slice(-2000), judge_session: judgeSession };
   } finally {
     if (!process.env.KIT_EVAL_KEEP) fs.rmSync(dir, { recursive: true, force: true });
   }
