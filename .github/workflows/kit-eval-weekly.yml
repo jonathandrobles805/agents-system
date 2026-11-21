@@ -37,27 +37,20 @@ jobs:
           echo "bwrap $(bwrap --version); srt $(srt --version 2>/dev/null || echo '?'); $(rg --version | head -1); kernel $(uname -r)"
           echo "sysctl: $(sysctl -n kernel.apparmor_restrict_unprivileged_userns 2>/dev/null || echo 'not present')"
           echo "apparmor profiles mentioning bwrap: $(ls /etc/apparmor.d 2>/dev/null | grep -i bwrap | tr '\n' ' ' || true)$(sudo aa-status 2>/dev/null | grep -i bwrap | tr '\n' ' ' || true)"
+          # Anthropic's documented setup for Ubuntu 24.04 and later (code.claude.com/docs/en/sandboxing, "allow bubblewrap
+          # to create user namespaces"): an AppArmor profile for bwrap itself, not for the commands it runs. Loaded with
+          # apparmor_parser -r it replaces any bwrap profile already in the kernel, such as Ubuntu's bwrap-userns-restrict,
+          # which confines bwrap's children and denies the sandbox's seccomp helper its nested user namespace.
+          if [ "$(sysctl -n kernel.apparmor_restrict_unprivileged_userns 2>/dev/null || echo 0)" = "1" ]; then
+            printf '%s\n' 'abi <abi/4.0>,' 'include <tunables/global>' '' 'profile bwrap /usr/bin/bwrap flags=(unconfined) {' '  userns,' '  include if exists <local/bwrap>' '}' | sudo tee /etc/apparmor.d/bwrap >/dev/null
+            sudo apparmor_parser -r /etc/apparmor.d/bwrap
+            echo "sandbox: loaded Anthropic's bwrap AppArmor profile"
+          fi
           # the probe is the lane launcher itself with `true` in place of claude: srt, the settings a lane gets, bubblewrap, the seccomp helper
-          probe() { node kit/scripts/sandbox.js probe --repo . ; }
-          if probe; then exit 0; fi
-          # remedy 1, the runtime's documented one: Ubuntu 24.04 strips capabilities from unprivileged user namespaces
-          echo "::warning::the sandbox cannot start here; applying the sandbox runtime's documented fix: kernel.apparmor_restrict_unprivileged_userns=0"
-          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0 || true
-          if probe; then echo "sandbox: ok after the sysctl"; exit 0; fi
-          # what confines bwrap's children: the loaded profiles, the label inside bwrap, and the kernel's denials
+          if node kit/scripts/sandbox.js probe --repo .; then exit 0; fi
+          # still failing: what confines bwrap's children, for the next person reading this log
           sudo grep -i bwrap /sys/kernel/security/apparmor/profiles || true
-          bwrap --ro-bind / / --dev /dev --proc /proc --unshare-user --unshare-pid cat /proc/self/attr/current || true
           sudo dmesg | grep 'apparmor="DENIED"' | tail -n 20 || true
-          # remedy 2: Ubuntu's bwrap-userns-restrict moves bwrap's children into unpriv_bwrap, which denies every
-          # capability, so the seccomp helper's nested namespace cannot write its uid map; remove those profiles by
-          # name, whatever file loaded them (after the sysctl above, so bwrap itself keeps its user namespace)
-          for p in unpriv_bwrap bwrap; do
-            if sudo grep -q "^$p " /sys/kernel/security/apparmor/profiles; then
-              echo "::warning::removing the AppArmor profile $p"
-              echo -n "$p" | sudo tee /sys/kernel/security/apparmor/.remove >/dev/null || true
-            fi
-          done
-          if probe; then echo "sandbox: ok after removing the bwrap profiles"; exit 0; fi
           echo "::error::the sandbox runtime cannot start on this runner; the real-agent eval did not run. See the probe output above."
           exit 1
       - name: full set
