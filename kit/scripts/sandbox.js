@@ -11,6 +11,7 @@
 //   node sandbox.js detect                  JSON: which runtime would be used and why
 //   node sandbox.js scan --repo R           credential-looking content under R (exit 2 when found)
 //   node sandbox.js config <slug> --repo R  JSON: the sandbox configuration a lane for <slug> would get
+//   node sandbox.js probe --repo R          run `true` through the detected runtime with a lane's settings; JSON; exit 1 when it cannot
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -197,6 +198,33 @@ export function credentialScan(root, floor = K.loadFloor()) {
   return hits;
 }
 
+/**
+ * Does the sandbox actually work here? Launches `true` through the detected runtime with the settings a lane would
+ * get, the same way the eval and `lane.js start` launch Claude, and reports what happened. This is what CI runs before
+ * the real-agent eval: a runtime that cannot start (no user namespaces, a confined bubblewrap, a missing helper) shows
+ * up here with the runtime's own message, not as agents that silently did nothing. Never throws.
+ */
+export function probe(root, env = process.env) {
+  const det = detectRuntime(env);
+  if (!det.runtime) return { ok: false, runtime: null, how: det.how, status: null, stderr: '', why: 'no sandbox runtime' };
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'kit-sandbox-probe-'));
+  try {
+    const cfg = { ...sandboxConfig({ root, wt: dir, slug: 'sandbox-probe', env }), runtime: det.runtime, engine: det.engine || env.KIT_CONTAINER_ENGINE || 'docker' };
+    const settingsPath = path.join(dir, 'sandbox.json');
+    fs.writeFileSync(settingsPath, JSON.stringify(srtSettings(cfg), null, 2));
+    const cmd = launchCommand(cfg, { wt: dir, settingsPath, prompt: '' });
+    // the same launcher as a lane, with `true` in place of claude
+    const i = cmd.indexOf('claude');
+    const run = i >= 0 ? [...cmd.slice(0, i), 'true'] : ['true'];
+    const r = spawnSync(run[0], run.slice(1), { cwd: dir, env, encoding: 'utf8', timeout: 60000 });
+    const stderr = String(r.stderr ?? '').trim().slice(-2000);
+    const status = r.status ?? null;
+    return { ok: status === 0, runtime: det.runtime, how: det.how, command: run, status, signal: r.signal ?? null, error: r.error ? (r.error.code || r.error.message) : null, stderr, why: status === 0 ? '' : `${run[0]} exited ${status ?? `with ${r.signal || r.error?.code || 'no status'}`}` };
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+}
+
 export function main(argv) {
   const ap = new ArgumentParser({ prog: 'sandbox.js' });
   ap.addArgument('cmd');
@@ -212,6 +240,11 @@ export function main(argv) {
     const hits = credentialScan(root);
     process.stdout.write(K.jsonDumps({ hits }, { indent: 2 }) + '\n');
     return hits.length ? 2 : 0;
+  }
+  if (a.cmd === 'probe') {
+    const p = probe(root);
+    process.stdout.write(K.jsonDumps(p, { indent: 2 }) + '\n');
+    return p.ok ? 0 : 1;
   }
   if (a.cmd === 'config') {
     if (!a.slug) {

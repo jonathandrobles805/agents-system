@@ -46,6 +46,7 @@
     {"event": "PostToolUse", "file": "kit/agents/tester.md", "from": "agent:tester", "kind": "hook", "matcher": "Read|Write|Bash", "to": "hook:read_log"},
     {"file": ".github/workflows/kit.yml", "from": "ci-job:kit/docs", "kind": "runs", "to": "script:validate_docs"},
     {"file": ".github/workflows/kit.yml", "from": "ci-job:kit/eval-smoke-main", "kind": "runs", "step": "eval smoke set against the real agents", "to": "script:eval/harness"},
+    {"file": ".github/workflows/kit.yml", "from": "ci-job:kit/eval-smoke-main", "kind": "runs", "step": "sandbox runtime self-check (the lane launcher runs `true`; Ubuntu 24.04 restricts the namespaces it needs)", "to": "script:sandbox"},
     {"file": ".github/workflows/kit.yml", "from": "ci-job:kit/eval-smoke", "kind": "runs", "step": "harness self-check with recorded fixtures (proves the gate, not the agents)", "to": "script:eval/harness"},
     {"file": ".github/workflows/kit.yml", "from": "ci-job:kit/eval-smoke", "kind": "runs", "step": "which gated paths this PR touches (the real-agent set runs on main after the merge)", "to": "test:agents"},
     {"file": ".github/workflows/kit.yml", "from": "ci-job:kit/eval-smoke", "kind": "runs", "step": "which gated paths this PR touches (the real-agent set runs on main after the merge)", "to": "test:app_token"},
