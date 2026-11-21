@@ -136,7 +136,7 @@ let input = '';
 if (args.includes('--input')) input = fs.readFileSync(0, 'utf8');
 fs.appendFileSync(${JSON.stringify(log)}, JSON.stringify({ args, input }) + '\\n');
 const j = args.join(' ');
-if (j.startsWith('pr view')) { process.stdout.write(JSON.stringify(st.pr)); process.exit(0); }
+if (j.startsWith('pr view')) { st.views = (st.views || 0) + 1; fs.writeFileSync(${JSON.stringify(state)}, JSON.stringify(st)); process.stdout.write(JSON.stringify(st.prAfter && st.views > st.prAfter.after ? { ...st.pr, ...st.prAfter.pr } : st.pr)); process.exit(0); }
 if (j.includes('/check-runs')) {
   const runs = st.polls[Math.min(st.poll, st.polls.length - 1)];
   st.poll += 1; fs.writeFileSync(${JSON.stringify(state)}, JSON.stringify(st));
@@ -157,6 +157,7 @@ if (j.includes('/protection')) {
     }));
     process.exit(0);
   }
+  if (st.protection === 'error') { process.stderr.write('gh: Resource not accessible by integration (HTTP 403)'); process.exit(1); }
   if (st.protection === 'on') { process.stdout.write(args.includes('.enforce_admins.enabled') ? String(st.enforceAdmins ?? true) + '\\n' : ''); process.exit(0); }
   process.stderr.write('gh: Branch not protected (HTTP 404)'); process.exit(1);
 }
@@ -236,6 +237,18 @@ test('lane.js merge uses the owner\'s ruleset bypass (--admin) only after every 
   g = fakeGh(t, { pr: PR, polls: [all('failure')], protection: 'on', enforceAdmins: true });
   r = lane(root, g.env, 'merge', 'footer', '--by', 'Jonathan');
   assert.notEqual(r.returncode, 0);
+  assert.equal(mergeOf(g.calls), undefined);
+  // protection unreadable (not a 404): never --admin, and the 'unknown' warning
+  g = fakeGh(t, { pr: PR, polls: [all()], protection: 'error' });
+  r = lane(root, g.env, 'merge', 'footer', '--by', 'Jonathan');
+  assert.equal(r.returncode, 0, r.stderr + r.stdout);
+  assert.ok(!mergeOf(g.calls).args.includes('--admin'));
+  assert.match(r.stdout, /warning: branch protection on main is unknown/);
+  // the PR moved to another base after the checks were read: refused, nothing merged
+  g = fakeGh(t, { pr: PR, polls: [all()], protection: 'on', enforceAdmins: true, prAfter: { after: 2, pr: { baseRefName: 'release' } } });
+  r = lane(root, g.env, 'merge', 'footer', '--by', 'Jonathan');
+  assert.equal(r.returncode, 2);
+  assert.match(r.stderr, /changed while it was being merged \(base main -> release/);
   assert.equal(mergeOf(g.calls), undefined);
 });
 

@@ -275,6 +275,12 @@ export function mergeCommand(root, pr, { by, timeoutMin = 30, mutationBlocking =
   }
   const body = `Merged by lane.js merge for ${by} after every required check passed on ${info.headRefOid}.`;
   const admins = adminEnforced(root, info.baseRefName);
+  // --match-head-commit pins the head, not the base: a PR moved to another base after the checks were read is refused,
+  // so the owner's bypass can never land a merge on a branch other than the one whose protection was just read
+  const now = prInfo(root, pr);
+  if (now.baseRefName !== info.baseRefName || now.headRefOid !== info.headRefOid) {
+    return refuse(out, [`PR #${info.number} changed while it was being merged (base ${info.baseRefName} -> ${now.baseRefName}, head ${info.headRefOid.slice(0, 7)} -> ${now.headRefOid.slice(0, 7)}); not merging`]);
+  }
   const args = ['pr', 'merge', String(info.number), '--squash', '--match-head-commit', info.headRefOid, '--body', body];
   if (admins === 'on') args.push('--admin');
   gh(root, args);
