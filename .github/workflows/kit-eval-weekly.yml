@@ -50,6 +50,7 @@ jobs:
           if node kit/scripts/sandbox.js probe --repo .; then exit 0; fi
           # still failing: what confines bwrap's children, for the next person reading this log
           sudo grep -i bwrap /sys/kernel/security/apparmor/profiles || true
+          bwrap --ro-bind / / --dev /dev --proc /proc --unshare-user --unshare-pid cat /proc/self/attr/current || true
           sudo dmesg | grep 'apparmor="DENIED"' | tail -n 20 || true
           echo "::error::the sandbox runtime cannot start on this runner; the real-agent eval did not run. See the probe output above."
           exit 1
