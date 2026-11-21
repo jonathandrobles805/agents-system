@@ -6,7 +6,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import * as K from '../kitlib.js';
-import { ALLOW_MARKER, SRT_REQUIRED_KEYS, credentialScan, detectRuntime, launchCommand, sandboxConfig, specNetwork, srtSettings } from '../sandbox.js';
+import { ALLOW_MARKER, SRT_REQUIRED_KEYS, credentialScan, detectRuntime, launchCommand, probe, sandboxConfig, specNetwork, srtSettings } from '../sandbox.js';
 import * as F from './fixtures.js';
 import { runScript, tmpPath } from './helpers.js';
 import { project } from './testdata.js';
@@ -90,6 +90,41 @@ test('launchCommand per runtime', () => {
   assert.ok(c.includes('--network') && c.includes('kit-lane') && c.includes('/w:/w') && c.includes('KIT_ALLOWED_DOMAIN=a.example'));
   const none = launchCommand({ ...base, runtime: null }, { wt: '/w', settingsPath: '/x', prompt: 'p' });
   assert.equal(none[0], 'claude');
+});
+
+test('probe: launches `true` through the runtime with a lane\'s settings and reports the runtime\'s own failure (what CI runs before the real agents)', (t) => {
+  const { root } = project(t);
+  // a fake srt on PATH that records its arguments and fails the way a restricted host would
+  const bin = tmpPath(t);
+  const log = path.join(bin, 'srt.log');
+  fs.writeFileSync(path.join(bin, 'srt'), `#!/usr/bin/env node
+const fs = require('fs');
+fs.writeFileSync(${JSON.stringify(log)}, JSON.stringify({ args: process.argv.slice(2), settings: JSON.parse(fs.readFileSync(process.argv[3], 'utf8')) }));
+if (process.env.PROBE_FAIL) { process.stderr.write('bwrap: setting up uid map: Permission denied\\n'); process.exit(1); }
+process.exit(0);
+`, { mode: 0o755 });
+  const env = { ...process.env, PATH: `${bin}${path.delimiter}${process.env.PATH}`, KIT_SANDBOX_RUNTIME: 'srt' };
+  const ok = probe(root, env);
+  assert.equal(ok.ok, true, JSON.stringify(ok));
+  assert.equal(ok.runtime, 'srt');
+  const { args, settings } = JSON.parse(fs.readFileSync(log, 'utf8'));
+  for (const [k, keys] of Object.entries(SRT_REQUIRED_KEYS)) for (const key of keys) assert.ok(key in settings[k], `the settings a lane gets: ${k}.${key}`);
+  assert.equal(args[0], '--settings');
+  assert.deepEqual(args.slice(2), ['--', 'true'], 'the lane launcher with true in place of claude');
+  assert.ok(!fs.existsSync(args[1]), 'the throwaway settings file is removed');
+  const bad = probe(root, { ...env, PROBE_FAIL: '1' });
+  assert.equal(bad.ok, false);
+  assert.equal(bad.status, 1);
+  assert.match(bad.stderr, /bwrap: setting up uid map: Permission denied/);
+  assert.equal(bad.why, 'srt exited 1');
+  const none = probe(root, { ...process.env, KIT_SANDBOX_RUNTIME: 'none' });
+  assert.equal(none.ok, false);
+  assert.equal(none.why, 'no sandbox runtime');
+  // the CLI: exit 0 / 1 with the JSON
+  const r = runScript('sandbox.js', ['probe', '--repo', root], { env });
+  assert.equal(r.returncode, 0, r.stderr);
+  assert.equal(JSON.parse(r.stdout).ok, true);
+  assert.equal(runScript('sandbox.js', ['probe', '--repo', root], { env: { ...env, PROBE_FAIL: '1' } }).returncode, 1);
 });
 
 test('credentialScan finds content the floor names, skips denied files, honours the marker', (t) => {
