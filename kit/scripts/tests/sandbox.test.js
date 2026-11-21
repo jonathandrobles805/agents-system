@@ -99,7 +99,7 @@ test('probe: launches `true` through the runtime with a lane\'s settings and rep
   const log = path.join(bin, 'srt.log');
   fs.writeFileSync(path.join(bin, 'srt'), `#!/usr/bin/env node
 const fs = require('fs');
-fs.writeFileSync(${JSON.stringify(log)}, JSON.stringify(process.argv.slice(2)));
+fs.writeFileSync(${JSON.stringify(log)}, JSON.stringify({ args: process.argv.slice(2), settings: JSON.parse(fs.readFileSync(process.argv[3], 'utf8')) }));
 if (process.env.PROBE_FAIL) { process.stderr.write('bwrap: setting up uid map: Permission denied\\n'); process.exit(1); }
 process.exit(0);
 `, { mode: 0o755 });
@@ -107,7 +107,8 @@ process.exit(0);
   const ok = probe(root, env);
   assert.equal(ok.ok, true, JSON.stringify(ok));
   assert.equal(ok.runtime, 'srt');
-  const args = JSON.parse(fs.readFileSync(log, 'utf8'));
+  const { args, settings } = JSON.parse(fs.readFileSync(log, 'utf8'));
+  for (const [k, keys] of Object.entries(SRT_REQUIRED_KEYS)) for (const key of keys) assert.ok(key in settings[k], `the settings a lane gets: ${k}.${key}`);
   assert.equal(args[0], '--settings');
   assert.deepEqual(args.slice(2), ['--', 'true'], 'the lane launcher with true in place of claude');
   assert.ok(!fs.existsSync(args[1]), 'the throwaway settings file is removed');

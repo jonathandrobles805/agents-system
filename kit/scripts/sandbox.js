@@ -207,8 +207,9 @@ export function credentialScan(root, floor = K.loadFloor()) {
 export function probe(root, env = process.env) {
   const det = detectRuntime(env);
   if (!det.runtime) return { ok: false, runtime: null, how: det.how, status: null, stderr: '', why: 'no sandbox runtime' };
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'kit-sandbox-probe-'));
+  let dir = null;
   try {
+    dir = fs.mkdtempSync(path.join(os.tmpdir(), 'kit-sandbox-probe-'));
     const cfg = { ...sandboxConfig({ root, wt: dir, slug: 'sandbox-probe', env }), runtime: det.runtime, engine: det.engine || env.KIT_CONTAINER_ENGINE || 'docker' };
     const settingsPath = path.join(dir, 'sandbox.json');
     fs.writeFileSync(settingsPath, JSON.stringify(srtSettings(cfg), null, 2));
@@ -220,8 +221,10 @@ export function probe(root, env = process.env) {
     const stderr = String(r.stderr ?? '').trim().slice(-2000);
     const status = r.status ?? null;
     return { ok: status === 0, runtime: det.runtime, how: det.how, command: run, status, signal: r.signal ?? null, error: r.error ? (r.error.code || r.error.message) : null, stderr, why: status === 0 ? '' : `${run[0]} exited ${status ?? `with ${r.signal || r.error?.code || 'no status'}`}` };
+  } catch (e) {
+    return { ok: false, runtime: det.runtime, how: det.how, status: null, stderr: '', why: String(e && e.message || e).split('\n')[0] };
   } finally {
-    fs.rmSync(dir, { recursive: true, force: true });
+    if (dir) fs.rmSync(dir, { recursive: true, force: true });
   }
 }
 
