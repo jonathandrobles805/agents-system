@@ -25,13 +25,13 @@ export const FRAGMENT = path.join(KIT_DIR, 'hooks', 'settings.project.json');
  * `ask` is what the session is asked to do; `ran` tells from the repo and the tool results whether it happened.
  */
 export const CASES = [
-  { id: 'kit-launcher', rule: 'Bash(kit *)', expect: 'approved', ask: 'Use the Bash tool to run exactly this command, once, unchanged: kit lane template goal --slug probe', ran: (r) => r.results.some((x) => !x.error && /^# Goal: /m.test(x.text)) },
-  { id: 'git-add', rule: 'Bash(git add *)', expect: 'approved', setup: (repo) => fs.writeFileSync(path.join(repo, 'new.txt'), 'x\n'), ask: 'Use the Bash tool to run exactly this command, once, unchanged: git add new.txt', ran: (r) => /^A\s+new\.txt$/m.test(git(r.repo, ['status', '--short'])) },
-  { id: 'git-commit', rule: 'Bash(git commit *)', expect: 'approved', setup: (repo) => { fs.writeFileSync(path.join(repo, 'new.txt'), 'x\n'); git(repo, ['add', 'new.txt']); }, ask: 'Use the Bash tool to run exactly this command, once, unchanged: git commit -m probe', ran: (r) => /probe/.test(git(r.repo, ['log', '--oneline', '-1'])) },
-  { id: 'edit', rule: 'Edit(/**)', expect: 'approved', ask: 'Use the Read tool on README.md, then the Edit tool to replace the line "# probe" with "# probe edited". Nothing else.', ran: (r) => fs.readFileSync(path.join(r.repo, 'README.md'), 'utf8').includes('# probe edited') },
+  { id: 'kit-launcher', rule: 'Bash(kit *)', expect: 'approved', tool: 'Bash', command: 'kit lane template goal --slug probe', ask: 'Use the Bash tool to run exactly this command, once, unchanged: kit lane template goal --slug probe', ran: (r) => r.results.some((x) => !x.error && /^# Goal: /m.test(x.text)) },
+  { id: 'git-add', rule: 'Bash(git add *)', expect: 'approved', tool: 'Bash', command: 'git add new.txt', setup: (repo) => fs.writeFileSync(path.join(repo, 'new.txt'), 'x\n'), ask: 'Use the Bash tool to run exactly this command, once, unchanged: git add new.txt', ran: (r) => /^A\s+new\.txt$/m.test(git(r.repo, ['status', '--short'])) },
+  { id: 'git-commit', rule: 'Bash(git commit *)', expect: 'approved', tool: 'Bash', command: 'git commit -m probe', setup: (repo) => { fs.writeFileSync(path.join(repo, 'new.txt'), 'x\n'); git(repo, ['add', 'new.txt']); }, ask: 'Use the Bash tool to run exactly this command, once, unchanged: git commit -m probe', ran: (r) => /probe/.test(git(r.repo, ['log', '--oneline', '-1'])) },
+  { id: 'edit', rule: 'Edit(/**)', expect: 'approved', tool: 'Edit', command: null, ask: 'Use the Read tool on README.md, then the Edit tool to replace the line "# probe" with "# probe edited". Nothing else.', ran: (r) => fs.readFileSync(path.join(r.repo, 'README.md'), 'utf8').includes('# probe edited') },
   // controls: what must stay refused
-  { id: 'home-form', rule: null, expect: 'denied', ask: 'Use the Bash tool to run exactly this command, once, unchanged: node "$HOME/.claude/kit/scripts/lane.js" template goal --slug probe', ran: (r) => r.results.some((x) => !x.error && /^# Goal: /m.test(x.text)) },
-  { id: 'unlisted', rule: null, expect: 'denied', ask: 'Use the Bash tool to run exactly this command, once, unchanged: git tag probe-tag', ran: (r) => git(r.repo, ['tag', '--list', 'probe-tag']).trim() === 'probe-tag' },
+  { id: 'home-form', rule: null, expect: 'denied', tool: 'Bash', command: 'node "$HOME/.claude/kit/scripts/lane.js" template goal --slug probe', ask: 'Use the Bash tool to run exactly this command, once, unchanged: node "$HOME/.claude/kit/scripts/lane.js" template goal --slug probe', ran: (r) => r.results.some((x) => !x.error && /^# Goal: /m.test(x.text)) },
+  { id: 'unlisted', rule: null, expect: 'denied', tool: 'Bash', command: 'git tag probe-tag', ask: 'Use the Bash tool to run exactly this command, once, unchanged: git tag probe-tag', ran: (r) => git(r.repo, ['tag', '--list', 'probe-tag']).trim() === 'probe-tag' },
 ];
 
 function git(repo, args) {
@@ -62,7 +62,7 @@ function transcript(config) {
         continue;
       }
       for (const b of Array.isArray(e.message?.content) ? e.message.content : []) {
-        if (b.type === 'tool_use') calls.push(`${b.name} ${JSON.stringify(b.input).slice(0, 200)}`);
+        if (b.type === 'tool_use') calls.push({ tool: b.name, command: b.input?.command ?? null, text: `${b.name} ${JSON.stringify(b.input).slice(0, 200)}` });
         if (b.type === 'tool_result') results.push({ error: !!b.is_error, text: String(Array.isArray(b.content) ? b.content.map((x) => x.text ?? '').join('\n') : b.content) });
       }
     }
@@ -102,10 +102,17 @@ export function runCase(c, allow, via, tmp) {
     j = null;
   }
   const t = transcript(config);
-  const ran = c.ran({ repo, ...t });
-  const denials = (j?.permission_denials ?? []).map((d) => `${d.tool_name ?? ''} ${JSON.stringify(d.tool_input ?? {}).slice(0, 160)}`);
-  const got = ran ? 'approved' : t.calls.length ? 'denied' : 'no call';
-  return { id: c.id, via, rule: c.rule, expect: c.expect, got, ok: got === c.expect, exit: r.status, denials, calls: t.calls, stderr: (r.stderr ?? '').slice(0, 300) };
+  // The verdict comes from Claude Code's own record, for the exact call the case asked for:
+  //   approved = that call was made, is not in permission_denials, and its effect happened;
+  //   denied = permission_denials holds that call;
+  //   anything else (no call, another command, an approved call that failed) is inconclusive and fails the case.
+  const same = (tool, command) => tool === c.tool && (c.command === null || command === c.command);
+  const denialList = j?.permission_denials ?? [];
+  const denied = denialList.some((d) => same(d.tool_name, d.tool_input?.command ?? null));
+  const called = t.calls.some((x) => same(x.tool, x.command));
+  const got = denied ? 'denied' : called && c.ran({ repo, ...t }) ? 'approved' : 'inconclusive';
+  const denials = denialList.map((d) => `${d.tool_name ?? ''} ${JSON.stringify(d.tool_input ?? {}).slice(0, 160)}`);
+  return { id: c.id, via, rule: c.rule, expect: c.expect, got, ok: got === c.expect, exit: r.status, denials, calls: t.calls.map((x) => x.text), result: String(j?.result ?? r.stdout ?? '').slice(0, 300), stderr: (r.stderr ?? '').slice(0, 300) };
 }
 
 export function main(argv = process.argv.slice(2)) {
@@ -138,7 +145,7 @@ export function main(argv = process.argv.slice(2)) {
   }
   const version = spawnSync('claude', ['--version'], { encoding: 'utf8' }).stdout.trim();
   const text = [`claude ${version} on ${process.platform}; kit rules from ${path.relative(path.dirname(KIT_DIR), FRAGMENT)}`, '']
-    .concat(rows.map((r) => `${r.ok ? 'ok  ' : 'FAIL'} ${r.id} via ${r.via} | rule ${r.rule ?? '(control)'} | expected ${r.expect}, got ${r.got} | exit ${r.exit}\n     calls: ${r.calls.join(' ; ') || 'none'}\n     denials: ${r.denials.join(' ; ') || 'none'}${r.exit !== 0 ? `\n     stderr: ${r.stderr}` : ''}`))
+    .concat(rows.map((r) => `${r.ok ? 'ok  ' : 'FAIL'} ${r.id} via ${r.via} | rule ${r.rule ?? '(control)'} | expected ${r.expect}, got ${r.got} | exit ${r.exit}\n     calls: ${r.calls.join(' ; ') || 'none'}\n     denials: ${r.denials.join(' ; ') || 'none'}\n     result: ${r.result.replace(/\s+/g, ' ')}${r.exit !== 0 ? `\n     stderr: ${r.stderr}` : ''}`))
     .join('\n');
   fs.writeFileSync(out, text.replaceAll(/sk-ant-[A-Za-z0-9_-]+/g, 'sk-ant-[REDACTED]') + '\n');
   const failed = rows.filter((r) => !r.ok).length;

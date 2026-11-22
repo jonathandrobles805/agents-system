@@ -945,7 +945,10 @@ export class Bootstrap {
     const fragAllow = get(req(frag, 'permissions'), 'allow', []);
     // kit-owned: rules naming the kit's scripts by path (the "$HOME" form older kits wrote, which Claude Code never
     // matched, #63) and the `kit` launcher rules; an upgrade rewrites them from the fragment
-    const ours = (a) => (/\.claude[/\\]kit[/\\]/.test(a) || /^Bash\(kit[ )]/.test(a)) && !fragAllow.includes(a);
+    // a `Bash(kit …)` rule is the kit's only when it is the launcher rule or names one of the kit's own scripts, so a
+    // project's rules for another tool called `kit` survive an upgrade
+    const kitScriptRule = (a) => a === 'Bash(kit *)' || (/^Bash\(kit ([a-z0-9_]+)[ )]/.test(a) && K.isFile(path.join(KIT_DIR, 'scripts', `${/^Bash\(kit ([a-z0-9_]+)/.exec(a)[1]}.js`)));
+    const ours = (a) => (/\.claude[/\\]kit[/\\]/.test(a) || kitScriptRule(a)) && !fragAllow.includes(a);
     const allow = [...new Set([...get(permsObj, 'allow', []).filter((a) => typeof a === 'string' && !ours(a)), ...fragAllow, ...commandAllowRules(this.commands())])]
       // a rule that overlaps the floor is never written, so the generated file cannot disagree with ci_security_floor
       .filter((a) => typeof a === 'string' && a && !floor.some((d) => K.ruleOverlapsFloor(a, d)));
@@ -1269,7 +1272,7 @@ fi
       this.write('.github/CODEOWNERS', this.codeowners(), 'human');
       this.write('docs/research/INDEX.md', tmpl('index.md'), 'human');
       const work = get(get(this.kitJson(), 'paths', {}), 'work', 'docs/specs');
-      this.write(`${work}/README.md`, '# Specs\n\nOne file per feature, from `~/.claude/kit/templates/spec.md`. Companion files: `<slug>.progress.md`, `<slug>.review.md`, `<slug>.events.jsonl`; check output goes to `.claude/session/<slug>.log`.\n', 'human');
+      this.write(`${work}/README.md`, '# Specs\n\nOne file per feature, from the spec template of the kit (`kit lane template spec --slug <slug>`). Companion files: `<slug>.progress.md`, `<slug>.review.md`, `<slug>.events.jsonl`; check output goes to `.claude/session/<slug>.log`.\n', 'human');
       this.write(this.decisionPath('adopt-agent-kit'), fill(tmpl('decision.md'), [
         ['NNNN', this.nextDecisionNumber()], ['title', 'Adopt the agent kit'], ['date', TODAY],
         ['what situation forced a decision', 'Agents guessed, branches drifted, and rules lived only in prompts.'],

@@ -7,7 +7,8 @@
 KIT_DIR='@KIT_DIR@'
 name="${1:-}"
 case "$name" in
-  ''|-h|--help) echo "usage: kit <script> [args...]   (a script in $KIT_DIR/scripts, named without .js)" >&2; exit 64 ;;
+  -h|--help) echo "usage: kit <script> [args...]   (a script in $KIT_DIR/scripts, named without .js)"; exit 0 ;;
+  '') echo "usage: kit <script> [args...]   (a script in $KIT_DIR/scripts, named without .js)" >&2; exit 64 ;;
   *[!a-z0-9_]*) echo "kit: '$name' is not a kit script name (lowercase letters, digits and _ only)" >&2; exit 64 ;;
 esac
 shift

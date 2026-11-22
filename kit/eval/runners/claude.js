@@ -79,7 +79,7 @@ export function sessionHome(dir, { install = true } = {}) {
   // Claude Code refuses to read as settings)
   fs.mkdirSync(path.join(config, 'commands'), { recursive: true });
   if (install) {
-    const r = spawnSync('bash', [path.join(REPO_ROOT, 'install.sh'), '--copy'], { env: { ...process.env, HOME: home, CLAUDE_HOME: config }, encoding: 'utf8' });
+    const r = spawnSync('bash', [path.join(REPO_ROOT, 'install.sh'), '--copy'], { env: { ...process.env, HOME: home, CLAUDE_HOME: config, KIT_BIN_DIR: path.join(home, '.local', 'bin') }, encoding: 'utf8' });
     if (r.status !== 0) throw new Error(`install.sh into the eval's home failed: ${r.stderr || r.stdout}`);
   }
   for (const d of ['kit', 'agents', 'skills']) fs.mkdirSync(path.join(config, d), { recursive: true });

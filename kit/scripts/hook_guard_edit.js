@@ -20,7 +20,7 @@ export function main() {
   let root = K.projectRoot(cwd);
   // kill switch (KIT-SPEC 10.13): a STOP flag in the lane's session or the project refuses every mutation
   if (K.isFile(path.join(cwd, '.claude', 'session', 'STOP')) || K.isFile(path.join(root, '.claude', 'STOP'))) {
-    process.stderr.write(`guard-edit: the kill switch is set; no mutations until lane.js resume-all --by <name>\n`);
+    process.stderr.write(`guard-edit: the kill switch is set; no mutations until kit lane resume-all --by <name>\n`);
     return 2;
   }
   const ti = d.tool_input && typeof d.tool_input === 'object' ? d.tool_input : {};
@@ -30,7 +30,7 @@ export function main() {
   const lane = K.laneFor(cwd, absPath);
   if (lane) {
     if (K.isFile(path.join(lane.root, '.claude', 'session', 'STOP'))) {
-      process.stderr.write(`guard-edit: the kill switch is set; no mutations until lane.js resume-all --by <name>\n`);
+      process.stderr.write(`guard-edit: the kill switch is set; no mutations until kit lane resume-all --by <name>\n`);
       return 2;
     }
     root = lane.root;

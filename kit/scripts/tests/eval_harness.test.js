@@ -145,7 +145,20 @@ test('claude runner reports why it is unavailable instead of running unsandboxed
 
 test('claude runner: each session gets its own home with the kit installed, a writable temp directory, a trusted workspace and the API host', (t) => {
   const dir = tmpPath(t);
-  const home = claude.sessionHome(dir);
+  // an owner's KIT_BIN_DIR never redirects the session's install: the owner's own launcher is not touched
+  const ownerBin = path.join(dir, 'owner-bin');
+  fs.mkdirSync(ownerBin);
+  fs.writeFileSync(path.join(ownerBin, 'kit'), '#!/bin/sh\n# agent-kit launcher\nKIT_DIR=\'/owner/.claude/kit\'\n');
+  const saved = process.env.KIT_BIN_DIR;
+  process.env.KIT_BIN_DIR = ownerBin;
+  let home;
+  try {
+    home = claude.sessionHome(dir);
+  } finally {
+    if (saved === undefined) delete process.env.KIT_BIN_DIR;
+    else process.env.KIT_BIN_DIR = saved;
+  }
+  assert.match(fs.readFileSync(path.join(ownerBin, 'kit'), 'utf8'), /KIT_DIR='\/owner\/\.claude\/kit'/);
   // a home and a temp directory in the eval's scratch space, writable in the sandbox, handed to Claude Code
   assert.deepEqual({ ...home.env, PATH: undefined }, { HOME: path.join(dir, 'home'), CLAUDE_CONFIG_DIR: path.join(dir, 'home', '.claude'), CLAUDE_CODE_TMPDIR: path.join(dir, 'claude-tmp'), PATH: undefined });
   assert.deepEqual(home.allowWrite, [home.env.HOME, home.env.CLAUDE_CODE_TMPDIR]);

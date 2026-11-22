@@ -658,7 +658,7 @@ process.stderr.write('fake gh: unexpected ' + j); process.exit(9);
 
     // 47 an agent merges a PR directly, without waiting for CI (kit-test PR #3 and #4 were merged on red CI)
     const r47 = hook('hook_guard_bash.js', { ...base, hook_event_name: 'PreToolUse', tool_name: 'Bash', tool_input: { command: 'gh pr merge 4 --squash' } });
-    record(47, 'an agent merges a pull request directly, without waiting for CI', 'guard-bash: gh pr merge / gh api …/merge blocked; lane.js merge is the only way', r47.returncode === 2 && r47.stderr.includes('lane.js merge'), r47.stderr);
+    record(47, 'an agent merges a pull request directly, without waiting for CI', 'guard-bash: gh pr merge / gh api …/merge blocked; lane.js merge is the only way', r47.returncode === 2 && r47.stderr.includes('kit lane merge'), r47.stderr);
 
     // 48 "no checks reported" (CI not started yet) or a red check is read as mergeable
     const req48 = G.projectChecks(root);

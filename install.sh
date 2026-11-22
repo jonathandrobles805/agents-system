@@ -19,7 +19,9 @@ LAUNCHER="$BIN_DIR/kit"
 if [[ -e "$LAUNCHER" || -L "$LAUNCHER" ]] && ! grep -q '^# agent-kit launcher' "$LAUNCHER" 2>/dev/null; then
   echo "install: $LAUNCHER exists and is not the agent-kit launcher; move it away or set KIT_BIN_DIR" >&2; exit 1
 fi
+case "$CLAUDE_HOME" in /*) ;; *) CLAUDE_HOME="$PWD/$CLAUDE_HOME" ;; esac  # the launcher needs an absolute path
 case "$CLAUDE_HOME" in *"'"*) echo "install: CLAUDE_HOME must not contain a single quote" >&2; exit 1 ;; esac
+BIN_DIR="${BIN_DIR%/}"; LAUNCHER="$BIN_DIR/kit"
 
 mkdir -p "$CLAUDE_HOME/agents" "$CLAUDE_HOME/skills"
 
@@ -84,6 +86,7 @@ fi
 # Written in place of any earlier launcher (a fresh file, not through a link), always pointing at this install.
 mkdir -p "$BIN_DIR"
 launcher_src="$(cat "$KIT_ROOT/kit/bin/kit.in")"
+shopt -u patsub_replacement 2>/dev/null || true  # bash 5.2: an & in the replacement would otherwise expand
 printf '%s\n' "${launcher_src//@KIT_DIR@/$CLAUDE_HOME/kit}" > "$LAUNCHER.tmp.$$"
 chmod 755 "$LAUNCHER.tmp.$$"
 mv -f "$LAUNCHER.tmp.$$" "$LAUNCHER"

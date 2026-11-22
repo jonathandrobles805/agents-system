@@ -351,8 +351,16 @@ test('lane.js template prints a kit template with slug, date and commit; agents 
   for (const name of ['goal', 'spec', 'research', 'review', 'lesson']) {
     r = runScript('lane.js', ['template', name, '--slug', 'refund-route', '--repo', root]);
     assert.equal(r.returncode, 0, `${name}: ${r.stderr}`);
-    assert.doesNotMatch(r.stdout, /\{\{(slug|date)\}\}/, name);
+    assert.doesNotMatch(r.stdout.split('\n').filter((l) => !/\bby:/i.test(l)).join('\n'), /\{\{(slug|date)\}\}/, name);
   }
+  // only header lines are filled: the approval and agreement lines keep their placeholders for the person deciding
+  r = runScript('lane.js', ['template', 'spec', '--slug', 'refund-route', '--repo', root]);
+  assert.match(r.stdout, /^Approved by: \{\{name\}\} on \{\{date\}\} at \{\{commit\}\}$/m);
+  r = runScript('lane.js', ['template', 'goal', '--slug', 'refund-route', '--repo', root]);
+  assert.match(r.stdout, /^- Agreed by: \{\{human name\}\} and Claude on \{\{date\}\}$/m);
+  assert.match(r.stdout, new RegExp(`^- Date: ${today}$`, 'm'));
+  r = runScript('lane.js', ['template', 'lesson', '--repo', root]);
+  assert.match(r.stdout, new RegExp(`^## ${today} — \\{\\{feature\\}\\}`));
   // an unknown template and a slug that is not kebab-case are refused
   r = runScript('lane.js', ['template', 'progress', '--repo', root]);
   assert.equal(r.returncode, 2);
