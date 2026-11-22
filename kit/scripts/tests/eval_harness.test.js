@@ -168,6 +168,7 @@ test('claude runner: each session gets its own home with the kit installed, a wr
   fs.writeFileSync(path.join(owner, '.claude', 'local', 'claude'), '');
   fs.writeFileSync(path.join(owner, '.claude', '.credentials.json'), '{}');
   assert.deepEqual(claude.ownerClaudeDenyRead(owner, '/usr/bin/claude-not-there'), [path.join(owner, '.claude'), path.join(owner, '.claude.json')]);
+  fs.rmSync(path.join(owner, '.claude', 'keys'), { recursive: true });
   const local = claude.ownerClaudeDenyRead(owner, path.join(owner, '.claude', 'local', 'claude'));
   assert.deepEqual([...local].sort(), ['.credentials.json', 'keys', 'projects'].map((e) => path.join(owner, '.claude', e)).concat(path.join(owner, '.claude.json')).sort());
   // the judge's home has the same layout without the kit installed

@@ -119,7 +119,7 @@ function sessionSettings(lane, home, cwd, file, { laneScratch = true } = {}) {
  * old local install, ~/.claude/local), that one folder stays readable so the sandbox can still run it; everything else
  * there (credentials, keys, transcripts) is denied entry by entry.
  */
-export function ownerClaudeDenyRead(home = os.homedir(), which = spawnSync('which', ['claude'], { encoding: 'utf8' }).stdout.trim()) {
+export function ownerClaudeDenyRead(home = os.homedir(), which = spawnSync('which', ['claude'], { encoding: 'utf8' }).stdout?.trim() ?? '') {
   const dot = path.join(home, '.claude');
   let bin = '';
   try {
@@ -130,7 +130,10 @@ export function ownerClaudeDenyRead(home = os.homedir(), which = spawnSync('whic
   const rel = bin ? path.relative(fs.existsSync(dot) ? fs.realpathSync(dot) : dot, bin) : '';
   if (!rel || rel.startsWith('..') || path.isAbsolute(rel)) return [dot, path.join(home, '.claude.json')];
   const keep = rel.split(path.sep)[0];
-  return [...fs.readdirSync(dot).filter((e) => e !== keep).map((e) => path.join(dot, e)), path.join(home, '.claude.json')];
+  // credentials and keys are denied even before they exist (an entry created later is otherwise not on the list)
+  const entries = new Set([...fs.readdirSync(dot), '.credentials.json', 'keys']);
+  entries.delete(keep);
+  return [...[...entries].map((e) => path.join(dot, e)), path.join(home, '.claude.json')];
 }
 
 /** Mark the fixture repo trusted in the session's own Claude Code config, so its permissions.allow rules apply. */
