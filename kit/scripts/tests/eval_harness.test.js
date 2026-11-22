@@ -161,7 +161,15 @@ test('claude runner: each session gets its own home with the kit installed, a wr
   // missing path with a device file, which Claude Code refuses as settings); the owner's own Claude Code home is read-denied
   assert.deepEqual(home.denyWrite, ['kit', 'agents', 'skills', 'commands', 'settings.json', 'CLAUDE.md'].map((x) => path.join(home.config, x)));
   for (const p of home.denyWrite) assert.ok(fs.statSync(p).isDirectory() || fs.statSync(p).isFile(), p);
-  assert.deepEqual(home.denyRead, [path.join(os.homedir(), '.claude'), path.join(os.homedir(), '.claude.json')]);
+  assert.deepEqual(home.denyRead, claude.ownerClaudeDenyRead());
+  // the owner's home: all of ~/.claude denied, unless the claude program lives there (old local install), then all but that folder
+  const owner = path.join(dir, 'owner');
+  for (const d of ['local', 'keys', 'projects']) fs.mkdirSync(path.join(owner, '.claude', d), { recursive: true });
+  fs.writeFileSync(path.join(owner, '.claude', 'local', 'claude'), '');
+  fs.writeFileSync(path.join(owner, '.claude', '.credentials.json'), '{}');
+  assert.deepEqual(claude.ownerClaudeDenyRead(owner, '/usr/bin/claude-not-there'), [path.join(owner, '.claude'), path.join(owner, '.claude.json')]);
+  const local = claude.ownerClaudeDenyRead(owner, path.join(owner, '.claude', 'local', 'claude'));
+  assert.deepEqual([...local].sort(), ['.credentials.json', 'keys', 'projects'].map((e) => path.join(owner, '.claude', e)).concat(path.join(owner, '.claude.json')).sort());
   // the judge's home has the same layout without the kit installed
   const judge = claude.sessionHome(path.join(dir, 'judge'), { install: false });
   assert.ok(!fs.existsSync(path.join(judge.config, 'kit', 'scripts')));

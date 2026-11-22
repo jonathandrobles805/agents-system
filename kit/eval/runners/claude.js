@@ -59,7 +59,8 @@ const redact = (s) => s.replace(/sk-ant-[A-Za-z0-9_-]+/g, 'sk-ant-***').replace(
  *   repo (its path and its real path: macOS's temp directory is a symlink) is marked trusted there;
  * - the session must reach the model: `api.anthropic.com` joins the sandbox's network allowlist.
  * The kit's copy in the home (kit, agents, skills, commands, settings.json, CLAUDE.md) is write-denied, so a session
- * cannot rewrite the guards that check it; the owner's own ~/.claude and ~/.claude.json are read-denied. The judge gets
+ * cannot rewrite it (the repo's own .claude/settings.json, which registers the hooks, is still writable: the worktree
+ * gap bypass.test records for hardening plan Step 4); the owner's own ~/.claude and ~/.claude.json are read-denied. The judge gets
  * a home of its own and an empty working directory, so nothing the worker wrote reaches it. Credentials stay in the
  * environment, and the fixture's bootstrap registers the repo in this home, not the owner's. srt only: the container
  * runtime does not get these settings.
@@ -93,16 +94,17 @@ export function sessionHome(dir, { install = true } = {}) {
     // leave instructions for a later session (the global CLAUDE.md, settings, commands)
     denyWrite: ['kit', 'agents', 'skills', 'commands', 'settings.json', 'CLAUDE.md'].map((x) => path.join(config, x)),
     // the owner's own Claude Code home stays unreadable to the agent (Claude Code itself uses the session's home)
-    denyRead: [path.join(os.homedir(), '.claude'), path.join(os.homedir(), '.claude.json')],
+    denyRead: ownerClaudeDenyRead(),
     allowedDomains: [API_HOST],
   };
 }
 
 /** The srt settings for one session: the lane's rules plus the session's home, cwd and the API host; written to file. */
-function sessionSettings(lane, home, cwd, file) {
+function sessionSettings(lane, home, cwd, file, { laneScratch = true } = {}) {
   const cfg = {
     ...lane,
-    allowWrite: [...new Set([...lane.allowWrite.filter((p) => p !== lane.allowWrite[0]), cwd, ...home.allowWrite])],
+    // the session's cwd (the worker's repo, or the judge's empty folder), the lane's scratch for the worker only, the home
+    allowWrite: [cwd, ...(laneScratch ? lane.allowWrite.slice(1) : []), ...home.allowWrite],
     denyWrite: home.denyWrite,
     denyRead: [...new Set([...lane.denyRead, ...home.denyRead])],
     allowedDomains: [...new Set([...lane.allowedDomains, ...home.allowedDomains])].sort(),
@@ -110,6 +112,25 @@ function sessionSettings(lane, home, cwd, file) {
   fs.mkdirSync(path.dirname(file), { recursive: true });
   fs.writeFileSync(file, JSON.stringify(SB.srtSettings(cfg), null, 2));
   return file;
+}
+
+/**
+ * The owner's ~/.claude.json and ~/.claude, read-denied. When the `claude` program itself lives under ~/.claude (the
+ * old local install, ~/.claude/local), that one folder stays readable so the sandbox can still run it; everything else
+ * there (credentials, keys, transcripts) is denied entry by entry.
+ */
+export function ownerClaudeDenyRead(home = os.homedir(), which = spawnSync('which', ['claude'], { encoding: 'utf8' }).stdout.trim()) {
+  const dot = path.join(home, '.claude');
+  let bin = '';
+  try {
+    bin = which ? fs.realpathSync(which) : '';
+  } catch {
+    bin = '';
+  }
+  const rel = bin ? path.relative(fs.existsSync(dot) ? fs.realpathSync(dot) : dot, bin) : '';
+  if (!rel || rel.startsWith('..') || path.isAbsolute(rel)) return [dot, path.join(home, '.claude.json')];
+  const keep = rel.split(path.sep)[0];
+  return [...fs.readdirSync(dot).filter((e) => e !== keep).map((e) => path.join(dot, e)), path.join(home, '.claude.json')];
 }
 
 /** Mark the fixture repo trusted in the session's own Claude Code config, so its permissions.allow rules apply. */
@@ -185,7 +206,7 @@ export async function run(task, { attempt = 0, timeoutMs = 20 * 60 * 1000 } = {}
       const jcwd = path.join(jdir, 'work');
       fs.mkdirSync(jcwd, { recursive: true });
       const jhome = srt ? sessionHome(jdir, { install: false }) : null;
-      const jsettings = jhome ? sessionSettings(lane, jhome, jcwd, path.join(jdir, 'sandbox.json')) : settings;
+      const jsettings = jhome ? sessionSettings(lane, jhome, jcwd, path.join(jdir, 'sandbox.json'), { laneScratch: false }) : settings;
       const j = headless(prompt, jhome ? jcwd : root, { ...base, ...(jhome?.env ?? {}), KIT_EVAL_JUDGE: '1' }, jsettings, 5 * 60 * 1000);
       judgeSession = { status: j.status, signal: j.signal, error: j.error, stderr: j.stderr.slice(-2000) };
       const m = /\{[\s\S]*\}/.exec(j.stdout);
