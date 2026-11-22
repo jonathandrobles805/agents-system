@@ -393,6 +393,7 @@ The kit is done when all of the following hold:
 | 49 | A matrix job is required under its unexpanded name (`… (node ${{ matrix.node }})`), which no check run ever reports | `pr_gate.workflowChecks` | one required name per matrix value, as GitHub reports it; a matrix the parser cannot expand is refused with a reason (0016 E.11) |
 | 50 | A skill tells the agent to push or open the PR with the owner's login (`git push`, `gh pr create`) instead of as the App | `lane.js publish` is the only push path the skills name; the App token is minted on the host, scoped to one repository, passed through the environment | the skills route through `publish`; the token is never printed |
 | 51 | A lane starts from a stale base: the fetch failed, or there is no `origin` on a repo not marked `local_only` | `lane.js start` (hardening plan D3) | start refused, nothing created |
+| 52 | A docs goal (a stage nothing runs) is reported done without any work, or a high-risk lane is merged without its security sign-off (also when its PR is passed under another lane's slug) | `lane.js next-step`, `lane.js start`, `lane.js merge` (#57-#59) | refused with the reason; never `done` |
 
 ---
 
@@ -496,6 +497,8 @@ Routing is a version-controlled table: one profile per kind of work in `kit/work
 | migration | `/zi-migrate` | feature stages without retro; risk forced high; requires backup and restore validation |
 | incident | `/zi-incident` | the fix stages, with retro |
 | skill-development | `/zi-new-skill` | start → research → plan (skill-smith) → **approve** → lane → build (skill-smith) → review → **wait-merge** → done; kit-level |
+
+**Not built yet (#57-#59).** Nothing runs the `inspect`, `report` and `verify-ui` stages, and the `skill-smith` agent does not exist, so `lane.js next-step` and `lane.js start` refuse docs, ui at size S and M, investigation and skill-development with that reason; building them is on the hardening plan's to-do list. A stage a profile lacks maps forward only to a stage the profile has (retro maps to done for a profile without retro); anything else is refused, never mapped to done. A high-risk lane whose profile adds `security-signoff` stops at stage `security-signoff` instead of `wait-merge`, with `requires: ["security-signoff"]`, and `lane.js merge` refuses it: nothing can record the sign-off until the store (hardening plan Step 2). Planted fault 52.
 
 **fix and incident open their lane from the goal (field test #32).** A defect has no spec until it is understood, so `lane.js start` opens a fix/incident lane from an agreed goal alone (WIP and kill switch still apply), at stage `reproduce`. In the lane, before a spec exists, the edit guard allows only the lane's progress file and the lane's own unapproved spec. The debugger writes its reproduction and `cause:` line to progress; the planner writes the spec from the goal and the reproduction; a human approves it; `lane.js scope` then checks it like `precheck` (valid, approved, files listed, no overlap with another lane), copies its done-criteria into progress, and moves the lane to `test`. From there the lane is a normal one. Planted fault 45.
 

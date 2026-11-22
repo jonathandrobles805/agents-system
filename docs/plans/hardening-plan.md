@@ -240,10 +240,11 @@ Steps 1–9 of the skills work are done on branch `commands-to-skills`: 23 `zi-`
 
 - [ ] Add `lane.js advance`, the table of allowed moves and the store. The dashboard reads the store. A progress cell containing `#` no longer moves a stage (#56).
 - [ ] `lane.js` records your yes to the spec PR's merge in the store (D1, "The approval line").
+- [ ] `lane.js` records a named human's security sign-off in the store; `next-step` and `lane.js merge` accept it (#58). Until then a lane that needs one cannot merge.
 - [ ] Rounds and wall time move into the store. `lane.js stage` becomes a call to `advance`.
 - [ ] Fix #63 first: add a `kit` launcher on `PATH`, prove with a probe that the new permission rules match, then narrow the lanes' rules (E.4) and the skills' `Bash` so lanes can't call `advance`, `gate`, `start` or a merge. Sessions outside the container keep `advance`, `gate` and `start`, and may merge only through `kit merge` behind an `ask` rule (D1, "Merging on your word"); they are denied an approving review, any other merge, and changes to protection or the ruleset (`gh pr review --approve`, `gh pr merge` and their `gh api` forms).
-- [ ] Fix #57 (stages a profile lacks are refused, not mapped to done), #58 (listed stages are produced or removed, and `requires` blocks) and #59 (`skill-development` is refused until its agent exists).
-- [ ] Make the lane start fail closed, with `local_only` (D3), and update the `lane.test.js` fixtures. Code in PR #100 (`lane.js start` refuses a failed fetch and, unless `"local_only": true`, a missing `origin`; records `base_commit`; planted fault 51); ticked once merged.
+- [ ] Fix #57 (stages a profile lacks are refused, not mapped to done), #58 (listed stages are produced or removed, and `requires` blocks) and #59 (`skill-development` is refused until its agent exists). Code in PR #101, by the owner's choice on 2026-11-21 to refuse rather than build: `next-step` and `lane.js start` refuse docs, ui at S and M, investigation and skill-development (a stage nothing runs, or a missing agent); a stage with no equivalent is refused, never mapped to done; a high-risk lane that needs a security sign-off stops at `security-signoff` and `lane.js merge` refuses it, also when the PR is passed under another lane's slug, until the sign-off item above records it; the queue skips goals kept for later (planted fault 52). Ticked once merged.
+- [x] Make the lane start fail closed, with `local_only` (D3), and update the `lane.test.js` fixtures. PR #100 (`lane.js start` refuses a failed fetch and, unless `"local_only": true`, a missing `origin`; fetches the base with an explicit refspec; records `base_commit`; planted fault 51).
 - **Done when:**
     - an illegal move is refused with a reason;
     - a round past the limit parks the lane;
@@ -387,7 +388,7 @@ A control counts only when a planted fault shows it catching a deliberate bypass
 
 **Where each fault runs:**
 
-- **Kit CI:** script faults. Today `planted-faults/run.js` catches 51 of 51.
+- **Kit CI:** script faults. Today `planted-faults/run.js` catches 52 of 52.
 - **Test project:** GitHub faults, run as a scripted check, because they need a live repo and the App.
 - **Eval set:** reviewer faults, because a reviewer's catch rate is model behaviour.
 
@@ -449,6 +450,7 @@ A control counts only when a planted fault shows it catching a deliberate bypass
 - **#33, #34 and #49** (spec and review quality): the `spec-critic` is judgment, not a test. Specialist reviewers (Step 9) reduce these misses but can't remove them, which is why your spec approval stays.
 - **Still open in 0016:** open question 2 (Claude Code's own read check, before Step 7) and open question 3 (CI re-checking the red run in every language, in Step 5). Open question 4 (the Keychain under `srt`) no longer matters once every pushing lane uses the container.
 - **#56's output contract S2 and S4–S8** stay undecided. S3 is picked up in Step 9.
+- **To do later (owner's decision, 2026-11-21): docs, ui at S and M, investigation and skill-development work.** Step 2 refuses them because nothing runs their `inspect`, `report` and `verify-ui` stages and the `skill-smith` agent does not exist (#57–#59). Building those stages and the agent is its own step, not yet scheduled.
 
 **Cost and speed:**
 

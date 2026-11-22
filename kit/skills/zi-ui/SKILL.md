@@ -13,6 +13,8 @@ No research at size S or M: inspect, build, visual and accessibility verificatio
 
 Profile `ui`: `start → inspect → lane → build → verify-ui → review → wait-merge → done`. Human pauses: wait-merge.
 
+**Not built yet.** At size S and M nothing runs the `inspect` and `verify-ui` stages yet; size L runs as a feature and is not affected. `lane.js next-step` and `lane.js start` refuse this work type with that reason (#57-#59); building it is on the hardening plan's to-do list. Tell the human so before writing a goal, and stop unless they want the goal recorded for later.
+
 ## Step 1: classify, then start
 
 Follow `/zi-start` exactly (understand before anything else; agree the goal; write `docs/goals/<slug>.md`), with these header fields set:

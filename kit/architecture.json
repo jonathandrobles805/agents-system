@@ -687,6 +687,7 @@
     {"agents": ["retro"], "id": "retro", "pause": null, "skills": ["zi-retro"]},
     {"agents": [], "id": "escalated", "pause": null, "skills": []},
     {"agents": [], "id": "stopped", "pause": null, "skills": []},
+    {"agents": [], "id": "security-signoff", "pause": null, "skills": []},
     {"agents": [], "id": "refused", "pause": null, "skills": []},
     {"agents": [], "id": "done", "pause": null, "skills": ["zi-status"]},
     {"agents": ["debugger"], "id": "reproduce", "pause": null, "skills": []},

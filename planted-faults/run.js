@@ -673,6 +673,38 @@ process.stderr.write('fake gh: unexpected ' + j); process.exit(9);
     const ok49 = (wf49.errors ?? []).length === 0 && bad49.length === 0 && wf49.required.includes('script unit tests (node 20)') && wf49.required.includes('script unit tests (node 22)');
     record(49, 'a matrix job is required under its unexpanded name, which no check run ever reports', 'pr_gate workflowChecks expands strategy.matrix into one required name per value, or refuses', ok49, ok49 ? `required: ${wf49.required.join(' | ')}` : `unexpanded: ${bad49.join(' | ')}; errors: ${(wf49.errors ?? []).join('; ')}`);
 
+    // 52 a docs goal (a stage nothing runs) is reported done without any work, or a high-risk lane is merged without
+    //    its security sign-off (#57-#59) -> next-step and lane start refuse docs; merge refuses the high-risk lane
+    const r52 = path.join(tmp, 'node-api-52');
+    F.nodeApi(r52);
+    run('bootstrap.js', ['--repo', r52]);
+    write(path.join(r52, 'ROADMAP.md'), read(path.join(r52, 'ROADMAP.md')).replaceAll('| TODO(bootstrap: ROADMAP.md — feature) | TODO(bootstrap: ROADMAP.md — slug) | M1 | queued | — | — | — |', '| Refund route | refund-route | M1 | queued | — | — | — |'));
+    writeP(path.join(r52, 'docs', 'goals', 'refund-route.md'), '# Goal: refund route\n\n- Status: agreed\n- Agreed by: Jonathan Robles on 2026-11-21\n- Work type: docs\n- Risk: normal\n- Size: S\n- Domain: api\n\n## Outcome\n\nDocument the refund route.\n');
+    const c52 = F.commitAll(r52, 'docs goal');
+    const ns52 = JSON.parse(run('lane.js', ['next-step', 'refund-route', '--repo', r52]).stdout || '{}');
+    const st52 = run('lane.js', ['start', 'refund-route', '--repo', r52]);
+    // the same repo as a high-risk feature with an approved spec: merge is refused before the merge reaches GitHub
+    write(path.join(r52, 'docs', 'goals', 'refund-route.md'), read(path.join(r52, 'docs', 'goals', 'refund-route.md')).replace('- Work type: docs', '- Work type: feature'));
+    write(path.join(r52, 'docs', 'specs', 'refund-route.md'), SPEC({ commit: c52.slice(0, 7) }));
+    F.commitAll(r52, 'feature spec');
+    // a fake gh says PR 5 is the lane's own branch wt/refund-route; any other gh call stops the run
+    const gh52 = path.join(tmp, 'gh-52');
+    writeP(path.join(gh52, 'gh'), `#!/usr/bin/env node
+const a = process.argv.slice(2);
+if (a[0] === 'pr' && a[1] === 'view') { process.stdout.write(JSON.stringify({ number: 5, url: 'https://github.com/o/p/pull/5', state: 'OPEN', isDraft: false, headRefOid: 'abc', headRefName: 'wt/refund-route', baseRefName: 'main', title: 't' })); process.exit(0); }
+process.stderr.write('fake gh 52: merge reached GitHub'); process.exit(9);
+`);
+    fs.chmodSync(path.join(gh52, 'gh'), 0o755);
+    const env52 = { env: { PATH: `${gh52}${path.delimiter}${process.env.PATH}` } };
+    const mg52 = run('lane.js', ['merge', 'refund-route', '--repo', r52, '--pr', '5', '--by', 'Jonathan'], env52);
+    // the same PR under another lane's slug (which needs no sign-off) must not get past the check
+    const other52 = run('lane.js', ['merge', 'other', '--repo', r52, '--pr', '5', '--by', 'Jonathan'], env52);
+    // ...nor another lane's ROADMAP row pointing at that PR, merged by slug alone (no --pr)
+    write(path.join(r52, 'ROADMAP.md'), read(path.join(r52, 'ROADMAP.md')).replace('| Refund route | refund-route | M1 | queued | — | — | — |', '| Refund route | refund-route | M1 | queued | — | — | — |\n| Other | other | M1 | ready-to-merge | — | — | https://github.com/o/p/pull/5 |'));
+    const row52 = run('lane.js', ['merge', 'other', '--repo', r52, '--by', 'Jonathan'], env52);
+    const caught52 = ns52.stage === 'refused' && /docs work is not built yet/.test(ns52.reason ?? '') && st52.returncode === 2 && mg52.returncode === 2 && /security sign-off/.test(mg52.stderr) && other52.returncode === 2 && /is the lane 'refund-route', not 'other'/.test(other52.stderr) && row52.returncode === 2 && /is the lane 'refund-route', not 'other'/.test(row52.stderr) && !/merge reached GitHub/.test(mg52.stderr + other52.stderr + row52.stderr);
+    record(52, 'a docs goal is reported done without any work, or a high-risk lane is merged without its security sign-off (also under another slug)', 'lane.js next-step, start and merge refuse (#57-#59)', caught52, `docs next-step -> ${ns52.stage}; docs start -> exit ${st52.returncode}; high-risk merge -> exit ${mg52.returncode} (${(mg52.stderr || '').trim().split('\n')[0]}); under slug 'other' -> exit ${other52.returncode} (${(other52.stderr || '').trim().split('\n')[0]}); 'other' row pointing at it, no --pr -> exit ${row52.returncode}`, 'tool-level');
+
     // 51 a lane starts from a stale base: the fetch failed, or there is no origin and nobody said the repo is local-only
     //    (hardening plan D3) -> lane.js start refuses both and creates nothing
     const r51 = path.join(tmp, 'node-api-51');

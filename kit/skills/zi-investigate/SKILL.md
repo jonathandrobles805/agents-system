@@ -13,6 +13,8 @@ Inspect, research, report. The report is the deliverable; no lane, no PR.
 
 Profile `investigation`: `start → research → report → done`. Human pauses: none.
 
+**Not built yet.** Nothing runs the `report` stage yet. `lane.js next-step` and `lane.js start` refuse this work type with that reason (#57-#59); building it is on the hardening plan's to-do list. Tell the human so before writing a goal, and stop unless they want the goal recorded for later.
+
 ## Step 1: classify, then start
 
 Follow `/zi-start` exactly (understand before anything else; agree the goal; write `docs/goals/<slug>.md`), with these header fields set:
