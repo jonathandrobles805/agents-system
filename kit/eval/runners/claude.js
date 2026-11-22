@@ -26,12 +26,13 @@ export function available(env = process.env) {
   return { ok: true, why: `claude on PATH, key present, sandbox ${det.runtime}` };
 }
 
-function fixtureRepo(task, dir) {
+function fixtureRepo(task, dir, claudeHome) {
   const builders = { 'node-api': F.nodeApi, 'python-service': F.pythonService };
   const build = builders[task.fixture ?? 'node-api'];
   if (!build) throw new Error(`unknown fixture repo '${task.fixture}'`);
   const root = build(path.join(dir, task.fixture ?? 'node-api'));
-  const r = spawnSync(process.execPath, [path.join(K.KIT_DIR, 'scripts', 'bootstrap.js'), '--repo', root], { encoding: 'utf8' });
+  // the bootstrap registers the repo in the session's own home (CLAUDE_HOME), never the owner's ~/.claude
+  const r = spawnSync(process.execPath, [path.join(K.KIT_DIR, 'scripts', 'bootstrap.js'), '--repo', root], { encoding: 'utf8', env: { ...process.env, CLAUDE_HOME: claudeHome } });
   if (r.status !== 0) throw new Error(`bootstrap failed: ${r.stderr}`);
   for (const [rel, text] of Object.entries(task.setup?.files ?? {})) {
     fs.mkdirSync(path.dirname(path.join(root, rel)), { recursive: true });
@@ -45,26 +46,49 @@ function fixtureRepo(task, dir) {
 const redact = (s) => s.replace(/sk-ant-[A-Za-z0-9_-]+/g, 'sk-ant-***').replace(/\bgh[pousr]_[A-Za-z0-9]{20,}\b/g, 'gh*_***');
 
 /**
- * What Claude Code itself needs inside the sandbox, beyond the lane's own rules (proven on GitHub's runner and locally
- * with srt 0.0.83 and Claude Code 2.1.330): the sandbox makes /tmp and $HOME read-only, so Claude Code's temp
- * directory (`CLAUDE_CODE_TMPDIR`) and config directory (`CLAUDE_CONFIG_DIR`) go in the eval's scratch space, writable;
- * without them every session exits with `EROFS: ... mkdir '/tmp/claude'`. Claude Code ignores a project's
- * `permissions.allow` until the workspace is trusted, and headless runs have no other way to trust it than
- * `projects["<path>"].hasTrustDialogAccepted` in that config's `.claude.json`, so the fixture repo (under its path and
- * its real path: macOS's temp directory is a symlink) is marked trusted there, and the agents run under the kit's real
- * rules. The session must reach the model: `api.anthropic.com` joins the sandbox's network allowlist. Credentials stay
- * in the environment; nothing is written to the owner's own ~/.claude or ~/.claude.json.
+ * What Claude Code itself needs inside the sandbox, beyond the lane's own rules. Seen on GitHub's runner (eval-smoke-main
+ * run 44987376718) and reproduced and fixed locally with srt 0.0.83 and Claude Code 2.1.330:
+ * - the sandbox makes /tmp and $HOME read-only, so every session exited with `EROFS: ... mkdir '/tmp/claude'`. Each
+ *   session gets its own home in the eval's scratch space, writable: Claude Code's config directory is its `.claude`
+ *   (`CLAUDE_CONFIG_DIR`) and its temp directory is beside it (`CLAUDE_CODE_TMPDIR`);
+ * - the kit under test is installed into that home (`install.sh --copy`), so the fixture's hooks
+ *   (`$HOME/.claude/kit/scripts/...`), the kit's agents and its skills are the ones being evaluated, on a CI runner
+ *   that never ran install.sh and on the owner's machine alike;
+ * - Claude Code ignores a project's `permissions.allow` until the workspace is trusted, and headless runs have no other
+ *   way to trust it than `projects["<path>"].hasTrustDialogAccepted` in the config's `.claude.json`, so the fixture
+ *   repo (its path and its real path: macOS's temp directory is a symlink) is marked trusted there;
+ * - the session must reach the model: `api.anthropic.com` joins the sandbox's network allowlist.
+ * Credentials stay in the environment. The owner's own ~/.claude and ~/.claude.json are not read or written by the
+ * session, and the fixture's bootstrap registers the repo in this home, not the owner's. srt only: the container
+ * runtime does not get these settings.
  */
 export const API_HOST = 'api.anthropic.com';
-export function sessionHome(dir, root) {
+const REPO_ROOT = path.dirname(K.KIT_DIR);
+export function sessionHome(dir) {
+  const home = path.join(dir, 'home');
+  const config = path.join(home, '.claude');
   const tmp = path.join(dir, 'claude-tmp');
-  const config = path.join(dir, 'claude-config');
-  fs.mkdirSync(tmp, { recursive: true });
   fs.mkdirSync(config, { recursive: true });
-  const projects = {};
-  for (const p of new Set([root, fs.realpathSync(root)])) projects[p] = { hasTrustDialogAccepted: true };
-  fs.writeFileSync(path.join(config, '.claude.json'), JSON.stringify({ projects }, null, 2));
-  return { env: { CLAUDE_CODE_TMPDIR: tmp, CLAUDE_CONFIG_DIR: config }, allowWrite: [tmp, config], allowedDomains: [API_HOST] };
+  fs.mkdirSync(tmp, { recursive: true });
+  // git inside the session commits under a fixed identity, never the owner's (their global config is not in this home)
+  fs.writeFileSync(path.join(home, '.gitconfig'), '[user]\n\tname = kit-eval\n\temail = kit-eval@localhost\n');
+  const r = spawnSync('bash', [path.join(REPO_ROOT, 'install.sh'), '--copy'], { env: { ...process.env, HOME: home, CLAUDE_HOME: config }, encoding: 'utf8' });
+  if (r.status !== 0) throw new Error(`install.sh into the eval's home failed: ${r.stderr || r.stdout}`);
+  return { home, config, env: { HOME: home, CLAUDE_CONFIG_DIR: config, CLAUDE_CODE_TMPDIR: tmp }, allowWrite: [home, tmp], allowedDomains: [API_HOST] };
+}
+
+/** Mark the fixture repo trusted in the session's own Claude Code config, so its permissions.allow rules apply. */
+export function trustWorkspace(config, root) {
+  const file = path.join(config, '.claude.json');
+  let cfg = {};
+  try {
+    cfg = JSON.parse(fs.readFileSync(file, 'utf8'));
+  } catch {
+    cfg = {};
+  }
+  cfg.projects = cfg.projects ?? {};
+  for (const p of new Set([root, fs.realpathSync(root)])) cfg.projects[p] = { ...(cfg.projects[p] ?? {}), hasTrustDialogAccepted: true };
+  fs.writeFileSync(file, JSON.stringify(cfg, null, 2));
 }
 
 function headless(prompt, cwd, env, settingsPath, timeoutMs) {
@@ -95,9 +119,10 @@ export async function run(task, { attempt = 0, timeoutMs = 20 * 60 * 1000 } = {}
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), `kit-eval-${task.id}-`));
   const started = Date.now();
   try {
-    const root = fixtureRepo(task, dir);
+    const home = sessionHome(dir);
+    const root = fixtureRepo(task, dir, home.config);
+    trustWorkspace(home.config, root);
     const lane = SB.sandboxConfig({ root, wt: root, slug: task.id, agent: task.role ?? 'implementer' });
-    const home = sessionHome(dir, root);
     const cfg = { ...lane, allowWrite: [...lane.allowWrite, ...home.allowWrite], allowedDomains: [...new Set([...lane.allowedDomains, ...home.allowedDomains])].sort() };
     const settings = path.join(root, '.claude', 'session', 'sandbox.json');
     fs.mkdirSync(path.dirname(settings), { recursive: true });

@@ -142,19 +142,25 @@ test('claude runner reports why it is unavailable instead of running unsandboxed
   assert.equal(claude.name, 'claude');
 });
 
-test('claude runner: Claude Code gets a writable temp and config directory, a trusted workspace and the API host inside the sandbox', (t) => {
+test('claude runner: each session gets its own home with the kit installed, a writable temp directory, a trusted workspace and the API host', (t) => {
   const dir = tmpPath(t);
-  const root = path.join(dir, 'node-api');
-  fs.mkdirSync(root, { recursive: true });
-  const home = claude.sessionHome(dir, root);
-  // both directories are in the eval's scratch space, writable in the sandbox, and handed to Claude Code
-  assert.deepEqual(home.env, { CLAUDE_CODE_TMPDIR: path.join(dir, 'claude-tmp'), CLAUDE_CONFIG_DIR: path.join(dir, 'claude-config') });
-  assert.deepEqual(home.allowWrite, [home.env.CLAUDE_CODE_TMPDIR, home.env.CLAUDE_CONFIG_DIR]);
+  const home = claude.sessionHome(dir);
+  // a home and a temp directory in the eval's scratch space, writable in the sandbox, handed to Claude Code
+  assert.deepEqual(home.env, { HOME: path.join(dir, 'home'), CLAUDE_CONFIG_DIR: path.join(dir, 'home', '.claude'), CLAUDE_CODE_TMPDIR: path.join(dir, 'claude-tmp') });
+  assert.deepEqual(home.allowWrite, [home.env.HOME, home.env.CLAUDE_CODE_TMPDIR]);
   for (const d of home.allowWrite) assert.ok(fs.statSync(d).isDirectory(), d);
   assert.deepEqual(home.allowedDomains, ['api.anthropic.com']);
+  // the kit under test is installed there as copies (not links into the checkout): hooks, agents and skills resolve
+  const kit = path.join(home.config, 'kit');
+  assert.ok(fs.existsSync(path.join(kit, 'scripts', 'lane.js')) && !fs.lstatSync(kit).isSymbolicLink());
+  assert.ok(fs.existsSync(path.join(home.config, 'agents', 'implementer.md')));
+  assert.ok(fs.existsSync(path.join(home.config, 'skills', 'zi-run', 'SKILL.md')));
+  assert.match(fs.readFileSync(path.join(home.env.HOME, '.gitconfig'), 'utf8'), /name = kit-eval/);
   // the fixture repo is trusted under its path and its real path, so its permissions.allow rules apply
-  const cfg = JSON.parse(fs.readFileSync(path.join(home.env.CLAUDE_CONFIG_DIR, '.claude.json'), 'utf8'));
+  const root = path.join(dir, 'node-api');
+  fs.mkdirSync(root);
+  claude.trustWorkspace(home.config, root);
+  const cfg = JSON.parse(fs.readFileSync(path.join(home.config, '.claude.json'), 'utf8'));
   assert.equal(cfg.projects[root].hasTrustDialogAccepted, true);
   assert.equal(cfg.projects[fs.realpathSync(root)].hasTrustDialogAccepted, true);
-  assert.deepEqual(Object.keys(cfg), ['projects']);
 });
