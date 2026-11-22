@@ -244,7 +244,7 @@ test('lane.js merge uses the owner\'s ruleset bypass (--admin) only after every 
   assert.equal(r.returncode, 0, r.stderr + r.stdout);
   assert.ok(!mergeOf(g.calls).args.includes('--admin'));
   assert.match(r.stdout, /warning: branch protection on main is unknown/);
-  // the PR moved to another base after the checks were read (views: lane head check, checks, then the re-read): refused, nothing merged
+  // the PR moved to another base after the checks were read (views: lane head check, mergeCommand's first read, the checks poll, then the re-read, 4th): refused, nothing merged
   g = fakeGh(t, { pr: PR, polls: [all()], protection: 'on', enforceAdmins: true, prAfter: { after: 3, pr: { baseRefName: 'release' } } });
   r = lane(root, g.env, 'merge', 'footer', '--by', 'Jonathan');
   assert.equal(r.returncode, 2);
