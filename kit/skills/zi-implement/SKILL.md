@@ -11,14 +11,14 @@ Implement feature: `$slug`
 
 ## Step 1: start or resume the lane
 ```
-node "$HOME/.claude/kit/scripts/lane.js" start $slug --repo "$PWD"
+kit lane start $slug --repo "$PWD"
 ```
 - Exit 2 with reasons: stop and relay them verbatim. Do not work around a precondition. If the reason is "worktree already exists", this is a resume: read `<worktree>/docs/specs/$slug.progress.md` and continue from "Current step".
 - Exit 0: the JSON names the worktree, branch, spec, and progress file.
 
 Then sync and record the clock:
 ```
-cd <worktree> && bash scripts/sync.sh && node "$HOME/.claude/kit/scripts/lane.js" stage $slug test --repo <main repo>
+cd <worktree> && bash scripts/sync.sh && kit lane stage $slug test --repo <main repo>
 ```
 The stage is `test`, not `build`: the tester is about to make tests fail on purpose, and in `build` every one of
 those red runs is counted against the three-strikes counter as a failed attempt to fix something (#32).
@@ -30,7 +30,7 @@ Spawn the `tester` agent with working directory = the worktree: "Lane `$slug`. W
 ## Step 3: build
 Move the lane to the stage where red counts as a failed fix, now that the tests are meant to pass:
 ```
-node "$HOME/.claude/kit/scripts/lane.js" stage $slug build --repo <main repo>
+kit lane stage $slug build --repo <main repo>
 ```
 Then have the implementer commit a stub for every file in Files to create before writing any logic -- one that
 throws or returns nothing, so the tester's red runs fail on an assertion rather than on a missing module. A run
@@ -43,12 +43,12 @@ Do not give the implementer any summary of the code. It reads the files itself; 
 
 ## Step 4: after the implementer stops
 Read `docs/specs/$slug.progress.md` in the worktree.
-- Escalation filled: `node "$HOME/.claude/kit/scripts/lane.js" roadmap-set $slug escalated --repo <main repo>`, show the human the Escalation section, and stop. Nothing else.
+- Escalation filled: `kit lane roadmap-set $slug escalated --repo <main repo>`, show the human the Escalation section, and stop. Nothing else.
 - All criteria green: run the full test command from `.claude/kit.json` once more in the worktree and confirm green. Then:
 ```
-node "$HOME/.claude/kit/scripts/lane.js" publish $slug --repo <main repo>
-node "$HOME/.claude/kit/scripts/lane.js" roadmap-set $slug in-review --repo <main repo> --pr <PR url it printed>
-node "$HOME/.claude/kit/scripts/lane.js" stage $slug review --repo <main repo>
+kit lane publish $slug --repo <main repo>
+kit lane roadmap-set $slug in-review --repo <main repo> --pr <PR url it printed>
+kit lane stage $slug review --repo <main repo>
 ```
 Then run `/zi-review $slug`.
 

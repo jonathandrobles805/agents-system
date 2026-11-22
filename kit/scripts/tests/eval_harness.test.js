@@ -145,9 +145,22 @@ test('claude runner reports why it is unavailable instead of running unsandboxed
 
 test('claude runner: each session gets its own home with the kit installed, a writable temp directory, a trusted workspace and the API host', (t) => {
   const dir = tmpPath(t);
-  const home = claude.sessionHome(dir);
+  // an owner's KIT_BIN_DIR never redirects the session's install: the owner's own launcher is not touched
+  const ownerBin = path.join(dir, 'owner-bin');
+  fs.mkdirSync(ownerBin);
+  fs.writeFileSync(path.join(ownerBin, 'kit'), '#!/bin/sh\n# agent-kit launcher\nKIT_DIR=\'/owner/.claude/kit\'\n');
+  const saved = process.env.KIT_BIN_DIR;
+  process.env.KIT_BIN_DIR = ownerBin;
+  let home;
+  try {
+    home = claude.sessionHome(dir);
+  } finally {
+    if (saved === undefined) delete process.env.KIT_BIN_DIR;
+    else process.env.KIT_BIN_DIR = saved;
+  }
+  assert.match(fs.readFileSync(path.join(ownerBin, 'kit'), 'utf8'), /KIT_DIR='\/owner\/\.claude\/kit'/);
   // a home and a temp directory in the eval's scratch space, writable in the sandbox, handed to Claude Code
-  assert.deepEqual(home.env, { HOME: path.join(dir, 'home'), CLAUDE_CONFIG_DIR: path.join(dir, 'home', '.claude'), CLAUDE_CODE_TMPDIR: path.join(dir, 'claude-tmp') });
+  assert.deepEqual({ ...home.env, PATH: undefined }, { HOME: path.join(dir, 'home'), CLAUDE_CONFIG_DIR: path.join(dir, 'home', '.claude'), CLAUDE_CODE_TMPDIR: path.join(dir, 'claude-tmp'), PATH: undefined });
   assert.deepEqual(home.allowWrite, [home.env.HOME, home.env.CLAUDE_CODE_TMPDIR]);
   for (const d of home.allowWrite) assert.ok(fs.statSync(d).isDirectory(), d);
   assert.deepEqual(home.allowedDomains, ['api.anthropic.com']);
@@ -159,7 +172,11 @@ test('claude runner: each session gets its own home with the kit installed, a wr
   assert.match(fs.readFileSync(path.join(home.env.HOME, '.gitconfig'), 'utf8'), /name = kit-eval/);
   // the kit's copy and the files that steer a later session are write-denied, and exist as files/folders (srt covers a
   // missing path with a device file, which Claude Code refuses as settings); the owner's own Claude Code home is read-denied
-  assert.deepEqual(home.denyWrite, ['kit', 'agents', 'skills', 'commands', 'settings.json', 'CLAUDE.md'].map((x) => path.join(home.config, x)));
+  assert.deepEqual(home.denyWrite, [...['kit', 'agents', 'skills', 'commands', 'settings.json', 'CLAUDE.md'].map((x) => path.join(home.config, x)), path.join(home.home, '.local', 'bin')]);
+  // the `kit` launcher is installed there and first on the session's PATH, pointing at this home's kit (#63)
+  const launcher = path.join(home.home, '.local', 'bin', 'kit');
+  assert.match(fs.readFileSync(launcher, 'utf8'), new RegExp(`^KIT_DIR='${home.config.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}/kit'$`, 'm'));
+  assert.equal(home.env.PATH.split(path.delimiter)[0], path.join(home.home, '.local', 'bin'));
   for (const p of home.denyWrite) assert.ok(fs.statSync(p).isDirectory() || fs.statSync(p).isFile(), p);
   assert.deepEqual(home.denyRead, claude.ownerClaudeDenyRead());
   // the owner's home: all of ~/.claude denied, unless the claude program lives there (old local install), then all but that folder

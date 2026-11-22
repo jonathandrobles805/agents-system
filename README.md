@@ -16,8 +16,10 @@ Start here:
 
 ```
 git clone https://github.com/jonathandrobles805/agents-system ~/agents-system
-~/agents-system/install.sh          # symlinks agents, commands, and kit/ into ~/.claude
+~/agents-system/install.sh          # symlinks agents, skills, and kit/ into ~/.claude; puts the `kit` launcher in ~/.local/bin
 ```
+
+`~/.local/bin` must be on your `PATH` (set `KIT_BIN_DIR` to use another folder): agents run the kit's scripts as `kit <script> …`, a form Claude Code's permission rules were proven to approve, where the earlier `node "$HOME/…"` form was refused (#63; `npm run permissions:probe` re-checks it). The installer warns when `kit` on your `PATH` is not its launcher, and never replaces a `kit` it did not write.
 
 Requires Node 20 or newer (the kit has no npm dependencies), git, and `gh` for GitHub features.
 

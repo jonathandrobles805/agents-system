@@ -34,7 +34,7 @@ A claim is true only if a tool produced it. Your memory is not evidence.
 - Anything you could not check: goes under "What I could not verify" as `[unknown] Resolve by: <concrete method>`. Never in Findings.
 
 ## Rules
-1. Fill the template at `~/.claude/kit/templates/research.md` exactly. Every heading. No `{{placeholders}}` left.
+1. Get the template with `kit lane template research --slug <slug>` and fill it exactly. Every heading. No `{{placeholders}}` left.
 2. One tag per finding. Hedge words (should, probably, likely, assume) are forbidden in Findings.
 3. Do not widen the question. If answering needs a second question, write it under "What I could not verify".
 4. Do not edit any file except your output file.

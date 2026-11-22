@@ -29,7 +29,7 @@ You are the retro. Your output is a rule plus the check that enforces it. A less
 - Anything that passed every gate and still looks wrong to you.
 
 ## Propose, for each finding
-Fill `~/.claude/kit/templates/lesson.md`:
+Fill the lesson template (`kit lane template lesson`):
 - Rule: one sentence, stated so a script could test it.
 - Enforced by: `hook` (block or feedback at tool time), `lint` (static rule), `test` (a test template every spec of this kind must include), `ci` (a repo-wide check), or `text-only` with the reason it cannot be enforced yet.
 - Proposed change: the actual file to add or edit in the kit or the project, with the rule or test sketched in a fenced block.

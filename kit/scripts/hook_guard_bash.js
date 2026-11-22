@@ -29,9 +29,9 @@ export const RULES = [
   rule(`${B}git${S}+(commit|push|merge|rebase)${E}[^|;&]*--no-verify`, '--no-verify skips hooks'),
   // Merging goes through `lane.js merge`, which waits for every required check (#68). Anchored at the start of a
   // command (line start, after ; & | ( or $( ), so the words inside a quoted PR or issue body do not match.
-  rule(`(?:^|[\n;&|(]|\\$\\()${S}*gh${S}+pr${S}+merge${E}`, 'merging a PR directly; run lane.js merge <slug> --by <name>, which waits for CI to pass'),
-  rule(`(?:^|[\n;&|(]|\\$\\()${S}*gh${S}+api${E}(?=[^|;&\n]*(?:-X${S}*|--method[=${WS}]${S}*)PUT${E})(?=[^|;&\n]*pulls/[^/${WS}]+/merge${E})`, 'merging a PR through the API; run lane.js merge <slug> --by <name>, which waits for CI to pass'),
-  rule(`(?:^|[\n;&|(]|\\$\\()${S}*gh${S}+api${S}+graphql${E}[^|;&]*mergePullRequest`, 'merging a PR through GraphQL; run lane.js merge <slug> --by <name>, which waits for CI to pass'),
+  rule(`(?:^|[\n;&|(]|\\$\\()${S}*gh${S}+pr${S}+merge${E}`, 'merging a PR directly; run kit lane merge <slug> --by <name>, which waits for CI to pass'),
+  rule(`(?:^|[\n;&|(]|\\$\\()${S}*gh${S}+api${E}(?=[^|;&\n]*(?:-X${S}*|--method[=${WS}]${S}*)PUT${E})(?=[^|;&\n]*pulls/[^/${WS}]+/merge${E})`, 'merging a PR through the API; run kit lane merge <slug> --by <name>, which waits for CI to pass'),
+  rule(`(?:^|[\n;&|(]|\\$\\()${S}*gh${S}+api${S}+graphql${E}[^|;&]*mergePullRequest`, 'merging a PR through GraphQL; run kit lane merge <slug> --by <name>, which waits for CI to pass'),
   rule(`${B}sudo${E}`, 'sudo'),
   rule(`${B}(curl|wget)${E}[^|;&]*\\|${S}*(ba|z|da)?sh${E}`, 'piping a download into a shell'),
   rule(`(>|>>|${B}tee${E}|${B}sed${S}+-i|${B}cp${E}|${B}mv${E})[^|;&]*\\.claude/`, 'writing into .claude/ (kit configuration)'),
@@ -136,7 +136,7 @@ export function main() {
   const root = K.projectRoot(cwd);
   // kill switch (KIT-SPEC 10.13): a STOP flag in the lane's session or the project refuses every mutation
   if (K.isFile(path.join(cwd, '.claude', 'session', 'STOP')) || K.isFile(path.join(root, '.claude', 'STOP'))) {
-    process.stderr.write(`guard-bash: the kill switch is set; no mutations until lane.js resume-all --by <name>\n`);
+    process.stderr.write(`guard-bash: the kill switch is set; no mutations until kit lane resume-all --by <name>\n`);
     return 2;
   }
   // A Bash call carries no file path, so a subagent -- which reports the main repo as cwd -- resolves only by

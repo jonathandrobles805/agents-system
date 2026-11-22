@@ -973,7 +973,7 @@ test('the WIP limit is written in one place only [finding 1]', (t) => {
 test('the planner is told to read the limit from the derivation, not from prose [finding 1]', () => {
   const planner = read(KIT, 'agents', 'planner.md');
   const step = /^1\. .*$/m.exec(planner)[0];
-  assert.match(step, /lane\.js" wip|\/status/, `the first read step derives the limit: ${step}`);
+  assert.match(step, /lane\.js" wip|kit lane wip|\/status/, `the first read step derives the limit: ${step}`);
   // it must say where NOT to get it: the roadmap is still the file this step opens, so "mentions ROADMAP.md" is
   // not the property -- "tells the agent the number there is not the enforced one" is
   assert.match(step, /[Dd]o not take the limit from prose/, 'it tells the planner the roadmap number is not authoritative');

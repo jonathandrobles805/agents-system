@@ -282,3 +282,14 @@ test('check_projects warns about stale hooks until the project is upgraded', (t)
   r = runScript('check_projects.js', []);
   assert.equal(r.stdout, '');
 });
+
+test('an upgrade owns only the kit\'s own allow rules: the old "$HOME" form, Bash(kit *) and rules naming a kit script (#63)', async () => {
+  const { kitOwnedAllow } = await import('../bootstrap.js');
+  for (const rule of ['Bash(node "$HOME/.claude/kit/scripts/*)', 'Bash(kit *)', 'Bash(kit lane next-step *)', 'Bash(kit lane)', 'Bash(kit kit_status)']) {
+    assert.equal(kitOwnedAllow(rule), true, rule);
+  }
+  // another tool called `kit`, and anything that is not a kit script, stays the project's
+  for (const rule of ['Bash(kit pack *)', 'Bash(kit nosuchscript *)', 'Bash(kit)', 'Bash(kit lane:*)', 'Bash(npm run lint)', 'Edit(/**)']) {
+    assert.equal(kitOwnedAllow(rule), false, rule);
+  }
+});

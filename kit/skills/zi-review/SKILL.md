@@ -21,10 +21,10 @@ If `Risk: high-risk`, spawn `reviewer` a second time with `model` overridden to 
 
 ## Step 4: validate and route
 ```
-node "$HOME/.claude/kit/scripts/validate_docs.js" docs/specs/$slug.review.md --repo <worktree>
+kit validate_docs docs/specs/$slug.review.md --repo <worktree>
 ```
 A report that fails validation goes back to the reviewer with the violations.
 
 Commit the review file (and the adversarial test) in the worktree and push. Then:
-- Verdict FAIL: post the `## Fail list` section as a PR comment (`gh pr comment`), `lane.js roadmap-set $slug building`, `lane.js stage $slug build`, and spawn the `implementer` with only the fail list as input: "Fix exactly these items in lane `$slug`: <fail list>. Then stop." When it stops, run `/zi-review $slug` again. Count the round; after 3 FAIL rounds, set the lane to `escalated` and stop.
-- Verdict PASS: `lane.js roadmap-set $slug ready-to-merge`. Tell the human the PR is ready and what CI shows, from `lane.js ci $slug` (not `gh pr checks`). This command never merges; a merge is `lane.js merge`, on the human's word.
+- Verdict FAIL: post the `## Fail list` section as a PR comment (`gh pr comment`), `kit lane roadmap-set $slug building`, `kit lane stage $slug build`, and spawn the `implementer` with only the fail list as input: "Fix exactly these items in lane `$slug`: <fail list>. Then stop." When it stops, run `/zi-review $slug` again. Count the round; after 3 FAIL rounds, set the lane to `escalated` and stop.
+- Verdict PASS: `kit lane roadmap-set $slug ready-to-merge`. Tell the human the PR is ready and what CI shows, from `kit lane ci $slug` (not `gh pr checks`). This command never merges; a merge is `kit lane merge`, on the human's word.

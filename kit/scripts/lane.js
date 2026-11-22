@@ -26,6 +26,7 @@
 //   lane.js publish <slug> --repo R [--branch spec/<slug>] [--title T] [--body-file F | --body T] [--base B]  host side: push the lane or spec branch and open its PR as the kit's GitHub App
 //   lane.js merge [<slug>] --repo R [--pr N] --by NAME  wait for every required check, then squash-merge pinned to that head
 //   lane.js merged <slug> --repo R [--pr URL] at merge time: verify in git, mark ROADMAP merged (idempotent)
+//   lane.js template <goal|spec|research|review|lesson> [--slug S] --repo R   print a kit template with slug, date and commit filled in
 //   lane.js finish <slug> --repo R            after retro: remove worktree and local branch, mark roadmap merged
 // Exit 0 ok, 2 refused (reasons on stderr), 1 usage/git error.
 import fs from 'node:fs';
@@ -58,6 +59,7 @@ const DOC = `lane: the mechanical half of the pipeline commands. Agents do the t
   lane.js publish <slug> --repo R [--branch spec/<slug>] [--title T] [--body-file F | --body T] [--base B]  host side: push the lane or spec branch and open its PR as the kit's GitHub App
   lane.js merge [<slug>] --repo R [--pr N] --by NAME  wait for every required check, then squash-merge pinned to that head
   lane.js merged <slug> --repo R [--pr URL] at merge time: verify in git, mark ROADMAP merged (idempotent)
+  lane.js template <goal|spec|research|review|lesson> [--slug S] --repo R   print a kit template with slug, date and commit filled in
   lane.js finish <slug> --repo R            after retro: remove worktree and local branch, mark roadmap merged
 Exit 0 ok, 2 refused (reasons on stderr), 1 usage/git error.`;
 
@@ -385,7 +387,7 @@ export function goalPrecheck(root, slug) {
 export function scope(root, slug) {
   const wt = pjoin(lanesDir(root), slug);
   const lj = pjoin(wt, '.claude', 'lane.json');
-  if (!K.isFile(lj)) return refuse([`no lane for ${slug}; run lane.js start ${slug} first`]);
+  if (!K.isFile(lj)) return refuse([`no lane for ${slug}; run kit lane start ${slug} first`]);
   const sp = specPath(wt, slug);
   if (!K.isFile(sp)) return refuse([`spec ${relativeTo(wt, sp)} does not exist in the lane; the planner writes it after the reproduction`]);
   const problems = [];
@@ -456,7 +458,7 @@ export function scope(root, slug) {
  */
 export function check(root, slug, criterion, cmd) {
   const wt = pjoin(lanesDir(root), slug);
-  if (!K.isFile(pjoin(wt, '.claude', 'lane.json'))) return refuse([`no lane for ${slug}; run lane.js start ${slug} first`]);
+  if (!K.isFile(pjoin(wt, '.claude', 'lane.json'))) return refuse([`no lane for ${slug}; run kit lane start ${slug} first`]);
   if (!cmd) return refuse(['give the command after --']);
   const r = spawnSync('bash', ['-c', cmd], { cwd: wt, encoding: 'utf8', timeout: 900000, maxBuffer: 64 * 1024 * 1024 });
   const code = r.status ?? 1;
@@ -535,7 +537,7 @@ export function precheck(root, slug) {
   for (const s of Object.keys(asDict(kget(asDict(K.loadKitJson(root)), 'lanes', {})))) {
     const st = byStatus.get(s);
     if (st !== undefined && !IN_FLIGHT.has(st)) {
-      problems.push(`kit.json records lane '${s}' as open but main's ROADMAP row reads '${st}', which is not in flight; run lane.js roadmap-set ${s} building --repo <main repo>`);
+      problems.push(`kit.json records lane '${s}' as open but main's ROADMAP row reads '${st}', which is not in flight; run kit lane roadmap-set ${s} building --repo <main repo>`);
     }
   }
   const [, change, create] = K.specFileLists(sp);
@@ -564,7 +566,7 @@ export function lanesDir(root) {
 }
 
 export function start(root, slug, base) {
-  if (isStopped(root)) return refuse([`kill switch set; lane.js resume-all --by <name> first`]);
+  if (isStopped(root)) return refuse([`kill switch set; kit lane resume-all --by <name> first`]);
   const fields = goalFields(root, slug);
   if (!profileFor(fields.work_type)) return refuse([`unknown work_type '${fields.work_type}' in docs/goals/${slug}.md; profiles: ${Object.keys(loadProfiles()).join(', ')}`]);
   const unbuilt = notBuilt(fields);
@@ -580,7 +582,7 @@ export function start(root, slug, base) {
   const work = K.workRoot(root);
   const wt = pjoin(lanesDir(root), slug);
   const branch = `wt/${slug}`;
-  if (fs.existsSync(wt)) return refuse([`worktree ${wt} already exists; resume with /zi-implement ${slug} inside it, or run lane.js finish first`]);
+  if (fs.existsSync(wt)) return refuse([`worktree ${wt} already exists; resume with /zi-implement ${slug} inside it, or run kit lane finish first`]);
   // The lane starts from the base as the remote has it, never from a stale local copy (hardening plan D3): a failed
   // fetch is refused; a repo with no origin is refused unless kit.json says it is local-only.
   const hasOrigin = K.git(['remote'], root).split(/\s+/).filter(Boolean).includes('origin');
@@ -716,7 +718,7 @@ export function ensureCollector(port = Number(process.env.KIT_TELEMETRY_PORT || 
 export function launch(root, slug, { exec = false, prompt = null } = {}) {
   const wt = pjoin(lanesDir(root), slug);
   const lj = pjoin(wt, '.claude', 'lane.json');
-  if (!K.isFile(lj)) return refuse([`no lane for ${slug}; run lane.js start ${slug} first`]);
+  if (!K.isFile(lj)) return refuse([`no lane for ${slug}; run kit lane start ${slug} first`]);
   const data = asDict(JSON.parse(readText(lj)));
   const cfg = SB.sandboxConfig({ root, wt, slug });
   const recorded = asDict(kget(data, 'sandbox', {}));
@@ -950,7 +952,7 @@ export function stop(root, by, reason) {
       K.appendEvent(pjoin(sd, 'events.jsonl'), { event: 'stop', by: by || 'unknown', reason: reason || '', summary: 'kill switch' });
     }
   }
-  process.stdout.write(`stopped: every lane refuses transitions and mutations until lane.js resume-all --by <name>\n`);
+  process.stdout.write(`stopped: every lane refuses transitions and mutations until kit lane resume-all --by <name>\n`);
   return 0;
 }
 export function resumeAll(root, by) {
@@ -979,7 +981,7 @@ export function goalStatus(root, slug) {
 export async function nextStep(root, slug) {
   const KS = await import('./kit_status.js');
   const kit = K.loadKitJson(root);
-  if (isStopped(root)) return { slug, stage: 'stopped', reason: `kill switch set (${pyStrip(readText(stopPath(root)))}); lane.js resume-all --by <name> to continue`, needs_human: true };
+  if (isStopped(root)) return { slug, stage: 'stopped', reason: `kill switch set (${pyStrip(readText(stopPath(root)))}); kit lane resume-all --by <name> to continue`, needs_human: true };
   const rows = new Map(roadmapRows(root).map((r) => [r.slug, r]));
   const row = rows.get(slug);
   const g = goalStatus(root, slug);
@@ -1111,7 +1113,7 @@ export function inLanePlanning(root, slug) {
     return { slug, stage: 'plan', reason: `spec status '${status}' is not waiting-approval; finish planning` };
   }
   const lane = asDict(JSON.parse(readText(lj)));
-  if (['reproduce', 'plan', 'approve'].includes(String(kget(lane, 'stage', '')))) return { slug, stage: 'scope', reason: 'spec approved; lane.js scope copies its criteria and moves the lane to test' };
+  if (['reproduce', 'plan', 'approve'].includes(String(kget(lane, 'stage', '')))) return { slug, stage: 'scope', reason: 'spec approved; kit lane scope copies its criteria and moves the lane to test' };
   return null;
 }
 
@@ -1167,6 +1169,32 @@ export function nextInQueue(root) {
 }
 
 // ---------------------------------------------------------------- incidents
+
+/**
+ * The kit templates an agent fills, printed with what the kit already knows: the slug, today's date and the repo's
+ * commit. Agents get them from here instead of reading ~/.claude/kit/templates/ themselves: that folder is outside the
+ * project, so an unattended session (claude -p, nobody to approve) cannot read it, and with a linked install a Read
+ * rule would have to name the machine-specific checkout path too (eval evidence 2026-11-22; permissions docs, symlinks).
+ * Agents run it as `kit lane template <name>`, which the project's `Bash(kit *)` rule approves (#63). The progress
+ * file is not here: `lane.js start` writes it with the spec's done-criteria rows.
+ */
+export const TEMPLATE_NAMES = ['goal', 'spec', 'research', 'review', 'lesson'];
+export function templateText(name, { slug = null, date = todayIso(), commit = null } = {}) {
+  if (!TEMPLATE_NAMES.includes(name)) throw new Error(`unknown template '${name}' (one of ${TEMPLATE_NAMES.join(', ')})`);
+  if (slug !== null && !(/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(slug) && slug.length <= 40)) throw new Error(`slug '${slug}' is not kebab-case of at most 40 characters`);
+  // filled on the header lines only (`- Slug:`, `- Date:`, `- Commit:`, the lesson's `## {{date}} — …` heading). A
+  // `… by:` line is the person's to write with the date and commit of their own decision, never the draft's: the
+  // spec's `Approved by: {{name}} on {{date}} at {{commit}}`, the goal's `- Agreed by: … on {{date}}`
+  const fill = (line) => {
+    if (!(/^- [A-Z][A-Za-z ]*:/.test(line) || /^## \{\{date\}\} /.test(line)) || /\bby:/i.test(line)) return line;
+    let l = line;
+    if (slug !== null) l = l.replaceAll('{{slug}}', slug);
+    l = l.replaceAll('{{date}}', date);
+    if (commit) l = l.replaceAll('{{commit}}', commit);
+    return l;
+  };
+  return readText(path.join(kitDir(), 'templates', `${name}.md`)).split('\n').map(fill).join('\n');
+}
 
 export function recordIncident(root, what, slug, pr) {
   const d = pjoin(root, 'docs', 'incidents');
@@ -1274,7 +1302,7 @@ export async function publish(root, { slug, branch, title, bodyFile, body, base 
   branch = branch || `wt/${slug}`;
   if (!/^(wt|spec)\/\S+$/.test(branch)) return refuse([`branch '${branch}' is not a lane (wt/*) or spec (spec/*) branch; the App may push nothing else, by the repository's rulesets`]);
   const cwd = branch.startsWith('wt/') ? laneWorktree(root, kit, slug) : root;
-  if (!cwd) return refuse([`no lane for ${slug}; run lane.js start ${slug} first`]);
+  if (!cwd) return refuse([`no lane for ${slug}; run kit lane start ${slug} first`]);
   let head, dirty, remote = '';
   try {
     head = pyStrip(K.git(['rev-parse', '--abbrev-ref', 'HEAD'], cwd));
@@ -1385,6 +1413,8 @@ export async function main(argv = process.argv.slice(2)) {
   s.addArgument('slug'); s.addArgument('--repo', { default: '.' });
   s = sub.addParser('roadmap-set');
   s.addArgument('slug'); s.addArgument('status'); s.addArgument('--repo', { default: '.' }); s.addArgument('--pr'); s.addArgument('--spec');
+  s = sub.addParser('template');
+  s.addArgument('name'); s.addArgument('--slug'); s.addArgument('--repo', { default: '.' });
   s = sub.addParser('index');
   s.addArgument('action', { choices: ['lookup', 'add'] }); s.addArgument('question', { nargs: '?' }); s.addArgument('--repo', { default: '.' });
   s.addArgument('--json', { action: 'store_true' }); s.addArgument('--slug'); s.addArgument('--keywords', { default: '' }); s.addArgument('--files', { default: '' }); s.addArgument('--commit', { default: '' });
@@ -1488,7 +1518,7 @@ export async function main(argv = process.argv.slice(2)) {
     const gaps = evidenceGaps(root, a.slug);
     if (gaps.length) {
       return refuse([...gaps.map((g) => `evidence: ${g}`),
-        `Run: node "$HOME/.claude/kit/scripts/lane.js" evidence ${a.slug} --repo <main repo>, then commit the result on the lane branch before merging. Without it the merged progress and review files cite a log nobody can open.`]);
+        `Run: kit lane evidence ${a.slug} --repo <main repo>, then commit the result on the lane branch before merging. Without it the merged progress and review files cite a log nobody can open.`]);
     }
     const cols = a.pr ? { pr: a.pr } : {};
     const ok = roadmapSet(root, a.slug, 'merged', { lane: '—', ...cols });
@@ -1515,6 +1545,16 @@ export async function main(argv = process.argv.slice(2)) {
     if (a.spec) cols.spec = a.spec;
     const ok = roadmapSet(root, a.slug, a.status, cols);
     return ok ? 0 : refuse([`no ROADMAP row for ${a.slug}`]);
+  }
+  if (a.cmd === 'template') {
+    // the commit of the checkout the agent works in (a lane worktree or the main checkout), not always main's
+    const head = spawnSync('git', ['-C', K.realResolve(a.repo), 'rev-parse', '--short', 'HEAD'], { encoding: 'utf8' });
+    try {
+      process.stdout.write(templateText(a.name, { slug: a.slug ?? null, commit: head.status === 0 ? head.stdout.trim() : null }));
+      return 0;
+    } catch (e) {
+      return refuse([e.message]);
+    }
   }
   if (a.cmd === 'index') {
     if (a.action === 'lookup') {
