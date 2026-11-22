@@ -591,10 +591,11 @@ export function ciRunBody(name, cmd, note = '') {
   if (isConfigured(cmd)) {
     // CI has the kit checked out at $KIT_DIR, not installed: the "$HOME" form and the `kit <script>` launcher form
     // (at the start of the command or of a chained one) both become `node "$KIT_DIR/scripts/<script>.js"`; a `kit`
-    // command naming no kit script is another tool's and is left alone
+    // command naming no kit script is another tool's and is left alone. Not a shell parser: a `kit <script>` inside a
+    // double-quoted string after `;` is rewritten too
     return pyStr(cmd)
       .replaceAll('$HOME/.claude/kit/', '$KIT_DIR/')
-      .replace(/(^|[\n;&|]\s*)kit ([a-z0-9_]+)(?=\s|$)/g, (all, pre, name) => (K.isFile(path.join(KIT_DIR, 'scripts', `${name}.js`)) ? `${pre}node "$KIT_DIR/scripts/${name}.js"` : all))
+      .replace(/(^[ \t]*|[\n;&|(][ \t]*)kit[ \t]+([a-z0-9_]+)(?=[\s;&|)<>]|$)/g, (all, pre, name) => (K.isFile(path.join(KIT_DIR, 'scripts', `${name}.js`)) ? `${pre}node "$KIT_DIR/scripts/${name}.js"` : all))
       .split('\n').map((l) => CI_INDENT + l).join('\n');
   }
   if (typeof cmd === 'string' && cmd.trim() !== '') {
@@ -901,9 +902,12 @@ export class Bootstrap {
     const c = { ...this.det.commands };
     const existing = get(readJson(path.join(this.root, '.claude', 'kit.json')), 'commands', null);
     if (existing !== null && typeof existing === 'object' && !Array.isArray(existing)) {
-      for (const [k, v] of Object.entries(existing)) {
+      for (const [k, raw] of Object.entries(existing)) {
+        // any command that starts with a kit script in the "$HOME" form moves to the launcher form, arguments kept:
+        // Claude Code never approves the rule derived from the "$HOME" form (#63)
+        const v = typeof raw === 'string' ? raw.replace(/^node "\$HOME\/\.claude\/kit\/scripts\/([a-z0-9_]+)\.js"(?=\s|$)/, (a, name) => (K.isFile(path.join(KIT_DIR, 'scripts', `${name}.js`)) ? `kit ${name}` : a)) : raw;
         const old = KIT_DEFAULT_MIGRATIONS[k];
-        if (old && old.from.includes(v)) c[k] = old.to;
+        if (old && (old.from.includes(raw) || old.from.includes(v))) c[k] = old.to;
         else if (staleKitCommand(v)) continue; // names a kit script this kit no longer has (e.g. a .py from the Python kit)
         else c[k] = v;
       }

@@ -139,6 +139,8 @@ test('#20 a CI command: configured runs, "none: reason" warns and passes, missin
   assert.equal(ciRunBody('audit', 'kit ci_audit --repo .').trim(), 'node "$KIT_DIR/scripts/ci_audit.js" --repo .');
   assert.equal(ciRunBody('boundaries', 'npm run x && kit ci_boundaries_simple --repo .').trim(), 'npm run x && node "$KIT_DIR/scripts/ci_boundaries_simple.js" --repo .');
   assert.equal(ciRunBody('integration', 'kit pack model.yaml').trim(), 'kit pack model.yaml');
+  assert.equal(ciRunBody('audit', '  (kit ci_audit --repo .)').trim(), '(node "$KIT_DIR/scripts/ci_audit.js" --repo .)');
+  assert.equal(ciRunBody('audit', 'echo kit lane').trim(), 'echo kit lane');
 });
 
 const REPORT = {
@@ -191,11 +193,13 @@ test('#63 an upgrade moves the kit\'s gate commands from the "$HOME" form to the
   k.commands.audit = 'node "$HOME/.claude/kit/scripts/ci_audit.js" --repo .';
   k.commands.boundaries = 'node "$HOME/.claude/kit/scripts/ci_boundaries_simple.js" --repo .';
   k.commands.integration = 'kit pack model.yaml'; // KitOps: the project's own tool, kept as is
+  k.commands.mutation = 'node "$HOME/.claude/kit/scripts/ci_audit.js" --repo . --level critical'; // customised: arguments kept
   fs.writeFileSync(kp, JSON.stringify(k, null, 2));
   boot(root, '--upgrade');
   c = kitJson(root).commands;
   assert.equal(c.audit, 'kit ci_audit --repo .');
   assert.equal(c.boundaries, 'kit ci_boundaries_simple --repo .');
   assert.equal(c.integration, 'kit pack model.yaml');
+  assert.equal(c.mutation, 'kit ci_audit --repo . --level critical');
   assert.ok(settings().every((r) => !r.includes('$HOME')), settings().join(', '));
 });

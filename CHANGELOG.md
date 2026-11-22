@@ -6,7 +6,7 @@ All notable changes to the kit. Each entry names the decision or lesson that cau
 
 ### Fixed (hardening plan Step 2, #63 part 2: the kit's gate commands in each project)
 - **`kit.json` gate commands use the launcher.** `/bootstrap` wrote the kit's own gates as `node "$HOME/.claude/kit/scripts/ci_audit.js" --repo .` (audit, node stack) and `… ci_boundaries_simple.js --repo .` (boundaries), and generated allow rules in that same form, which Claude Code does not approve. They are now `kit ci_audit --repo .` and `kit ci_boundaries_simple --repo .`, covered by `Bash(kit *)`.
-  - `/bootstrap --upgrade` migrates both "$HOME" forms (and the older `npm audit --audit-level=high`) as old kit defaults; a project's own commands are kept, including another tool called `kit` (KitOps' `kit pack …`), which is never treated as stale.
+  - `/bootstrap --upgrade` migrates both "$HOME" forms (and the older `npm audit --audit-level=high`) as old kit defaults, and moves any other command that starts with a kit script in the "$HOME" form to `kit <script>`, its arguments kept; a project's own commands are kept, including another tool called `kit` (KitOps' `kit pack …`), which is never treated as stale.
   - The generated CI runs the checked-out kit: `kit <script>` at the start of a command, or after `&&`, `;` or `|`, becomes `node "$KIT_DIR/scripts/<script>.js"`, only when the kit has that script.
 - **Proof:** the permission probe from #103, run on the owner's Mac (Claude Code 2.1.328, 2026-11-22), gave 7/7 as expected: `Bash(kit *)`, `git add`, `git commit` and `Edit(/**)` approved; the "$HOME" form and an unlisted command refused; `Bash(kit *)` approved through `--settings` in an untrusted repository.
 
