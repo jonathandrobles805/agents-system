@@ -1113,7 +1113,7 @@ export function inLanePlanning(root, slug) {
     return { slug, stage: 'plan', reason: `spec status '${status}' is not waiting-approval; finish planning` };
   }
   const lane = asDict(JSON.parse(readText(lj)));
-  if (['reproduce', 'plan', 'approve'].includes(String(kget(lane, 'stage', '')))) return { slug, stage: 'scope', reason: 'spec approved; lane.js scope copies its criteria and moves the lane to test' };
+  if (['reproduce', 'plan', 'approve'].includes(String(kget(lane, 'stage', '')))) return { slug, stage: 'scope', reason: 'spec approved; kit lane scope copies its criteria and moves the lane to test' };
   return null;
 }
 

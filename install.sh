@@ -15,13 +15,13 @@ MODE="link"
 # The `kit` launcher goes on PATH (#63). Checked before anything is installed: a `kit` that is not the kit's own is
 # never replaced, and the kit's path is written into the launcher inside single quotes.
 BIN_DIR="${KIT_BIN_DIR:-$HOME/.local/bin}"
+BIN_DIR="${BIN_DIR%/}"
 LAUNCHER="$BIN_DIR/kit"
 if [[ -e "$LAUNCHER" || -L "$LAUNCHER" ]] && ! grep -q '^# agent-kit launcher' "$LAUNCHER" 2>/dev/null; then
   echo "install: $LAUNCHER exists and is not the agent-kit launcher; move it away or set KIT_BIN_DIR" >&2; exit 1
 fi
 case "$CLAUDE_HOME" in /*) ;; *) CLAUDE_HOME="$PWD/$CLAUDE_HOME" ;; esac  # the launcher needs an absolute path
 case "$CLAUDE_HOME" in *"'"*) echo "install: CLAUDE_HOME must not contain a single quote" >&2; exit 1 ;; esac
-BIN_DIR="${BIN_DIR%/}"; LAUNCHER="$BIN_DIR/kit"
 
 mkdir -p "$CLAUDE_HOME/agents" "$CLAUDE_HOME/skills"
 

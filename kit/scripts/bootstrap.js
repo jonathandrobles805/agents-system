@@ -60,6 +60,18 @@ export function pruneSubsumed(rules) {
  * [docs: https://code.claude.com/docs/en/permissions.md @ 2026-11-13]; a compound command is matched per
  * subcommand, so `npx vitest run && rm -rf /` is not covered by the rule for `npx vitest run`.
  */
+/**
+ * Whether an allow rule is the kit's own, so an upgrade may rewrite it: a rule naming the kit's scripts by path (the
+ * "$HOME" form older kits wrote, which Claude Code never matched, #63), the launcher rule `Bash(kit *)`, or a
+ * `Bash(kit <script> …)` rule for one of the kit's own scripts. A project's rules for another tool called `kit`
+ * (`Bash(kit pack *)`) are the project's.
+ */
+export function kitOwnedAllow(a) {
+  if (/\.claude[/\\]kit[/\\]/.test(a) || a === 'Bash(kit *)') return true;
+  const m = /^Bash\(kit ([a-z0-9_]+)[ )]/.exec(a);
+  return m !== null && K.isFile(path.join(KIT_DIR, 'scripts', `${m[1]}.js`));
+}
+
 export function commandAllowRules(commands) {
   const rules = new Set();
   for (const v of Object.values(commands ?? {})) {
@@ -947,8 +959,7 @@ export class Bootstrap {
     // matched, #63) and the `kit` launcher rules; an upgrade rewrites them from the fragment
     // a `Bash(kit …)` rule is the kit's only when it is the launcher rule or names one of the kit's own scripts, so a
     // project's rules for another tool called `kit` survive an upgrade
-    const kitScriptRule = (a) => a === 'Bash(kit *)' || (/^Bash\(kit ([a-z0-9_]+)[ )]/.test(a) && K.isFile(path.join(KIT_DIR, 'scripts', `${/^Bash\(kit ([a-z0-9_]+)/.exec(a)[1]}.js`)));
-    const ours = (a) => (/\.claude[/\\]kit[/\\]/.test(a) || kitScriptRule(a)) && !fragAllow.includes(a);
+    const ours = (a) => kitOwnedAllow(a) && !fragAllow.includes(a);
     const allow = [...new Set([...get(permsObj, 'allow', []).filter((a) => typeof a === 'string' && !ours(a)), ...fragAllow, ...commandAllowRules(this.commands())])]
       // a rule that overlaps the floor is never written, so the generated file cannot disagree with ci_security_floor
       .filter((a) => typeof a === 'string' && a && !floor.some((d) => K.ruleOverlapsFloor(a, d)));

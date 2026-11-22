@@ -74,7 +74,7 @@ export function main() {
       }
       // The reference must point at a logged run whose exit code says what the cell claims: red failed, green passed.
       const ex = /-> exit (-?\d+)\s*$/.exec(logLines[at - 1] ?? '');
-      if (!ex) { missing.push(`${rid}: ${label} run ref ${ref} is not a logged run (=== … -> exit N); log it with post-edit-check or lane.js check`); continue; }
+      if (!ex) { missing.push(`${rid}: ${label} run ref ${ref} is not a logged run (=== … -> exit N); log it with post-edit-check or kit lane check`); continue; }
       if (label === 'red' && Number(ex[1]) === 0) { missing.push(`${rid}: red run ref ${ref} passed (exit 0); a red run must fail`); continue; }
       if (label === 'green' && Number(ex[1]) !== 0) { missing.push(`${rid}: green run ref ${ref} failed (exit ${ex[1]}); a green run must pass`); continue; }
       // ...and the run must have actually tested THIS row's test. An exit code says only that a process ended: in
