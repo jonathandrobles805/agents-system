@@ -150,14 +150,9 @@ test('#58: a required security sign-off blocks the stage and the merge until it 
   // normal risk, or a profile that does not ask for it: wait-merge as before
   assert.equal(L.withProfile(wait, L.profileFor('feature'), fields('feature', 'normal')).stage, 'wait-merge');
   assert.equal(L.withProfile(wait, L.profileFor('refactor'), fields('refactor', 'high')).stage, 'wait-merge');
-  // lane.js merge refuses the lane (the fixture's spec is high risk). By slug alone, the PR comes from the ROADMAP row
-  // and GitHub is never asked; with --pr, the PR's own wt/<slug> branch is read and a different slug is refused.
+  // lane.js merge refuses the lane (the fixture's spec is high risk). The PR's head branch is always read from GitHub
+  // (a fake gh here), whether the PR comes from --pr or from the slug's ROADMAP row; a wt/<slug> head names the lane.
   const { root } = project(t);
-  const rows = path.join(root, 'ROADMAP.md');
-  fs.writeFileSync(rows, read(root, 'ROADMAP.md').replace('| Refund route | refund-route | M1 | queued | — | — | — |', '| Refund route | refund-route | M1 | ready-to-merge | — | — | https://github.com/o/proj/pull/5 |'));
-  let r = runScript('lane.js', ['merge', 'refund-route', '--repo', root, '--by', 'Jonathan'], { env: { ...process.env, PATH: '/nonexistent' } });
-  assert.equal(r.returncode, 2);
-  assert.match(r.stderr, /refund-route needs a human security sign-off before the merge \(high risk\) and none is recorded/);
   const bin = tmpPath(t);
   const fakeGh = (head) => {
     fs.writeFileSync(path.join(bin, 'gh'), `#!/usr/bin/env node
@@ -167,10 +162,20 @@ process.stderr.write('fake gh: stop here'); process.exit(9);
 `, { mode: 0o755 });
     return { ...process.env, PATH: `${bin}${path.delimiter}${process.env.PATH}` };
   };
+  // by slug alone: the PR comes from the ROADMAP row
+  const pr5 = 'https://github.com/o/proj/pull/5';
+  fs.writeFileSync(path.join(root, 'ROADMAP.md'), read(root, 'ROADMAP.md').replace('| Refund route | refund-route | M1 | queued | — | — | — |', `| Refund route | refund-route | M1 | ready-to-merge | — | — | ${pr5} |`).replace('| Other | other | M1 | queued | — | — | — |', `| Other | other | M1 | ready-to-merge | — | — | ${pr5} |`));
+  let r = runScript('lane.js', ['merge', 'refund-route', '--repo', root, '--by', 'Jonathan'], { env: fakeGh('wt/refund-route') });
+  assert.equal(r.returncode, 2);
+  assert.match(r.stderr, /refund-route needs a human security sign-off before the merge \(high risk\) and none is recorded/);
+  // another lane's ROADMAP row pointing at this lane's PR: refused, the PR names its own lane
+  r = runScript('lane.js', ['merge', 'other', '--repo', root, '--by', 'Jonathan'], { env: fakeGh('wt/refund-route') });
+  assert.equal(r.returncode, 2);
+  assert.match(r.stderr, /is the lane 'refund-route', not 'other'/);
   // another lane's slug with this lane's PR: refused, the PR names its own lane
   r = runScript('lane.js', ['merge', 'other', '--repo', root, '--pr', '5', '--by', 'Jonathan'], { env: fakeGh('wt/refund-route') });
   assert.equal(r.returncode, 2);
-  assert.match(r.stderr, /PR 5 is the lane 'refund-route', not 'other'/);
+  assert.match(r.stderr, /PR \S*5 is the lane 'refund-route', not 'other'/);
   // --pr alone: the slug is read from the PR's branch, and the sign-off is required
   r = runScript('lane.js', ['merge', '--repo', root, '--pr', '5', '--by', 'Jonathan'], { env: fakeGh('wt/refund-route') });
   assert.equal(r.returncode, 2);
