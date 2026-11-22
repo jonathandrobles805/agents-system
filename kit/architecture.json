@@ -446,6 +446,7 @@
     {"file": "kit/scripts/tests/eval_harness.test.js", "from": "test:eval_harness", "kind": "tests", "to": "script:eval/runners/claude"},
     {"file": "kit/scripts/tests/eval_harness.test.js", "from": "test:eval_harness", "kind": "tests", "to": "script:eval/runners/fixture"},
     {"file": "kit/scripts/tests/eval_harness.test.js", "from": "test:eval_harness", "kind": "tests", "to": "script:eval/score"},
+    {"file": "kit/scripts/tests/eval_harness.test.js", "from": "test:eval_harness", "kind": "tests", "to": "script:lane"},
     {"file": "kit/scripts/tests/field_test_fixes.test.js", "from": "test:field_test_fixes", "kind": "tests", "to": "ci:audit"},
     {"file": "kit/scripts/tests/field_test_fixes.test.js", "from": "test:field_test_fixes", "kind": "tests", "to": "ci:guards_present"},
     {"file": "kit/scripts/tests/field_test_fixes.test.js", "from": "test:field_test_fixes", "kind": "tests", "to": "script:bootstrap"},

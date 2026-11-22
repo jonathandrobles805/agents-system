@@ -4,6 +4,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { CORE_ROLES, compare, fmt, loadTasks, runSet, selectTasks, summarize, writeBaseline } from '../../eval/harness.js';
@@ -140,4 +141,45 @@ test('claude runner reports why it is unavailable instead of running unsandboxed
   assert.equal(a.ok, false);
   assert.ok(/claude is not on PATH|no ANTHROPIC_API_KEY|no sandbox runtime/.test(a.why), a.why);
   assert.equal(claude.name, 'claude');
+});
+
+test('claude runner: each session gets its own home with the kit installed, a writable temp directory, a trusted workspace and the API host', (t) => {
+  const dir = tmpPath(t);
+  const home = claude.sessionHome(dir);
+  // a home and a temp directory in the eval's scratch space, writable in the sandbox, handed to Claude Code
+  assert.deepEqual(home.env, { HOME: path.join(dir, 'home'), CLAUDE_CONFIG_DIR: path.join(dir, 'home', '.claude'), CLAUDE_CODE_TMPDIR: path.join(dir, 'claude-tmp') });
+  assert.deepEqual(home.allowWrite, [home.env.HOME, home.env.CLAUDE_CODE_TMPDIR]);
+  for (const d of home.allowWrite) assert.ok(fs.statSync(d).isDirectory(), d);
+  assert.deepEqual(home.allowedDomains, ['api.anthropic.com']);
+  // the kit under test is installed there as copies (not links into the checkout): hooks, agents and skills resolve
+  const kit = path.join(home.config, 'kit');
+  assert.ok(fs.existsSync(path.join(kit, 'scripts', 'lane.js')) && !fs.lstatSync(kit).isSymbolicLink());
+  assert.ok(fs.existsSync(path.join(home.config, 'agents', 'implementer.md')));
+  assert.ok(fs.existsSync(path.join(home.config, 'skills', 'zi-run', 'SKILL.md')));
+  assert.match(fs.readFileSync(path.join(home.env.HOME, '.gitconfig'), 'utf8'), /name = kit-eval/);
+  // the kit's copy and the files that steer a later session are write-denied, and exist as files/folders (srt covers a
+  // missing path with a device file, which Claude Code refuses as settings); the owner's own Claude Code home is read-denied
+  assert.deepEqual(home.denyWrite, ['kit', 'agents', 'skills', 'commands', 'settings.json', 'CLAUDE.md'].map((x) => path.join(home.config, x)));
+  for (const p of home.denyWrite) assert.ok(fs.statSync(p).isDirectory() || fs.statSync(p).isFile(), p);
+  assert.deepEqual(home.denyRead, claude.ownerClaudeDenyRead());
+  // the owner's home: all of ~/.claude denied, unless the claude program lives there (old local install), then all but that folder
+  const owner = path.join(dir, 'owner');
+  for (const d of ['local', 'keys', 'projects']) fs.mkdirSync(path.join(owner, '.claude', d), { recursive: true });
+  fs.writeFileSync(path.join(owner, '.claude', 'local', 'claude'), '');
+  fs.writeFileSync(path.join(owner, '.claude', '.credentials.json'), '{}');
+  assert.deepEqual(claude.ownerClaudeDenyRead(owner, '/usr/bin/claude-not-there'), [path.join(owner, '.claude'), path.join(owner, '.claude.json')]);
+  fs.rmSync(path.join(owner, '.claude', 'keys'), { recursive: true });
+  const local = claude.ownerClaudeDenyRead(owner, path.join(owner, '.claude', 'local', 'claude'));
+  assert.deepEqual([...local].sort(), ['.credentials.json', 'keys', 'projects'].map((e) => path.join(owner, '.claude', e)).concat(path.join(owner, '.claude.json')).sort());
+  // the judge's home has the same layout without the kit installed
+  const judge = claude.sessionHome(path.join(dir, 'judge'), { install: false });
+  assert.ok(!fs.existsSync(path.join(judge.config, 'kit', 'scripts')));
+  for (const p of judge.denyWrite) assert.ok(fs.existsSync(p), p);
+  // the fixture repo is trusted under its path and its real path, so its permissions.allow rules apply
+  const root = path.join(dir, 'node-api');
+  fs.mkdirSync(root);
+  claude.trustWorkspace(home.config, root);
+  const cfg = JSON.parse(fs.readFileSync(path.join(home.config, '.claude.json'), 'utf8'));
+  assert.equal(cfg.projects[root].hasTrustDialogAccepted, true);
+  assert.equal(cfg.projects[fs.realpathSync(root)].hasTrustDialogAccepted, true);
 });
