@@ -87,7 +87,7 @@ test('#21 upgrade without --answers keeps the commands the human confirmed', (t)
   const c = kitJson(root).commands;
   assert.equal(c.boundaries, 'npx depcruise --config .dependency-cruiser.cjs apps packages');
   assert.equal(c.typecheck, 'npm run typecheck');
-  assert.ok(c.audit.includes('ci_audit.js'), c.audit);
+  assert.equal(c.audit, 'kit ci_audit --repo .'); // the launcher form (#63)
 });
 
 test('#8 a detected depcruise command is checked against the repo: no config → not proposed; no src → the folders that exist', (t) => {
@@ -135,6 +135,10 @@ test('#20 a CI command: configured runs, "none: reason" warns and passes, missin
   const odd = ciRunBody('integration', null, ' (kit.json db.lane_adapter: none)');
   assert.ok(odd.includes('echo "::error::integration is not configured (kit.json db.lane_adapter: none)'));
   assert.ok(ciRunBody('audit', 'node "$HOME/.claude/kit/scripts/ci_audit.js" --repo .').includes('"$KIT_DIR/scripts/ci_audit.js"'));
+  // the launcher form runs the checked-out kit in CI, also after `&&`; another tool called `kit` is left alone
+  assert.equal(ciRunBody('audit', 'kit ci_audit --repo .').trim(), 'node "$KIT_DIR/scripts/ci_audit.js" --repo .');
+  assert.equal(ciRunBody('boundaries', 'npm run x && kit ci_boundaries_simple --repo .').trim(), 'npm run x && node "$KIT_DIR/scripts/ci_boundaries_simple.js" --repo .');
+  assert.equal(ciRunBody('integration', 'kit pack model.yaml').trim(), 'kit pack model.yaml');
 });
 
 const REPORT = {
@@ -169,4 +173,29 @@ test('#22 audit ratchet: a new advisory fails; accepted with reason and expiry p
   const r = runScript('ci_audit.js', ['--repo', root, '--json', rep]);
   assert.equal(r.returncode, 0, r.stderr);
   assert.ok(r.stdout.includes('::warning::audit: GHSA-px85-f4q5-jh77'));
+});
+
+test('#63 an upgrade moves the kit\'s gate commands from the "$HOME" form to the launcher form and keeps another tool called kit', (t) => {
+  const root = F.nodeApi(path.join(tmpPath(t), 'node-api'));
+  boot(root);
+  // a fresh bootstrap writes the launcher form, and the allow rules come from Bash(kit *), never a "$HOME" rule
+  let c = kitJson(root).commands;
+  assert.equal(c.audit, 'kit ci_audit --repo .');
+  assert.equal(c.boundaries, 'kit ci_boundaries_simple --repo .');
+  const settings = () => JSON.parse(fs.readFileSync(path.join(root, '.claude', 'settings.json'), 'utf8')).permissions.allow;
+  assert.ok(settings().includes('Bash(kit *)'));
+  assert.ok(settings().every((r) => !r.includes('$HOME')), settings().join(', '));
+  // a project an older kit set up: the "$HOME" forms are the kit's old defaults and are migrated
+  const kp = path.join(root, '.claude', 'kit.json');
+  const k = kitJson(root);
+  k.commands.audit = 'node "$HOME/.claude/kit/scripts/ci_audit.js" --repo .';
+  k.commands.boundaries = 'node "$HOME/.claude/kit/scripts/ci_boundaries_simple.js" --repo .';
+  k.commands.integration = 'kit pack model.yaml'; // KitOps: the project's own tool, kept as is
+  fs.writeFileSync(kp, JSON.stringify(k, null, 2));
+  boot(root, '--upgrade');
+  c = kitJson(root).commands;
+  assert.equal(c.audit, 'kit ci_audit --repo .');
+  assert.equal(c.boundaries, 'kit ci_boundaries_simple --repo .');
+  assert.equal(c.integration, 'kit pack model.yaml');
+  assert.ok(settings().every((r) => !r.includes('$HOME')), settings().join(', '));
 });
