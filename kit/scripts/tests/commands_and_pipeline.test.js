@@ -142,6 +142,7 @@ test('pipeline mechanics end to end', (t) => {
   // TAP, because that is what a real runner prints and what done-check reads since #30: an exit code alone says
   // only that a process ended, so the fake runner has to report per-test results like the real one does
   kit.commands = { test: `sh -c 'if [ -f ${root}/.green ]; then echo "TAP version 13"; echo "ok 1 - exposes refund"; echo "1..1"; else echo "TAP version 13"; echo "not ok 1 - exposes refund"; echo "1..1"; exit 1; fi'` };
+  kit.local_only = true; // the fixture has no remote (hardening plan D3)
   fs.writeFileSync(kj, jsonDumps(kit));
   const commit = F.commitAll(root, 'bootstrap');
   const short = commit.slice(0, 7);

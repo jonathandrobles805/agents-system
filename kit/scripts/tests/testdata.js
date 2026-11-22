@@ -40,6 +40,9 @@ export function project(t, { status = 'approved', approved = true, wipLimit = 2,
   const kj = path.join(root, '.claude', 'kit.json');
   const d = JSON.parse(fs.readFileSync(kj, 'utf8'));
   d.wip_limit = wipLimit;
+  // the fixture has no remote: it says so, as a real local-only repo must (hardening plan D3); a test that adds an
+  // origin before starting a lane turns this off
+  d.local_only = true;
   fs.writeFileSync(kj, jsonDumps(d));
   const rm = path.join(root, 'ROADMAP.md');
   fs.writeFileSync(

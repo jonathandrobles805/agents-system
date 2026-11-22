@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import { git, commitAll } from './fixtures.js';
-import { runScript, setEnv } from './helpers.js';
+import { runScript, setEnv, tmpPath } from './helpers.js';
 import { project, spec, review } from './testdata.js';
 
 const lane = (...args) => runScript('lane.js', args);
@@ -52,6 +52,68 @@ test('precheck refuses when the WIP limit is already taken by a live lane', (t) 
   assert.equal(JSON.parse(lane('wip', '--repo', root).stdout).in_flight, 1);
   const r = lane('precheck', 'refund-route', '--repo', root);
   assert.ok(r.returncode === 2 && r.stderr.includes('WIP limit reached: 1/1 in flight (other)'), r.stderr);
+});
+
+test('start fails closed on the base (hardening plan D3): no origin is refused unless local_only; a failed fetch is always refused; the base commit is recorded', (t) => {
+  const { root } = project(t);
+  const kj = path.join(root, '.claude', 'kit.json');
+  const setLocal = (v) => { const d = JSON.parse(read(kj)); if (v === undefined) delete d.local_only; else d.local_only = v; write(kj, JSON.stringify(d, null, 2) + '\n'); commitAll(root, `local_only ${v}`); };
+  const lanes = path.join(path.dirname(root), `${path.basename(root)}-lanes`, 'refund-route');
+  // nothing created anywhere: no worktree, no lane branch, the main checkout untouched
+  const nothingCreated = () => {
+    assert.ok(!fs.existsSync(lanes), 'no worktree');
+    assert.equal(git(['branch', '--list', 'wt/refund-route'], root).trim(), '', 'no lane branch');
+    assert.equal(git(['status', '--porcelain'], root).trim(), '', 'main checkout unchanged');
+  };
+  // no origin, not local-only: refused, nothing created
+  setLocal(undefined);
+  let r = lane('start', 'refund-route', '--repo', root);
+  assert.equal(r.returncode, 2);
+  assert.match(r.stderr, /no 'origin' remote.*"local_only": true/);
+  nothingCreated();
+  // "local_only": "yes" is not true: still refused
+  setLocal('yes');
+  r = lane('start', 'refund-route', '--repo', root);
+  assert.equal(r.returncode, 2);
+  assert.match(r.stderr, /no 'origin' remote/);
+  nothingCreated();
+  // an origin that cannot be fetched: refused even with local_only, nothing created
+  setLocal(true);
+  git(['remote', 'add', 'origin', path.join(tmpPath(t), 'no-such-remote.git')], root);
+  r = lane('start', 'refund-route', '--repo', root);
+  assert.equal(r.returncode, 2);
+  assert.match(r.stderr, /could not fetch 'main' from origin, so the lane would start from a stale base \(fatal: /);
+  nothingCreated();
+  // a reachable origin: the lane starts from origin/main, recorded with its commit, even when local main is ahead
+  const bare = path.join(tmpPath(t), 'origin.git');
+  git(['init', '-q', '--bare', bare], path.dirname(bare));
+  git(['remote', 'set-url', 'origin', bare], root);
+  git(['push', '-q', 'origin', 'main'], root);
+  // the remote moves on after the last fetch, and the remote's refspec does not cover main (a narrowed clone):
+  // the start must still use the remote's newest main, not a stale origin/main
+  const other = path.join(tmpPath(t), 'other');
+  git(['clone', '-q', '-b', 'main', bare, other], path.dirname(other));
+  write(path.join(other, 'remote-change.txt'), 'pushed by someone else\n');
+  commitAll(other, 'remote moved on');
+  git(['push', '-q', 'origin', 'main'], other);
+  const remoteHead = git(['rev-parse', 'main'], other).trim();
+  git(['config', '--unset-all', 'remote.origin.fetch'], root);
+  write(path.join(root, 'local-only-change.txt'), 'not pushed\n');
+  commitAll(root, 'local commit, not pushed');
+  r = lane('start', 'refund-route', '--repo', root);
+  assert.equal(r.returncode, 0, r.stderr);
+  const lj = JSON.parse(read(lanes, '.claude', 'lane.json'));
+  assert.equal(lj.base_commit, remoteHead, 'the remote\'s newest main, fetched explicitly');
+  assert.ok(fs.existsSync(path.join(lanes, 'remote-change.txt')), 'the remote\'s new commit is in the lane');
+  assert.ok(!fs.existsSync(path.join(lanes, 'local-only-change.txt')), 'the unpushed local commit is not in the lane');
+});
+
+test('start on a local-only repo records it and starts from the local base', (t) => {
+  const { root } = project(t);
+  const r = lane('start', 'refund-route', '--repo', root);
+  assert.equal(r.returncode, 0, r.stderr);
+  const lj = JSON.parse(read(JSON.parse(r.stdout).worktree, '.claude', 'lane.json'));
+  assert.equal(lj.base_commit, git(['rev-parse', 'main'], root).trim());
 });
 
 test('start creates worktree lane and progress', (t) => {

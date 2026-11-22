@@ -579,21 +579,36 @@ export function start(root, slug, base) {
   const wt = pjoin(lanesDir(root), slug);
   const branch = `wt/${slug}`;
   if (fs.existsSync(wt)) return refuse([`worktree ${wt} already exists; resume with /zi-implement ${slug} inside it, or run lane.js finish first`]);
+  // The lane starts from the base as the remote has it, never from a stale local copy (hardening plan D3): a failed
+  // fetch is refused; a repo with no origin is refused unless kit.json says it is local-only.
   const hasOrigin = K.git(['remote'], root).split(/\s+/).filter(Boolean).includes('origin');
+  const localOnly = kget(kit, 'local_only', false) === true;
   let startPoint;
   if (hasOrigin) {
     try {
-      K.git(['fetch', '-q', 'origin', base], root);
+      // an explicit refspec: a fetch by branch name alone updates origin/<base> only when the remote's refspec covers it
+      K.git(['fetch', '-q', 'origin', `+refs/heads/${base}:refs/remotes/origin/${base}`], root);
       startPoint = `origin/${base}`;
     } catch (e) {
       if (!isCalledProcessError(e)) throw e;
-      startPoint = base;
+      const lines = pyStrip(e.stderr ?? '').split('\n').map((l) => l.trim()).filter(Boolean);
+      const why = (lines.find((l) => /^fatal:/.test(l)) ?? lines[0] ?? 'git fetch failed').replace(/\.+$/, '');
+      return refuse([`could not fetch '${base}' from origin, so the lane would start from a stale base (${why}). Fix the network or the remote and start again.`]);
     }
-  } else {
+  } else if (localOnly) {
     startPoint = base;
+  } else {
+    return refuse([`this repo has no 'origin' remote, so the lane cannot start from the shared base. Add the remote, or, if the repo really has none, set "local_only": true in .claude/kit.json.`]);
+  }
+  let baseCommit;
+  try {
+    baseCommit = pyStrip(K.git(['rev-parse', '--verify', `${startPoint}^{commit}`], root));
+  } catch (e) {
+    if (!isCalledProcessError(e)) throw e;
+    return refuse([`base '${startPoint}' does not exist`]);
   }
   fs.mkdirSync(path.dirname(wt), { recursive: true });
-  const wtArgs = ['worktree', 'add', '-q', '-b', branch, wt, startPoint];
+  const wtArgs = ['worktree', 'add', '-q', '-b', branch, wt, baseCommit];
   try {
     K.git(wtArgs, root);
   } catch (e) {
@@ -638,7 +653,7 @@ export function start(root, slug, base) {
   const startCommit = pyStrip(K.git(['rev-parse', 'HEAD'], wt));
   const lane = {
     feature: slug, spec: `${work}/${slug}.md`, stage: reproFirst ? 'reproduce' : 'build', started: now, created: now,
-    base, branch, start_commit: startCommit, budget: kget(kget(kit, 'budgets', {}), 'build', {}),
+    base, base_commit: baseCommit, branch, start_commit: startCommit, budget: kget(kget(kit, 'budgets', {}), 'build', {}),
     risk: highRisk ? 'high' : 'normal',
     work_type: fields.work_type, size: fields.size, domain: fields.domain,
     sandbox: { runtime: sandbox.runtime, state: sandbox.state, how: sandbox.how, settings: relativeTo(wt, sandboxSettings), allowed_domains: sandbox.allowedDomains.length,
