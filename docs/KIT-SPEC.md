@@ -393,7 +393,7 @@ The kit is done when all of the following hold:
 | 49 | A matrix job is required under its unexpanded name (`… (node ${{ matrix.node }})`), which no check run ever reports | `pr_gate.workflowChecks` | one required name per matrix value, as GitHub reports it; a matrix the parser cannot expand is refused with a reason (0016 E.11) |
 | 50 | A skill tells the agent to push or open the PR with the owner's login (`git push`, `gh pr create`) instead of as the App | `lane.js publish` is the only push path the skills name; the App token is minted on the host, scoped to one repository, passed through the environment | the skills route through `publish`; the token is never printed |
 | 51 | A lane starts from a stale base: the fetch failed, or there is no `origin` on a repo not marked `local_only` | `lane.js start` (hardening plan D3) | start refused, nothing created |
-| 52 | A docs goal (a stage nothing runs) is reported done without any work, or a high-risk lane is merged without its security sign-off | `lane.js next-step`, `lane.js start`, `lane.js merge` (#57-#59) | refused with the reason; never `done` |
+| 52 | A docs goal (a stage nothing runs) is reported done without any work, or a high-risk lane is merged without its security sign-off (also when its PR is passed under another lane's slug) | `lane.js next-step`, `lane.js start`, `lane.js merge` (#57-#59) | refused with the reason; never `done` |
 
 ---
 

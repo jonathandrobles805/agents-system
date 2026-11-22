@@ -1158,7 +1158,8 @@ export function nextInQueue(root) {
   const rows = new Map(roadmapRows(root).map((r) => [r.slug, r]));
   for (const slug of queue) {
     const row = rows.get(slug);
-    if (row && ['queued', 'researching', 'planning'].includes(row.status) && goalStatus(root, slug) === 'agreed') {
+    // a goal whose work type is not built yet is skipped, so a refused goal kept for later never holds the queue (#57)
+    if (row && ['queued', 'researching', 'planning'].includes(row.status) && goalStatus(root, slug) === 'agreed' && !notBuilt(goalFields(root, slug)).length) {
       return { slug, reason: 'next in queue with an agreed goal', in_flight: lanes };
     }
   }
@@ -1449,14 +1450,19 @@ export async function main(argv = process.argv.slice(2)) {
     const opts = { timeoutMin: a.timeout_min, mutationBlocking: mutationBlocking(root).blocking };
     try {
       if (a.cmd === 'merge') {
-        // a lane that needs a security sign-off is not merged until one is recorded (#58); a spec PR needs none
-        let slug = a.slug ?? null;
-        if (!slug) {
+        // a lane that needs a security sign-off is not merged until one is recorded (#58). With --pr the PR names its
+        // own lane: its wt/<slug> branch is read from GitHub, a different slug on the command line is refused, and
+        // both are checked. Without --pr the PR comes from the slug's ROADMAP row, so nothing is asked of GitHub first.
+        const slugs = new Set(a.slug ? [a.slug] : []);
+        if (a.pr) {
           const m = /^wt\/(.+)$/.exec(G.prInfo(root, pr).headRefName ?? '');
-          slug = m ? m[1] : null;
+          if (m && a.slug && m[1] !== a.slug) return refuse([`PR ${a.pr} is the lane '${m[1]}', not '${a.slug}'; pass the lane's own slug`]);
+          if (m) slugs.add(m[1]);
         }
-        if (slug && signoffRequired(laneFields(root, slug))) {
-          return refuse([`${slug} needs a human security sign-off before the merge (high risk) and none is recorded; recording it comes with the store (hardening plan Step 2)`]);
+        for (const slug of slugs) {
+          if (signoffRequired(laneFields(root, slug))) {
+            return refuse([`${slug} needs a human security sign-off before the merge (high risk) and none is recorded; recording it comes with the store (hardening plan Step 2)`]);
+          }
         }
       }
       return a.cmd === 'ci' ? G.ciCommand(root, pr, { ...opts, wait: !!a.wait }) : G.mergeCommand(root, pr, { ...opts, by: a.by });
