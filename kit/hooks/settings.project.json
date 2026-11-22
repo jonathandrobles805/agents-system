@@ -5,7 +5,7 @@
       "Edit(/**)",
       "Bash(git add *)",
       "Bash(git commit *)",
-      "Bash(node \"$HOME/.claude/kit/scripts/*)"
+      "Bash(kit *)"
     ],
     "deny": [
       "Read(.env)", "Read(.env.*)", "Read(**/*.pem)", "Read(**/*.key)", "Read(**/id_rsa*)", "Read(**/secrets/**)", "Read(**/credentials*)", "Read(**/.aws/**)", "Read(**/.ssh/**)",

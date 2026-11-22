@@ -34,4 +34,4 @@ The `fix` profile begins with the debugger, read-only. Its report ends with one 
 - `cause: boot failure` or `cause: suite cannot run` → the controller rewrites the goal to `Work type: incident` and continues under that profile.
 - `cause: design fault across <n> callers` → `Work type: refactor`; a spec is now required before any change.
 
-You never rewrite the work type yourself; `lane.js next-step` reports `rerouted` with the new profile, and you continue the loop. Every profile still ends in tests, review and the human's merge, so a misroute costs time, never safety.
+You never rewrite the work type yourself; `kit lane next-step` reports `rerouted` with the new profile, and you continue the loop. Every profile still ends in tests, review and the human's merge, so a misroute costs time, never safety.

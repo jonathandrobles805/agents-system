@@ -5,6 +5,7 @@ import path from 'node:path';
 import { git, commitAll } from './fixtures.js';
 import { runScript, setEnv, tmpPath } from './helpers.js';
 import { project, spec, review } from './testdata.js';
+import * as P from '../permission_probe.js';
 
 const lane = (...args) => runScript('lane.js', args);
 const read = (...p) => fs.readFileSync(path.join(...p), 'utf8');
@@ -334,4 +335,54 @@ test('next in queue respects goal and wip', (t) => {
   assert.equal(lane('start', 'refund-route', '--repo', root).returncode, 0);
   r = lane('next', '--repo', root);
   assert.ok(r.returncode === 2 && JSON.parse(r.stdout).reason.includes('WIP 1/1'), r.stdout);
+});
+
+test('lane.js template prints a kit template with slug, date and commit; agents never read ~/.claude/kit/templates', (t) => {
+  const { root } = project(t);
+  const head = git(['rev-parse', '--short', 'HEAD'], root).trim();
+  const today = new Date().toISOString().slice(0, 10);
+  let r = runScript('lane.js', ['template', 'spec', '--slug', 'refund-route', '--repo', root]);
+  assert.equal(r.returncode, 0, r.stderr);
+  assert.match(r.stdout, /^# Spec: \{\{feature\}\}/);
+  assert.match(r.stdout, /^- Slug: refund-route$/m);
+  assert.match(r.stdout, new RegExp(`^- Date: ${today}$`, 'm'));
+  assert.match(r.stdout, new RegExp(`^- Commit: ${head}$`, 'm'));
+  // every template an agent fills is served, from the kit's own copy, with no {{slug}}/{{date}} left
+  for (const name of ['goal', 'spec', 'research', 'review', 'lesson']) {
+    r = runScript('lane.js', ['template', name, '--slug', 'refund-route', '--repo', root]);
+    assert.equal(r.returncode, 0, `${name}: ${r.stderr}`);
+    assert.doesNotMatch(r.stdout, /\{\{(slug|date)\}\}/, name);
+  }
+  // an unknown template and a slug that is not kebab-case are refused
+  r = runScript('lane.js', ['template', 'progress', '--repo', root]);
+  assert.equal(r.returncode, 2);
+  assert.match(r.stderr, /unknown template 'progress'/);
+  r = runScript('lane.js', ['template', 'spec', '--slug', '../etc', '--repo', root]);
+  assert.equal(r.returncode, 2);
+  assert.match(r.stderr, /not kebab-case/);
+  // the agents and skills get templates from lane.js: ~/.claude/kit/templates is outside the project, so an unattended
+  // session cannot read it (eval evidence 2026-11-22)
+  const kit = path.resolve(import.meta.dirname, '..', '..');
+  const readers = [];
+  for (const dir of ['agents', 'skills']) {
+    const walk = (d) => {
+      for (const e of fs.readdirSync(d, { withFileTypes: true })) {
+        const p = path.join(d, e.name);
+        if (e.isDirectory()) walk(p);
+        else if (e.name.endsWith('.md') && /\.claude\/kit\/templates\//.test(fs.readFileSync(p, 'utf8'))) readers.push(path.relative(kit, p));
+      }
+    };
+    walk(path.join(kit, dir));
+  }
+  assert.deepEqual(readers, []);
+});
+
+test('the permission probe has a case for every allow rule the kit ships, plus controls that must stay refused (#63)', () => {
+  const shipped = JSON.parse(fs.readFileSync(P.FRAGMENT, 'utf8')).permissions.allow;
+  const proved = P.CASES.filter((c) => c.rule).map((c) => c.rule);
+  assert.deepEqual([...proved].sort(), [...shipped].sort());
+  assert.ok(P.CASES.every((c) => c.rule ? c.expect === 'approved' : c.expect === 'denied'));
+  // the "$HOME" form Claude Code did not approve (2026-11-22) is a control, and no shipped rule uses it again
+  assert.ok(P.CASES.some((c) => c.id === 'home-form' && c.expect === 'denied'));
+  assert.ok(shipped.every((r) => !/\$|"/.test(r)), `a shipped rule relies on a $variable or quotes: ${shipped.join(', ')}`);
 });

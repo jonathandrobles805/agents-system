@@ -4,6 +4,16 @@ All notable changes to the kit. Each entry names the decision or lesson that cau
 
 ## [0.3.0] - unreleased
 
+### Fixed (hardening plan Step 2, #63: the kit's own commands were refused in unattended runs)
+- **The `kit` launcher.** A probe with Claude Code 2.1.328 on macOS (2026-11-22) showed the kit's rule `Bash(node "$HOME/.claude/kit/scripts/*)` refused the identical command in a headless session, while `Bash(kitprobe *)` approved a plain command on PATH, also through `--settings` in a repository that was not trusted. So every kit script call an agent made unattended (`lane.js next-step`, `validate_docs`, …) was refused. Now:
+  - `install.sh` writes `kit` into `~/.local/bin` (`KIT_BIN_DIR` overrides), pointing at the installed kit; it never replaces a `kit` it did not write, and warns when `kit` on `PATH` is not its launcher;
+  - agents and skills run `kit lane next-step …`, `kit validate_docs …` (51 commands, plus the shorthand `lane.js <sub>` mentions, now `kit lane <sub>`); hook commands keep their `node "$HOME/…"` form, since hooks need no permission and must not depend on `PATH`;
+  - the shipped rule is `Bash(kit *)`; `/bootstrap --upgrade` replaces the old one (both are kit-owned);
+  - `kit/scripts/permission_probe.js` proves each shipped rule with Claude Code itself, plus controls (the `"$HOME"` form, an unlisted command) that must stay refused; a unit test keeps one case per shipped rule.
+- **Templates without reading outside the project.** `kit lane template <goal|spec|research|review|lesson> [--slug S]` prints a kit template with the slug, date and commit filled in. The agents used to read `~/.claude/kit/templates/`, which is outside the project and was refused in the real-agent eval (2026-11-22). The implementer no longer reads the progress template: `lane.js start` already writes the progress file.
+- The architecture manifest reads the `kit <script>` and `kit lane template <name>` forms. The eval's sessions get the launcher first on `PATH`, write-denied.
+- Not in this change (Step 2, next): the gate commands `/bootstrap` writes into `kit.json` (audit, boundaries) still use the `"$HOME"` form; narrowing the lanes' rules and the skills' `Bash`; `kit merge` behind an `ask` rule.
+
 ### Fixed (hardening plan Step 1: the real-agent eval could start its sandbox but no agent ever ran)
 - **Claude Code runs inside the eval's sandbox, with the kit under test.** The first `eval-smoke-main` run that touched skills (after #101, run 44987376718) started the sandbox, and every session then exited. Each cause below was reproduced locally (srt 0.0.83, Claude Code 2.1.330) and is fixed in the `claude` runner:
   - the sandbox makes `/tmp` and `$HOME` read-only, so Claude Code could not create its temp directory (`EROFS: ... mkdir '/tmp/claude'`). Each session now gets its own home in the eval's scratch space, writable: `HOME`, Claude Code's config directory (`CLAUDE_CONFIG_DIR`, its `.claude`) and a temp directory beside it (`CLAUDE_CODE_TMPDIR`);

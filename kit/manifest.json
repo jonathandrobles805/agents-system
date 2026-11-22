@@ -75,6 +75,7 @@
     "script:lane": { "purpose": "Mechanical half of the pipeline: worktrees, preconditions, roadmap status, and the next-step state machine." },
     "script:app_token": { "purpose": "The agents' GitHub identity: signs the kit App's JWT and mints a short-lived installation token limited to one repository, for lane.js publish alone; the key stays outside every repository and the token is never printed." },
     "script:pr_gate": { "purpose": "The merge gate: waits for every required job of the project workflow on a PR head and merges only when all passed; the same job list feeds branch protection." },
+    "script:permission_probe": { "purpose": "Proves with Claude Code itself that every allow rule the kit ships approves its command and that the controls stay refused (#63); run by hand with a credential, never in CI." },
     "script:validate_docs": { "purpose": "Rejects research, specs, reviews and lessons that make untagged or unresolvable claims." },
     "script:kit_status": { "purpose": "Derives each feature's position and the project's health from files and git." },
     "script:bootstrap": { "purpose": "Detects the stack and generates or upgrades a project's kit layer." },

@@ -12,6 +12,15 @@ CLAUDE_HOME="${CLAUDE_HOME:-$HOME/.claude}"
 MODE="link"
 [[ "${1:-}" == "--copy" ]] && MODE="copy"
 
+# The `kit` launcher goes on PATH (#63). Checked before anything is installed: a `kit` that is not the kit's own is
+# never replaced, and the kit's path is written into the launcher inside single quotes.
+BIN_DIR="${KIT_BIN_DIR:-$HOME/.local/bin}"
+LAUNCHER="$BIN_DIR/kit"
+if [[ -e "$LAUNCHER" || -L "$LAUNCHER" ]] && ! grep -q '^# agent-kit launcher' "$LAUNCHER" 2>/dev/null; then
+  echo "install: $LAUNCHER exists and is not the agent-kit launcher; move it away or set KIT_BIN_DIR" >&2; exit 1
+fi
+case "$CLAUDE_HOME" in *"'"*) echo "install: CLAUDE_HOME must not contain a single quote" >&2; exit 1 ;; esac
+
 mkdir -p "$CLAUDE_HOME/agents" "$CLAUDE_HOME/skills"
 
 place() {
@@ -71,9 +80,22 @@ if (( NODE_MAJOR < 20 )); then
   echo "node v20 or newer is required for kit scripts (found $(node -v))" >&2; exit 1
 fi
 
+# The launcher: agents run kit scripts as `kit <script> ...`, which the project's `Bash(kit *)` rule approves (#63).
+# Written in place of any earlier launcher (a fresh file, not through a link), always pointing at this install.
+mkdir -p "$BIN_DIR"
+launcher_src="$(cat "$KIT_ROOT/kit/bin/kit.in")"
+printf '%s\n' "${launcher_src//@KIT_DIR@/$CLAUDE_HOME/kit}" > "$LAUNCHER.tmp.$$"
+chmod 755 "$LAUNCHER.tmp.$$"
+mv -f "$LAUNCHER.tmp.$$" "$LAUNCHER"
+on_path="$(PATH="$PATH" command -v kit || true)"
+if [[ "$on_path" != "$LAUNCHER" ]]; then
+  echo "warning: 'kit' on your PATH is ${on_path:-missing}, not $LAUNCHER. Add $BIN_DIR to PATH (before any other kit) so agents can run the kit's scripts." >&2
+fi
+
 # Projects set up by an older kit version keep hooks that point at scripts that no longer exist; say so.
 node "$KIT_ROOT/kit/scripts/check_projects.js" --kit "$KIT_ROOT/kit" || true
 
 echo "agent-kit $(cat "$KIT_ROOT/VERSION") installed into $CLAUDE_HOME ($MODE)"
 echo "agents:   $(ls "$KIT_ROOT"/kit/agents/*.md 2>/dev/null | wc -l | tr -d ' ')"
+echo "launcher: $LAUNCHER"
 echo "skills:   $(for d in "$KIT_ROOT"/kit/skills/*/; do n="$(basename "$d")"; [[ "$n" == domains || "$n" == workflows ]] || echo "$n"; done | wc -l | tr -d ' ')"

@@ -217,6 +217,8 @@ export function workflowJobs(lines) {
 
 const SCRIPT_REF = /scripts\/([A-Za-z0-9_]+\.js)/g;
 const DASHBOARD_REF = /dashboard\/server\.js/g;
+// the `kit` launcher form (#63): `kit lane next-step ...` in inline code, or a code line that starts with `kit <script>`
+const KIT_REF = /(?:`|^\s*)kit ([a-z0-9_]+)(?=[\s`]|$)/g;
 const OUTSIDE_REFS = [['script:telemetry/collector', /telemetry\/collector\.js/g], ['script:eval/harness', /eval\/harness\.js/g]]; // scripts outside kit/scripts that CI, package.json or other scripts run
 const TOOL_REFS = [
   ['tool:planted-faults', /planted-faults\/run\.js/g, 'planted-faults/run.js'],
@@ -254,6 +256,11 @@ function scanLines(g, ctx, id, filePath, lines, first, last, opts = {}) {
       if (target) g.edge(id, target, 'runs', at(i), extra);
       else g.problem('dangling-reference', 'error', id, `${filePath}:${i + 1} runs scripts/${m[1]}, which does not exist`, at(i));
     }
+    for (const m of matches(KIT_REF, line)) {
+      const target = g.scriptByFile.get(`${m[1]}.js`);
+      if (target) g.edge(id, target, 'runs', at(i), extra);
+      else g.problem('dangling-reference', 'error', id, `${filePath}:${i + 1} runs kit ${m[1]}, which is not a kit script`, at(i));
+    }
     for (const m of matches(DASHBOARD_REF, line)) {
       if (g.nodes.has('script:dashboard/server')) g.edge(id, 'script:dashboard/server', 'runs', at(i), extra);
       else g.problem('dangling-reference', 'error', id, `${filePath}:${i + 1} runs dashboard/server.js, which does not exist`, at(i));
@@ -274,6 +281,11 @@ function scanLines(g, ctx, id, filePath, lines, first, last, opts = {}) {
     for (const m of matches(SETTINGS_REF, line)) {
       void m;
       if (g.nodes.has('settings:project')) g.edge(id, 'settings:project', 'reads', at(i), extra);
+    }
+    // `kit lane template <name>` prints templates/<name>.md (agents get templates through lane.js, not by path)
+    for (const m of matches(/kit lane template ([a-z-]+)/g, line)) {
+      if (g.nodes.has(`template:${m[1]}`)) g.edge(id, `template:${m[1]}`, 'uses', at(i));
+      else g.problem('dangling-reference', 'error', id, `${filePath}:${i + 1} uses kit lane template ${m[1]}, which does not exist`, at(i));
     }
     for (const m of matches(TEMPLATE_REF, line)) {
       if (g.nodes.has(`template:${m[1]}`)) g.edge(id, `template:${m[1]}`, 'uses', at(i));

@@ -943,7 +943,9 @@ export class Bootstrap {
     // could never take one back. So the kit owns the rules that name its own scripts and rewrites them each time;
     // every other allow rule belongs to the project and is preserved untouched.
     const fragAllow = get(req(frag, 'permissions'), 'allow', []);
-    const ours = (a) => /\.claude[/\\]kit[/\\]/.test(a) && !fragAllow.includes(a);
+    // kit-owned: rules naming the kit's scripts by path (the "$HOME" form older kits wrote, which Claude Code never
+    // matched, #63) and the `kit` launcher rules; an upgrade rewrites them from the fragment
+    const ours = (a) => (/\.claude[/\\]kit[/\\]/.test(a) || /^Bash\(kit[ )]/.test(a)) && !fragAllow.includes(a);
     const allow = [...new Set([...get(permsObj, 'allow', []).filter((a) => typeof a === 'string' && !ours(a)), ...fragAllow, ...commandAllowRules(this.commands())])]
       // a rule that overlaps the floor is never written, so the generated file cannot disagree with ci_security_floor
       .filter((a) => typeof a === 'string' && a && !floor.some((d) => K.ruleOverlapsFloor(a, d)));

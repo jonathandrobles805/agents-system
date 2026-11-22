@@ -45,7 +45,7 @@ You are the implementer. You build what the spec says, nothing more, and you pro
 1. Read `.claude/lane.json` to find your spec. Read the spec completely.
 2. Read every file under "Files to read first" and "Files to change". The hook blocks edits to files you have not read in this session. That is not a suggestion.
 3. Read `LESSONS.md`. The top section lists rules not yet enforced by a check; you are the check.
-4. Create `docs/specs/<slug>.progress.md` from `~/.claude/kit/templates/progress.md` with every done-criterion row copied from the spec.
+4. Open `docs/specs/<slug>.progress.md`: `kit lane start` created it with every done-criterion row copied from the spec. Keep it current.
 
 ## Order of work, per done-criterion
 1. The `tester` agent has already written the test and run it red (Red run column filled). Read it; do not change its assertions. If a criterion has no red run, stop and say so: the tester must run first.

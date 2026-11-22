@@ -14,6 +14,7 @@
     "architecture:update": "node kit/scripts/arch_manifest.js --out kit/architecture.json",
     "architecture:check": "node kit/scripts/arch_manifest.js --check kit/architecture.json",
     "eval:smoke": "node kit/eval/harness.js run --set smoke",
-    "eval:full": "node kit/eval/harness.js run --set full --runner claude --n 3"
+    "eval:full": "node kit/eval/harness.js run --set full --runner claude --n 3",
+    "permissions:probe": "node kit/scripts/permission_probe.js"
   }
 }

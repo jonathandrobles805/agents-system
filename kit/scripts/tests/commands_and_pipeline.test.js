@@ -34,13 +34,18 @@ test('all 23 skills exist, each a SKILL.md named after its folder, with a descri
 });
 
 test('commands reference real scripts and subcommands', () => {
-  const laneSubs = new Set(['precheck', 'start', 'stage', 'wip', 'unknowns', 'merged', 'incident', 'next-step', 'next', 'goal-set', 'roadmap-set', 'index', 'finish', 'launch', 'resume', 'stop', 'resume-all', 'profiles', 'agent-for', 'scope', 'ci', 'merge', 'publish']);
+  const laneSubs = new Set(['precheck', 'start', 'stage', 'wip', 'unknowns', 'merged', 'incident', 'next-step', 'next', 'goal-set', 'roadmap-set', 'index', 'finish', 'launch', 'resume', 'stop', 'resume-all', 'profiles', 'agent-for', 'scope', 'ci', 'merge', 'publish', 'template', 'evidence']);
   for (const p of COMMANDS) {
     const text = read(p);
     for (const m of text.matchAll(/kit\/scripts\/([a-z_]+\.js)/g)) {
       assert.ok(fs.statSync(path.join(SCRIPTS, m[1]), { throwIfNoEntry: false })?.isFile(), `${path.basename(p)}: ${m[1]}`);
     }
-    for (const m of text.matchAll(/lane\.js"? (\w[\w-]*)/g)) {
+    // the `kit` launcher form (#63): `kit <script>` names a script that exists
+    for (const m of text.matchAll(/`kit ([a-z_]+)|^\s*kit ([a-z_]+)/gm)) {
+      const name = m[1] ?? m[2];
+      assert.ok(fs.statSync(path.join(SCRIPTS, `${name}.js`), { throwIfNoEntry: false })?.isFile(), `${path.basename(p)}: kit ${name}`);
+    }
+    for (const m of text.matchAll(/(?:lane\.js"?|kit lane) (\w[\w-]*)/g)) {
       assert.ok(laneSubs.has(m[1]), `${path.basename(p)}: ${m[1]}`);
     }
   }

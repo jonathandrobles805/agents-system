@@ -730,7 +730,7 @@ process.stderr.write('fake gh 52: merge reached GitHub'); process.exit(9);
     const skillDir = path.join(ROOT, 'kit', 'skills');
     const skillText = fs.readdirSync(skillDir).map((d) => path.join(skillDir, d, 'SKILL.md')).filter((p) => fs.existsSync(p)).map((p) => `${p}\n${read(p)}`).join('\n');
     const rawPush = [...skillText.matchAll(/git push|gh pr create/g)].length;
-    const named = ['zi-implement', 'zi-run', 'zi-plan'].every((s) => read(path.join(skillDir, s, 'SKILL.md')).includes('lane.js') && read(path.join(skillDir, s, 'SKILL.md')).includes('publish'));
+    const named = ['zi-implement', 'zi-run', 'zi-plan'].every((s) => /(?:lane\.js"?|kit lane) publish/.test(read(path.join(skillDir, s, 'SKILL.md'))));
     const laneSrc = read(path.join(SCRIPTS, 'lane.js'));
     const tokenKept = laneSrc.includes("GIT_ASKPASS") && laneSrc.includes("GH_TOKEN: tok.token") && laneSrc.includes("'credential.helper='") && !/x-access-token:\$\{/.test(laneSrc);
     const refuses50 = /\^\(wt\|spec\)\\\//.test(laneSrc);

@@ -26,6 +26,7 @@
 //   lane.js publish <slug> --repo R [--branch spec/<slug>] [--title T] [--body-file F | --body T] [--base B]  host side: push the lane or spec branch and open its PR as the kit's GitHub App
 //   lane.js merge [<slug>] --repo R [--pr N] --by NAME  wait for every required check, then squash-merge pinned to that head
 //   lane.js merged <slug> --repo R [--pr URL] at merge time: verify in git, mark ROADMAP merged (idempotent)
+//   lane.js template <goal|spec|research|review|lesson> [--slug S] --repo R   print a kit template with slug, date and commit filled in
 //   lane.js finish <slug> --repo R            after retro: remove worktree and local branch, mark roadmap merged
 // Exit 0 ok, 2 refused (reasons on stderr), 1 usage/git error.
 import fs from 'node:fs';
@@ -58,6 +59,7 @@ const DOC = `lane: the mechanical half of the pipeline commands. Agents do the t
   lane.js publish <slug> --repo R [--branch spec/<slug>] [--title T] [--body-file F | --body T] [--base B]  host side: push the lane or spec branch and open its PR as the kit's GitHub App
   lane.js merge [<slug>] --repo R [--pr N] --by NAME  wait for every required check, then squash-merge pinned to that head
   lane.js merged <slug> --repo R [--pr URL] at merge time: verify in git, mark ROADMAP merged (idempotent)
+  lane.js template <goal|spec|research|review|lesson> [--slug S] --repo R   print a kit template with slug, date and commit filled in
   lane.js finish <slug> --repo R            after retro: remove worktree and local branch, mark roadmap merged
 Exit 0 ok, 2 refused (reasons on stderr), 1 usage/git error.`;
 
@@ -1168,6 +1170,25 @@ export function nextInQueue(root) {
 
 // ---------------------------------------------------------------- incidents
 
+/**
+ * The kit templates an agent fills, printed with what the kit already knows: the slug, today's date and the repo's
+ * commit. Agents get them from here instead of reading ~/.claude/kit/templates/ themselves: that folder is outside the
+ * project, so an unattended session (claude -p, nobody to approve) cannot read it, and with a linked install a Read
+ * rule would have to name the machine-specific checkout path too (eval evidence 2026-11-22; permissions docs, symlinks).
+ * Agents run it as `kit lane template <name>`, which the project's `Bash(kit *)` rule approves (#63). The progress
+ * file is not here: `lane.js start` writes it with the spec's done-criteria rows.
+ */
+export const TEMPLATE_NAMES = ['goal', 'spec', 'research', 'review', 'lesson'];
+export function templateText(name, { slug = null, date = todayIso(), commit = null } = {}) {
+  if (!TEMPLATE_NAMES.includes(name)) throw new Error(`unknown template '${name}' (one of ${TEMPLATE_NAMES.join(', ')})`);
+  if (slug !== null && !(/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(slug) && slug.length <= 40)) throw new Error(`slug '${slug}' is not kebab-case of at most 40 characters`);
+  let text = readText(path.join(kitDir(), 'templates', `${name}.md`));
+  if (slug !== null) text = text.replaceAll('{{slug}}', slug);
+  text = text.replaceAll('{{date}}', date);
+  if (commit) text = text.replaceAll('{{commit}}', commit);
+  return text;
+}
+
 export function recordIncident(root, what, slug, pr) {
   const d = pjoin(root, 'docs', 'incidents');
   fs.mkdirSync(d, { recursive: true });
@@ -1385,6 +1406,8 @@ export async function main(argv = process.argv.slice(2)) {
   s.addArgument('slug'); s.addArgument('--repo', { default: '.' });
   s = sub.addParser('roadmap-set');
   s.addArgument('slug'); s.addArgument('status'); s.addArgument('--repo', { default: '.' }); s.addArgument('--pr'); s.addArgument('--spec');
+  s = sub.addParser('template');
+  s.addArgument('name'); s.addArgument('--slug'); s.addArgument('--repo', { default: '.' });
   s = sub.addParser('index');
   s.addArgument('action', { choices: ['lookup', 'add'] }); s.addArgument('question', { nargs: '?' }); s.addArgument('--repo', { default: '.' });
   s.addArgument('--json', { action: 'store_true' }); s.addArgument('--slug'); s.addArgument('--keywords', { default: '' }); s.addArgument('--files', { default: '' }); s.addArgument('--commit', { default: '' });
@@ -1488,7 +1511,7 @@ export async function main(argv = process.argv.slice(2)) {
     const gaps = evidenceGaps(root, a.slug);
     if (gaps.length) {
       return refuse([...gaps.map((g) => `evidence: ${g}`),
-        `Run: node "$HOME/.claude/kit/scripts/lane.js" evidence ${a.slug} --repo <main repo>, then commit the result on the lane branch before merging. Without it the merged progress and review files cite a log nobody can open.`]);
+        `Run: kit lane evidence ${a.slug} --repo <main repo>, then commit the result on the lane branch before merging. Without it the merged progress and review files cite a log nobody can open.`]);
     }
     const cols = a.pr ? { pr: a.pr } : {};
     const ok = roadmapSet(root, a.slug, 'merged', { lane: '—', ...cols });
@@ -1515,6 +1538,16 @@ export async function main(argv = process.argv.slice(2)) {
     if (a.spec) cols.spec = a.spec;
     const ok = roadmapSet(root, a.slug, a.status, cols);
     return ok ? 0 : refuse([`no ROADMAP row for ${a.slug}`]);
+  }
+  if (a.cmd === 'template') {
+    // the commit of the checkout the agent works in (a lane worktree or the main checkout), not always main's
+    const head = spawnSync('git', ['-C', K.realResolve(a.repo), 'rev-parse', '--short', 'HEAD'], { encoding: 'utf8' });
+    try {
+      process.stdout.write(templateText(a.name, { slug: a.slug ?? null, commit: head.status === 0 ? head.stdout.trim() : null }));
+      return 0;
+    } catch (e) {
+      return refuse([e.message]);
+    }
   }
   if (a.cmd === 'index') {
     if (a.action === 'lookup') {

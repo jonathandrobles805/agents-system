@@ -10,7 +10,7 @@ Plan feature: `$slug`
 
 ## Step 1: preconditions
 ```
-node "$HOME/.claude/kit/scripts/lane.js" wip --repo "$PWD"
+kit lane wip --repo "$PWD"
 ```
 If exit code is 2, stop: the WIP limit is reached. Say which lanes are in flight and what the human can merge or escalate.
 
@@ -21,7 +21,7 @@ Spawn the `planner` agent with: the slug, the research slugs, the paths of `ARCH
 
 ## Step 2b: unknown budget (script decides, not the planner)
 ```
-node "$HOME/.claude/kit/scripts/lane.js" unknowns docs/specs/$slug.md --repo "$PWD" --json
+kit lane unknowns docs/specs/$slug.md --repo "$PWD" --json
 ```
 - exit 2 (`research`): more than 3 unknowns. Stop. Tell the human which questions are open and that `/zi-research $slug` must run again. Do not continue to critique.
 - exit 3 (`resolve`): 1–3 unknowns. For each item spawn a `researcher` with the item's `Resolve by` method (an item without a method goes back to the planner first). Then re-run the planner with the answers and run this step again.
@@ -32,13 +32,13 @@ Spawn `spec-critic` on `docs/specs/$slug.md`. Then spawn the `planner` again wit
 
 ## Step 4: validate
 ```
-node "$HOME/.claude/kit/scripts/validate_docs.js" docs/specs/$slug.md --repo "$PWD"
-node "$HOME/.claude/kit/scripts/lane.js" precheck $slug --repo "$PWD"
+kit validate_docs docs/specs/$slug.md --repo "$PWD"
+kit lane precheck $slug --repo "$PWD"
 ```
 `precheck` is expected to fail only on "needs 'approved'" and "no approval line" at this point. Any other reason (open questions, overlap, invalid spec) goes back to the planner. Repeat until those are the only two.
 
 ## Step 5: hand to the human
 ```
-node "$HOME/.claude/kit/scripts/lane.js" roadmap-set $slug waiting-approval --repo "$PWD" --spec docs/specs/$slug.md
+kit lane roadmap-set $slug waiting-approval --repo "$PWD" --spec docs/specs/$slug.md
 ```
-Commit `docs/specs/$slug.md`, `docs/research/*`, `ROADMAP.md` on a branch `spec/$slug`, then `node "$HOME/.claude/kit/scripts/lane.js" publish $slug --repo "$PWD" --branch spec/$slug --title "spec: <feature>" --body-file <a file holding the spec's Summary section, e.g. /tmp/$slug-summary.md>`: it pushes the branch and opens the PR as the kit's GitHub App (never with your login) and prints the PR URL. Tell the human: to approve, set `Status: approved`, fill `Approved by: <name> on <date> at <commit>`, and merge, or say "merge" and you run `lane.js merge --pr <url> --by <name>`, which waits for CI. Nothing is built before that.
+Commit `docs/specs/$slug.md`, `docs/research/*`, `ROADMAP.md` on a branch `spec/$slug`, then `kit lane publish $slug --repo "$PWD" --branch spec/$slug --title "spec: <feature>" --body-file <a file holding the spec's Summary section, e.g. /tmp/$slug-summary.md>`: it pushes the branch and opens the PR as the kit's GitHub App (never with your login) and prints the PR URL. Tell the human: to approve, set `Status: approved`, fill `Approved by: <name> on <date> at <commit>`, and merge, or say "merge" and you run `kit lane merge --pr <url> --by <name>`, which waits for CI. Nothing is built before that.

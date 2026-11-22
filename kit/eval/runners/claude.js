@@ -83,16 +83,18 @@ export function sessionHome(dir, { install = true } = {}) {
     if (r.status !== 0) throw new Error(`install.sh into the eval's home failed: ${r.stderr || r.stdout}`);
   }
   for (const d of ['kit', 'agents', 'skills']) fs.mkdirSync(path.join(config, d), { recursive: true });
+  fs.mkdirSync(path.join(home, '.local', 'bin'), { recursive: true });
   if (!fs.existsSync(path.join(config, 'settings.json'))) fs.writeFileSync(path.join(config, 'settings.json'), '{}\n');
   if (!fs.existsSync(path.join(config, 'CLAUDE.md'))) fs.writeFileSync(path.join(config, 'CLAUDE.md'), '');
   return {
     home,
     config,
-    env: { HOME: home, CLAUDE_CONFIG_DIR: config, CLAUDE_CODE_TMPDIR: tmp },
+    // the kit's `kit` launcher (#63) is installed into the home's .local/bin and goes first on PATH
+    env: { HOME: home, CLAUDE_CONFIG_DIR: config, CLAUDE_CODE_TMPDIR: tmp, PATH: `${path.join(home, '.local', 'bin')}${path.delimiter}${process.env.PATH ?? ''}` },
     allowWrite: [home, tmp],
     // the home is writable, the kit's guards in it are not: a session cannot rewrite the hooks that check it, nor
     // leave instructions for a later session (the global CLAUDE.md, settings, commands)
-    denyWrite: ['kit', 'agents', 'skills', 'commands', 'settings.json', 'CLAUDE.md'].map((x) => path.join(config, x)),
+    denyWrite: [...['kit', 'agents', 'skills', 'commands', 'settings.json', 'CLAUDE.md'].map((x) => path.join(config, x)), path.join(home, '.local', 'bin')],
     // the owner's own Claude Code home stays unreadable to the agent (Claude Code itself uses the session's home)
     denyRead: ownerClaudeDenyRead(),
     allowedDomains: [API_HOST],
