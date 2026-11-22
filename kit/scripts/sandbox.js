@@ -117,7 +117,7 @@ export const SRT_REQUIRED_KEYS = { network: ['allowedDomains', 'deniedDomains'],
 export function srtSettings(cfg) {
   return {
     network: { allowedDomains: cfg.allowedDomains, deniedDomains: [] },
-    filesystem: { denyRead: cfg.denyRead, allowRead: [], allowWrite: cfg.allowWrite, denyWrite: [] },
+    filesystem: { denyRead: cfg.denyRead, allowRead: [], allowWrite: cfg.allowWrite, denyWrite: cfg.denyWrite ?? [] },
   };
 }
 

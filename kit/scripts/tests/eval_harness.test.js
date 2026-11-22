@@ -4,6 +4,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { CORE_ROLES, compare, fmt, loadTasks, runSet, selectTasks, summarize, writeBaseline } from '../../eval/harness.js';
@@ -156,6 +157,15 @@ test('claude runner: each session gets its own home with the kit installed, a wr
   assert.ok(fs.existsSync(path.join(home.config, 'agents', 'implementer.md')));
   assert.ok(fs.existsSync(path.join(home.config, 'skills', 'zi-run', 'SKILL.md')));
   assert.match(fs.readFileSync(path.join(home.env.HOME, '.gitconfig'), 'utf8'), /name = kit-eval/);
+  // the kit's copy and the files that steer a later session are write-denied, and exist as files/folders (srt covers a
+  // missing path with a device file, which Claude Code refuses as settings); the owner's own Claude Code home is read-denied
+  assert.deepEqual(home.denyWrite, ['kit', 'agents', 'skills', 'commands', 'settings.json', 'CLAUDE.md'].map((x) => path.join(home.config, x)));
+  for (const p of home.denyWrite) assert.ok(fs.statSync(p).isDirectory() || fs.statSync(p).isFile(), p);
+  assert.deepEqual(home.denyRead, [path.join(os.homedir(), '.claude'), path.join(os.homedir(), '.claude.json')]);
+  // the judge's home has the same layout without the kit installed
+  const judge = claude.sessionHome(path.join(dir, 'judge'), { install: false });
+  assert.ok(!fs.existsSync(path.join(judge.config, 'kit', 'scripts')));
+  for (const p of judge.denyWrite) assert.ok(fs.existsSync(p), p);
   // the fixture repo is trusted under its path and its real path, so its permissions.allow rules apply
   const root = path.join(dir, 'node-api');
   fs.mkdirSync(root);

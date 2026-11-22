@@ -68,6 +68,9 @@ test('sandboxConfig: floor domains plus the spec Network section, deny paths fro
   assert.deepEqual(s.network.allowedDomains, cfg.allowedDomains);
   assert.deepEqual(s.filesystem.allowWrite, cfg.allowWrite);
   assert.deepEqual(s.filesystem.denyRead, cfg.denyRead);
+  // a lane sets no denyWrite (still empty: hardening plan Step 4); a caller's denyWrite is passed through (the eval)
+  assert.deepEqual(s.filesystem.denyWrite, []);
+  assert.deepEqual(srtSettings({ ...cfg, denyWrite: ['/x/kit'] }).filesystem.denyWrite, ['/x/kit']);
   assert.ok(!('sandbox' in s), 'no nested sandbox key: srt would refuse it');
   // a role cannot widen the lane: the sandbox boundary is the lane process and the kit's agents are subagents
   // inside one lane session, so the floor carries no per-agent list and `agent` is recorded, not enforced
