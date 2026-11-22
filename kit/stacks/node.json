@@ -62,7 +62,7 @@
       "format": "npx prettier --check ."
     }
   },
-  "audit": "node \"$HOME/.claude/kit/scripts/ci_audit.js\" --repo .",
+  "audit": "kit ci_audit --repo .",
   "test_dirs": [
     "test",
     "tests",

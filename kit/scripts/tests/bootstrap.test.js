@@ -265,7 +265,8 @@ test('upgrade moves a project set up by the Python kit onto node hooks', (t) => 
   for (const rel of ['.claude/settings.json', '.claude/kit.json', '.github/workflows/kit.yml']) {
     assert.ok(!fs.readFileSync(path.join(root, rel), 'utf8').includes('python3'), rel);
   }
-  assert.ok(JSON.parse(fs.readFileSync(path.join(root, '.claude', 'kit.json'), 'utf8')).commands.boundaries.startsWith('node '));
+  // the stale Python command is replaced by the current default, the launcher form (#63)
+  assert.equal(JSON.parse(fs.readFileSync(path.join(root, '.claude', 'kit.json'), 'utf8')).commands.boundaries, 'kit ci_boundaries_simple --repo .');
   assert.equal(runScript('ci_guards_present.js', ['--repo', root, '--kit', KIT]).returncode, 0);
 });
 
