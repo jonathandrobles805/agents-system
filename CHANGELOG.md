@@ -4,6 +4,13 @@ All notable changes to the kit. Each entry names the decision or lesson that cau
 
 ## [0.3.0] - unreleased
 
+### Fixed (hardening plan Step 1: the real-agent eval could start its sandbox but no agent ever ran)
+- **Claude Code runs inside the eval's sandbox.** The first `eval-smoke-main` run that touched skills (after #101, run 44987376718) started the sandbox, and every session then exited. Three causes, each reproduced locally with srt 0.0.83 and Claude Code 2.1.330 and fixed in the `claude` runner:
+  - the sandbox makes `/tmp` and `$HOME` read-only, so Claude Code could not create its temp directory (`EROFS: ... mkdir '/tmp/claude'`). Its temp and config directories (`CLAUDE_CODE_TMPDIR`, `CLAUDE_CONFIG_DIR`) now live in the eval's scratch space, writable in the sandbox;
+  - Claude Code ignored the fixture's 16 `permissions.allow` rules because the workspace was not trusted, so agents would have run without the kit's real rules. The scratch config marks the fixture repo trusted (`hasTrustDialogAccepted`), the only headless way Claude Code offers;
+  - `api.anthropic.com` was not on the sandbox's network allowlist, so a session hung until its timeout. The eval adds it.
+- Nothing is written to the owner's own `~/.claude` or `~/.claude.json`; credentials still come from the environment. One test. Lanes are not changed: a lane session started in `srt` would need the same three things, and that is not part of this fix.
+
 ### Changed (decision 0017: the 23 commands become 23 skills, each `zi-` plus its old name)
 - **Re-run `./install.sh` after pulling.** Each command is now a skill in `~/.claude/skills/zi-<name>/`: `/run` is `/zi-run`, `/plan` is `/zi-plan`, `/review` is `/zi-review`, `/status` is `/zi-status`, `/fix` is `/zi-fix`, and so on for all 23. `install.sh` removes the kit's own old files from `~/.claude/commands/` (links are removed; `--copy` files are moved to `~/.claude/kit-backup/`; your own commands are left alone) and prints the map.
 - Why the prefix: `/plan`, `/review` and `/status` are Claude Code built-in commands and `/run` is a bundled skill, which a skill of the same name replaces. `zi-` keeps every old name and clears all of them.

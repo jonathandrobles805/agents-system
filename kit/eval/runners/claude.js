@@ -44,6 +44,29 @@ function fixtureRepo(task, dir) {
 /** Credential-looking strings never reach a report, whatever a session printed. */
 const redact = (s) => s.replace(/sk-ant-[A-Za-z0-9_-]+/g, 'sk-ant-***').replace(/\bgh[pousr]_[A-Za-z0-9]{20,}\b/g, 'gh*_***');
 
+/**
+ * What Claude Code itself needs inside the sandbox, beyond the lane's own rules (proven on GitHub's runner and locally
+ * with srt 0.0.83 and Claude Code 2.1.330): the sandbox makes /tmp and $HOME read-only, so Claude Code's temp
+ * directory (`CLAUDE_CODE_TMPDIR`) and config directory (`CLAUDE_CONFIG_DIR`) go in the eval's scratch space, writable;
+ * without them every session exits with `EROFS: ... mkdir '/tmp/claude'`. Claude Code ignores a project's
+ * `permissions.allow` until the workspace is trusted, and headless runs have no other way to trust it than
+ * `projects["<path>"].hasTrustDialogAccepted` in that config's `.claude.json`, so the fixture repo (under its path and
+ * its real path: macOS's temp directory is a symlink) is marked trusted there, and the agents run under the kit's real
+ * rules. The session must reach the model: `api.anthropic.com` joins the sandbox's network allowlist. Credentials stay
+ * in the environment; nothing is written to the owner's own ~/.claude or ~/.claude.json.
+ */
+export const API_HOST = 'api.anthropic.com';
+export function sessionHome(dir, root) {
+  const tmp = path.join(dir, 'claude-tmp');
+  const config = path.join(dir, 'claude-config');
+  fs.mkdirSync(tmp, { recursive: true });
+  fs.mkdirSync(config, { recursive: true });
+  const projects = {};
+  for (const p of new Set([root, fs.realpathSync(root)])) projects[p] = { hasTrustDialogAccepted: true };
+  fs.writeFileSync(path.join(config, '.claude.json'), JSON.stringify({ projects }, null, 2));
+  return { env: { CLAUDE_CODE_TMPDIR: tmp, CLAUDE_CONFIG_DIR: config }, allowWrite: [tmp, config], allowedDomains: [API_HOST] };
+}
+
 function headless(prompt, cwd, env, settingsPath, timeoutMs) {
   const cfg = { runtime: SB.detectRuntime(env).runtime, allowWrite: [cwd, os.tmpdir()], allowedDomains: [], engine: process.env.KIT_CONTAINER_ENGINE || 'docker' };
   const cmd = SB.launchCommand(cfg, { wt: cwd, settingsPath, prompt });
@@ -73,11 +96,13 @@ export async function run(task, { attempt = 0, timeoutMs = 20 * 60 * 1000 } = {}
   const started = Date.now();
   try {
     const root = fixtureRepo(task, dir);
-    const cfg = SB.sandboxConfig({ root, wt: root, slug: task.id, agent: task.role ?? 'implementer' });
+    const lane = SB.sandboxConfig({ root, wt: root, slug: task.id, agent: task.role ?? 'implementer' });
+    const home = sessionHome(dir, root);
+    const cfg = { ...lane, allowWrite: [...lane.allowWrite, ...home.allowWrite], allowedDomains: [...new Set([...lane.allowedDomains, ...home.allowedDomains])].sort() };
     const settings = path.join(root, '.claude', 'session', 'sandbox.json');
     fs.mkdirSync(path.dirname(settings), { recursive: true });
     fs.writeFileSync(settings, JSON.stringify(SB.srtSettings(cfg), null, 2));
-    const env = { ...process.env, ...SB.telemetryEnv({ project: 'kit-eval', slug: task.id, stage: task.role ?? 'build' }), KIT_EVAL_ATTEMPT: String(attempt) };
+    const env = { ...process.env, ...SB.telemetryEnv({ project: 'kit-eval', slug: task.id, stage: task.role ?? 'build' }), ...home.env, KIT_EVAL_ATTEMPT: String(attempt) };
     const work = headless(task.goal, root, env, settings, timeoutMs);
     const files = snapshot(root);
     const eventsPath = path.join(root, '.claude', 'session', 'events.jsonl');

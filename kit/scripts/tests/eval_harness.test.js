@@ -141,3 +141,20 @@ test('claude runner reports why it is unavailable instead of running unsandboxed
   assert.ok(/claude is not on PATH|no ANTHROPIC_API_KEY|no sandbox runtime/.test(a.why), a.why);
   assert.equal(claude.name, 'claude');
 });
+
+test('claude runner: Claude Code gets a writable temp and config directory, a trusted workspace and the API host inside the sandbox', (t) => {
+  const dir = tmpPath(t);
+  const root = path.join(dir, 'node-api');
+  fs.mkdirSync(root, { recursive: true });
+  const home = claude.sessionHome(dir, root);
+  // both directories are in the eval's scratch space, writable in the sandbox, and handed to Claude Code
+  assert.deepEqual(home.env, { CLAUDE_CODE_TMPDIR: path.join(dir, 'claude-tmp'), CLAUDE_CONFIG_DIR: path.join(dir, 'claude-config') });
+  assert.deepEqual(home.allowWrite, [home.env.CLAUDE_CODE_TMPDIR, home.env.CLAUDE_CONFIG_DIR]);
+  for (const d of home.allowWrite) assert.ok(fs.statSync(d).isDirectory(), d);
+  assert.deepEqual(home.allowedDomains, ['api.anthropic.com']);
+  // the fixture repo is trusted under its path and its real path, so its permissions.allow rules apply
+  const cfg = JSON.parse(fs.readFileSync(path.join(home.env.CLAUDE_CONFIG_DIR, '.claude.json'), 'utf8'));
+  assert.equal(cfg.projects[root].hasTrustDialogAccepted, true);
+  assert.equal(cfg.projects[fs.realpathSync(root)].hasTrustDialogAccepted, true);
+  assert.deepEqual(Object.keys(cfg), ['projects']);
+});
