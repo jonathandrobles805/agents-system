@@ -89,6 +89,74 @@ test('unknown work_type: next-step refuses, lane start refuses, validate-docs fl
   assert.ok(v.stderr.includes('goal-work-type'));
 });
 
+test('#57/#59: work types whose stages or agent are not built are refused by next-step and lane start, never mapped to done', (t) => {
+  const { root } = project(t);
+  fs.unlinkSync(path.join(root, 'docs', 'specs', 'refund-route.md')); // a new goal: no spec, no research
+  const cases = [
+    ['docs', 'S', /docs work is not built yet: its 'inspect' stage has no runner yet/],
+    ['docs', 'M', /docs work is not built yet/],
+    ['docs', 'L', /docs work is not built yet/],
+    ['ui', 'S', /ui work is not built yet: its 'inspect', 'verify-ui' stages have no runner yet/],
+    ['ui', 'M', /ui work is not built yet/],
+    ['investigation', 'M', /investigation work is not built yet: its 'report' stage has no runner yet/],
+    ['skill-development', 'M', /skill-development work is not built yet: it names 'skill-smith', which is not in kit\/agents/],
+  ];
+  for (const [type, size, re] of cases) {
+    setGoal(root, 'refund-route', 'Work type', type);
+    setGoal(root, 'refund-route', 'Size', size);
+    const step = next(root, 'refund-route');
+    assert.equal(step.stage, 'refused', `${type} ${size}: ${JSON.stringify(step)}`);
+    assert.notEqual(step.stage, 'done');
+    assert.match(step.reason, re);
+    assert.equal(step.needs_human, true);
+    const r = runScript('lane.js', ['start', 'refund-route', '--repo', root]);
+    assert.equal(r.returncode, 2, `${type} ${size} lane start`);
+    assert.match(r.stderr, re);
+  }
+  // unchanged: ui at L takes the feature shape; the other built types start where they did
+  for (const [type, size, stage] of [['ui', 'L', 'research'], ['feature', 'M', 'research'], ['refactor', 'M', 'research'], ['architecture', 'M', 'research'], ['migration', 'M', 'research'], ['security', 'M', 'research'], ['fix', 'M', 'lane'], ['incident', 'M', 'lane']]) {
+    setGoal(root, 'refund-route', 'Work type', type);
+    setGoal(root, 'refund-route', 'Size', size);
+    assert.equal(next(root, 'refund-route').stage, stage, `${type} ${size}`);
+  }
+});
+
+test('#57: a stage the profile lacks maps forward only to a stage it has; otherwise refused, never done', () => {
+  const fields = (work_type, risk = 'normal') => ({ work_type, risk, size: 'M' });
+  // retro → done: the one mapping to done, for a profile without retro after its merge
+  let o = L.withProfile({ slug: 's', stage: 'retro', reason: 'merged' }, L.profileFor('refactor'), fields('refactor'));
+  assert.equal(o.stage, 'done');
+  assert.equal(o.mapped_from, 'retro');
+  // research → reproduce, for a fix profile that has reproduce
+  o = L.withProfile({ slug: 's', stage: 'research', reason: 'x' }, L.profileFor('fix'), fields('fix'));
+  assert.equal(o.stage, 'reproduce');
+  // a stage with no equivalent: refused with the reason, not done (docs has no plan and no reproduce)
+  o = L.withProfile({ slug: 's', stage: 'plan', reason: 'x' }, L.profileFor('docs'), fields('docs'));
+  assert.equal(o.stage, 'refused');
+  assert.equal(o.mapped_from, 'plan');
+  assert.match(o.reason, /stage 'plan' has no equivalent in the docs profile .*not mapped to done/);
+});
+
+test('#58: a required security sign-off blocks the stage and the merge until it is recorded', (t) => {
+  const fields = (work_type, risk) => ({ work_type, risk, size: 'M' });
+  const wait = { slug: 's', stage: 'wait-merge', reason: 'review PASS for HEAD; human merges', needs_human: true };
+  for (const type of ['feature', 'fix', 'security']) {
+    const o = L.withProfile(wait, L.profileFor(type), fields(type, 'high'));
+    assert.equal(o.stage, 'security-signoff', type);
+    assert.deepEqual(o.requires, ['security-signoff']);
+    assert.equal(o.needs_human, true);
+    assert.match(o.reason, /security sign-off is required before the merge and none is recorded/);
+  }
+  // normal risk, or a profile that does not ask for it: wait-merge as before
+  assert.equal(L.withProfile(wait, L.profileFor('feature'), fields('feature', 'normal')).stage, 'wait-merge');
+  assert.equal(L.withProfile(wait, L.profileFor('refactor'), fields('refactor', 'high')).stage, 'wait-merge');
+  // lane.js merge refuses the lane before asking GitHub anything (the fixture's spec is high risk)
+  const { root } = project(t);
+  const r = runScript('lane.js', ['merge', 'refund-route', '--repo', root, '--pr', '5', '--by', 'Jonathan'], { env: { ...process.env, PATH: '/nonexistent' } });
+  assert.equal(r.returncode, 2);
+  assert.match(r.stderr, /refund-route needs a human security sign-off before the merge \(high risk\) and none is recorded/);
+});
+
 test('fix lane end to end from the goal alone: lane → reproduce → plan → approve → scope → test (fault 45: the fix lane dead-ends at reproduce)', (t) => {
   const { root } = project(t);
   setGoal(root, 'refund-route', 'Work type', 'fix');

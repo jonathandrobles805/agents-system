@@ -465,9 +465,9 @@ export function runStages(lines, agentNames, skillNames, spawnsOf = () => []) {
 /** Stage names `lane.js next-step` can answer, read from the source of nextStep(). */
 export function laneStages(laneText) {
   // next-step is the entry point; since step 7 it delegates the position derivation to nextStepFeature and maps the
-  // result onto the goal's profile, so both bodies carry stages the /zi-run table must document
+  // result onto the goal's profile (withProfile), so all these bodies carry stages the /zi-run table must document
   const stages = new Set();
-  for (const fn of ['export async function nextStep', 'async function nextStepFeature', 'async function nextStepRepro', 'export function inLanePlanning']) {
+  for (const fn of ['export async function nextStep', 'async function nextStepFeature', 'async function nextStepRepro', 'export function inLanePlanning', 'export function withProfile']) {
     const at = laneText.indexOf(fn);
     if (at < 0) continue;
     const end = laneText.indexOf('\n}\n', at);

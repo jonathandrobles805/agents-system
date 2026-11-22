@@ -13,6 +13,8 @@ Kit-level: gap, research, draft by the skill-smith on a kit branch, review, eval
 
 Profile `skill-development`: `start → research → plan → approve → lane → build → review → wait-merge → done`. Human pauses: approve, wait-merge.
 
+**Not built yet.** The `skill-smith` agent its plan and build stages name does not exist yet. `lane.js next-step` and `lane.js start` refuse this work type with that reason (#57-#59); building it is on the hardening plan's to-do list. Tell the human so before writing a goal, and stop unless they want the goal recorded for later.
+
 ## Step 1: classify, then start
 
 Follow `/zi-start` exactly (understand before anything else; agree the goal; write `docs/goals/<slug>.md`), with these header fields set:

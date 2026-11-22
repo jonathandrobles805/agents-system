@@ -567,6 +567,8 @@ export function start(root, slug, base) {
   if (isStopped(root)) return refuse([`kill switch set; lane.js resume-all --by <name> first`]);
   const fields = goalFields(root, slug);
   if (!profileFor(fields.work_type)) return refuse([`unknown work_type '${fields.work_type}' in docs/goals/${slug}.md; profiles: ${Object.keys(loadProfiles()).join(', ')}`]);
+  const unbuilt = notBuilt(fields);
+  if (unbuilt.length) return refuse(unbuilt);
   // fix/incident: the lane opens from the agreed goal alone; the debugger works inside it, the spec comes after (KIT-SPEC 10.12)
   const reproFirst = isReproFirst(profileFor(fields.work_type)) && !K.isFile(specPath(root, slug));
   const problems = reproFirst ? goalPrecheck(root, slug) : precheck(root, slug);
@@ -861,6 +863,48 @@ export function profileFor(workType) {
   return p;
 }
 
+/**
+ * Stages a profile lists that nothing produces or runs yet (#57, #58). Building them is on the hardening plan's to-do
+ * list; until then a work type that needs one is refused, never mapped to done.
+ */
+export const NOT_BUILT_STAGES = ['inspect', 'report', 'verify-ui'];
+
+/**
+ * Why a work type cannot run yet, or [] when it can: a listed stage nothing runs (#57, #58), or an agent the profile
+ * names that does not exist in kit/agents (#59). ui at size L takes the feature shape, so it is judged by that shape.
+ */
+export function notBuilt(fields) {
+  const prof = profileFor(fields.work_type);
+  if (!prof) return [];
+  const shape = fields.work_type === 'ui' && fields.size === 'L' ? profileFor('feature') : prof;
+  const why = [];
+  const stages = shape.stages.filter((s) => NOT_BUILT_STAGES.includes(s));
+  if (stages.length) why.push(`its ${stages.map((s) => `'${s}'`).join(', ')} stage${stages.length > 1 ? 's have' : ' has'} no runner yet`);
+  const agents = [...new Set(Object.values(asDict(kget(shape, 'agents', {}))))].filter((a) => !K.isFile(path.join(kitDir(), 'agents', `${a}.md`)));
+  if (agents.length) why.push(`it names ${agents.map((a) => `'${a}'`).join(', ')}, which ${agents.length > 1 ? 'are' : 'is'} not in kit/agents`);
+  return why.length ? [`${fields.work_type} work is not built yet: ${why.join('; ')}. It is on the hardening plan's to-do list (#57-#59).`] : [];
+}
+
+/** A high-risk lane whose profile asks for a human security sign-off before the merge (#58). */
+export function signoffRequired(fields) {
+  const prof = profileFor(fields.work_type);
+  if (!prof || fields.risk !== 'high') return false;
+  return (prof.risk_adds ?? []).includes('security-signoff') || prof.stages.includes('security-signoff');
+}
+
+/** The goal's fields, with the risk raised (never lowered) by the spec on main or in the lane. */
+export function laneFields(root, slug) {
+  let fields = goalFields(root, slug);
+  const laneSpec = (() => {
+    const l = K.findLane(pjoin(lanesDir(root), slug));
+    return l ? pjoin(l.root, l.work, `${slug}.md`) : null;
+  })();
+  for (const sp of [specPath(root, slug), ...(laneSpec ? [laneSpec] : [])]) {
+    if (K.isFile(sp) && (specHeader(sp).get('risk') ?? '').toLowerCase().includes('high')) fields = { ...fields, risk: 'high' };
+  }
+  return fields;
+}
+
 /** work_type / risk / size / domain from the goal header; defaults keep today's behaviour (feature, normal, M). */
 export function goalFields(root, slug) {
   const p = pjoin(root, 'docs', 'goals', `${slug}.md`);
@@ -951,13 +995,9 @@ export async function nextStep(root, slug) {
     prof = profileFor(fields.work_type);
   }
   // The spec may raise the risk the goal declared (the validator derives it from the paths touched); never lower it.
-  const laneSpec = (() => {
-    const l = K.findLane(pjoin(lanesDir(root), slug));
-    return l ? pjoin(l.root, l.work, `${slug}.md`) : null;
-  })();
-  for (const sp of [specPath(root, slug), ...(laneSpec ? [laneSpec] : [])]) {
-    if (K.isFile(sp) && (specHeader(sp).get('risk') ?? '').toLowerCase().includes('high')) fields = { ...fields, risk: 'high' };
-  }
+  fields = laneFields(root, slug);
+  const unbuilt = notBuilt(fields);
+  if (unbuilt.length) return { slug, stage: 'refused', reason: unbuilt[0], work_type: fields.work_type, risk: fields.risk, size: fields.size, needs_human: true };
   const ctx = { KS, kit, rows, row, g };
   let raw = isReproFirst(prof) ? await nextStepRepro(root, slug, ctx) : await nextStepFeature(root, slug, ctx);
   if (['test', 'build'].includes(raw.stage)) raw = inLanePlanning(root, slug) ?? raw;
@@ -999,7 +1039,7 @@ export function setGoalField(root, slug, field, value) {
 }
 
 /** Map the derived position onto the profile: a stage the profile lacks is skipped forward; the allowed agent is named. */
-function withProfile(step, prof, fields) {
+export function withProfile(step, prof, fields) {
   const out = { ...step, work_type: fields.work_type, risk: fields.risk, size: fields.size };
   if (['start', 'done', 'escalated', 'stopped', 'refused'].includes(step.stage)) return out;
   // ui at size L takes the feature shape (KIT-SPEC 10.12)
@@ -1014,9 +1054,15 @@ function withProfile(step, prof, fields) {
     return out;
   }
   if (!stages.includes(stage)) {
+    // a generic stage maps forward only to a stage the profile has; retro → done is the one mapping to done, for a
+    // profile without retro after its merge. Anything else is refused with a reason, never mapped to done (#57).
     const alias = { research: 'reproduce', plan: 'reproduce', approve: 'lane', retro: 'done', test: 'build', 'verify-ui': 'review' };
     let cur = stage;
-    for (let i = 0; i < 6 && !stages.includes(cur); i++) cur = alias[cur] ?? 'done';
+    for (let i = 0; i < 6 && cur !== undefined && !stages.includes(cur); i++) cur = alias[cur];
+    if (cur === undefined || !stages.includes(cur)) {
+      return { ...out, stage: 'refused', mapped_from: stage, agent: null, needs_human: true,
+        reason: `stage '${stage}' has no equivalent in the ${shape.work_type} profile (${stages.join(' → ')}); not mapped to done (#57)` };
+    }
     out.mapped_from = stage;
     stage = cur;
   }
@@ -1024,7 +1070,12 @@ function withProfile(step, prof, fields) {
   const a = allowedAgent(shape.work_type, stage);
   out.agent = a.ok ? a.agent : null;
   if (a.ok && a.human) out.needs_human = true;
-  if (fields.risk === 'high' && (prof.risk_adds ?? []).includes('security-signoff') && stage === 'wait-merge') out.requires = ['security-signoff'];
+  // A requires entry blocks the stage until it is met (#58). Nothing records a security sign-off until the store lands
+  // (hardening plan Step 2), so a lane that needs one waits here, and lane.js merge refuses it.
+  if (stage === 'wait-merge' && signoffRequired(fields)) {
+    return { ...out, stage: 'security-signoff', requires: ['security-signoff'], agent: null, needs_human: true,
+      reason: `a human security sign-off is required before the merge and none is recorded (high risk, ${fields.work_type}); recording it comes with the store (hardening plan Step 2), so lane.js merge refuses this lane until then` };
+  }
   return out;
 }
 
@@ -1397,6 +1448,17 @@ export async function main(argv = process.argv.slice(2)) {
     if (!pr) return refuse([a.slug ? `no PR for '${a.slug}': pass --pr <number|url> or set the ROADMAP row's PR cell` : 'pass a slug or --pr <number|url>']);
     const opts = { timeoutMin: a.timeout_min, mutationBlocking: mutationBlocking(root).blocking };
     try {
+      if (a.cmd === 'merge') {
+        // a lane that needs a security sign-off is not merged until one is recorded (#58); a spec PR needs none
+        let slug = a.slug ?? null;
+        if (!slug) {
+          const m = /^wt\/(.+)$/.exec(G.prInfo(root, pr).headRefName ?? '');
+          slug = m ? m[1] : null;
+        }
+        if (slug && signoffRequired(laneFields(root, slug))) {
+          return refuse([`${slug} needs a human security sign-off before the merge (high risk) and none is recorded; recording it comes with the store (hardening plan Step 2)`]);
+        }
+      }
       return a.cmd === 'ci' ? G.ciCommand(root, pr, { ...opts, wait: !!a.wait }) : G.mergeCommand(root, pr, { ...opts, by: a.by });
     } catch (e) {
       return refuse([e.message]);

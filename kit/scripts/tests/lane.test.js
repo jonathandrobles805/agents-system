@@ -309,7 +309,9 @@ test('next step walks the pipeline from facts', (t) => {
   const head = git(['rev-parse', 'HEAD'], wt).trim();
   write(path.join(wt, 'docs/specs/refund-route.review.md'), review({ head: head.slice(0, 10), verdict: 'PASS' }));
   ns = stage();
-  assert.ok(ns.stage === 'wait-merge' && ns.needs_human);
+  // the fixture's spec is high risk (it touches payment code), and the feature profile adds a human security sign-off
+  // for high risk: the stage waits for it and names what it requires (#58)
+  assert.ok(ns.stage === 'security-signoff' && ns.needs_human && ns.requires?.includes('security-signoff'), JSON.stringify(ns));
   commitAll(wt, 'review');
   git(['merge', '-q', '--no-ff', 'wt/refund-route', '-m', 'merge'], root);
   assert.equal(stage().stage, 'retro');
