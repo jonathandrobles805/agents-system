@@ -43,10 +43,12 @@
 // the transcript has no result for it) or finished inside this one's window, a change is reported as having
 // appeared during overlapping calls, not as written by this command. It still blocks.
 //
-// Flagged paths. An out-of-scope change is recorded in flagged.json and reported on every later post-edit-check run
-// in the lane, and done-check refuses "done", until the path is removed, restored to HEAD, put back to the content it
-// had before the command, or the spec is amended to allow it. A path is flagged for the lane, not only the session
-// that wrote it: the worktree is shared, and what any session left behind is in the lane's diff.
+// Out-of-scope changes. post-edit-check reports, and done-check refuses "done" on, every path in which the lane
+// differs from its base commit (lane.json base_commit) outside the spec: commits since the base, the working tree, and
+// untracked files the session wrote. git is the source; flagged.json only caches which call made each change and an
+// untracked file's earlier content, and is rebuilt when missing or unreadable (reconcile). A path clears when its
+// content equals the base again (or it is gone, if the base lacked it), or when the spec allows it; a commit does not
+// clear it. The list is for the lane, not only the session: the worktree is shared, and all of it is the lane's diff.
 //
 // Duplicate runs. Claude Code runs "the same handler in more than one settings file" once; it says nothing of the
 // same command in settings and in an agent's frontmatter [docs: https://code.claude.com/docs/en/hooks @ 2026-11-23],
@@ -142,24 +144,37 @@ export function entryFor(abs, { prev = null, prevTaken = 0, lstat = fs.lstatSync
 }
 
 /**
- * Paths git reports as differing from HEAD or untracked, each with its status code: Map rel -> 'XY'. A rename or copy
- * contributes both paths (the source as deleted). null when git cannot answer.
+ * Paths git reports as differing from HEAD or untracked, each with its status code: Map rel -> 'XY' (porcelain v1
+ * letters), with `.head` set to HEAD's commit. A rename or copy contributes both paths (the source as deleted). null
+ * when git cannot answer. Porcelain v2 because it reports HEAD in the same call.
  */
 export function dirtyPaths(root) {
-  const p = spawnSync('git', ['status', '--porcelain=v1', '-z', '--untracked-files=all'], { cwd: root, encoding: 'utf8', timeout: 20000, maxBuffer: 1 << 28 });
+  const p = spawnSync('git', ['status', '--porcelain=v2', '--branch', '-z', '--untracked-files=all'], { cwd: root, encoding: 'utf8', timeout: 20000, maxBuffer: 1 << 28 });
   if (p.status !== 0 || typeof p.stdout !== 'string') return null;
   const out = new Map();
+  out.head = null;
+  const keep = (rel) => rel && !rel.startsWith(SESSION_PREFIX); // the hooks' own state, these files included, never a command's
+  const v1 = (xy) => xy.replaceAll('.', ' ');
   const parts = p.stdout.split('\0');
   for (let i = 0; i < parts.length; i++) {
     const rec = parts[i];
-    if (rec.length < 4) continue;
-    const xy = rec.slice(0, 2);
-    const rel = rec.slice(3);
-    if (xy[0] === 'R' || xy[0] === 'C') {
+    const kind = rec[0];
+    if (rec.startsWith('# branch.oid ')) {
+      const oid = rec.slice(13).trim();
+      out.head = /^[0-9a-f]{7,64}$/.test(oid) ? oid : null;
+    } else if (kind === '?') {
+      if (keep(rec.slice(2))) out.set(rec.slice(2), '??');
+    } else if (kind === '1' || kind === 'u') {
+      const fields = kind === '1' ? 8 : 10;
+      const rel = rec.split(' ').slice(fields).join(' ');
+      if (keep(rel)) out.set(rel, v1(rec.slice(2, 4)));
+    } else if (kind === '2') {
+      const rel = rec.split(' ').slice(9).join(' ');
+      const xy = v1(rec.slice(2, 4));
       const src = parts[++i];
-      if (src && xy[0] === 'R' && !out.has(src) && !src.startsWith(SESSION_PREFIX)) out.set(src, ' D');
+      if (xy[0] === 'R' && keep(src) && !out.has(src)) out.set(src, ' D');
+      if (keep(rel)) out.set(rel, xy);
     }
-    if (!rel.startsWith(SESSION_PREFIX)) out.set(rel, xy); // the hooks' own state, these files included, never a command's
   }
   return out;
 }
@@ -175,7 +190,7 @@ export function snapshot(root, prev = null, { lstat = fs.lstatSync, now = Date.n
   for (const [rel, xy] of dirty) {
     entries[rel] = { xy, ...entryFor(path.join(root, rel), { prev: prevEntries[rel] ?? null, prevTaken, lstat }) };
   }
-  return { taken, entries };
+  return { taken, head: dirty.head, entries };
 }
 
 export function sameContent(a, b) {
@@ -331,6 +346,7 @@ export function recordBefore(d) {
   const last = readLast(lane.root);
   const snap = snapshot(lane.root, last);
   if (!snap) return null;
+  ensureOrigin(lane, d, snap.entries);
   const rec = { v: SCHEMA, session: typeof d.session_id === 'string' ? d.session_id : '', taken: snap.taken };
   // The usual case: nothing changed since post-edit-check recorded the lane's state, so a reference is enough.
   if (last && sameEntries(snap, last)) Object.assign(rec, { same_as_last: true, digest: last.digest });
@@ -423,10 +439,28 @@ function overlapped(lane, d, id, from, to) {
     }
   }
   if (!others.length) return false;
-  // A call the human or a permission rule refused never gets a PostToolUse, but the transcript has its result.
+  // A call the human or a permission rule refused never gets a PostToolUse, but the transcript has its result; so does
+  // a call whose hook run died after claiming its record. Neither is in flight. Once the result is older than a
+  // duplicate run would wait, the file is stale and is removed, so later calls are not told of an overlap either.
   const tp = typeof d?.transcript_path === 'string' ? d.transcript_path : '';
   const tail = tp ? readTail(tp, TRANSCRIPT_TAIL) : null;
-  return others.some((o) => !tail || !new RegExp(`"tool_use_id"\\s*:\\s*"${o.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}"`).test(tail));
+  const done = (o) => Boolean(tail) && new RegExp(`"tool_use_id"\\s*:\\s*"${o.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}"`).test(tail);
+  let any = false;
+  for (const o of others) {
+    if (!done(o)) {
+      any = true;
+      continue;
+    }
+    for (const f of [`before.${o}.json`, `claim.${o}.json`]) {
+      const fp = path.join(stateDir(lane.root), f);
+      try {
+        if (to - fs.statSync(fp).mtimeMs > DUPLICATE_WAIT_MS) fs.rmSync(fp, { force: true });
+      } catch {
+        // not there
+      }
+    }
+  }
+  return any;
 }
 
 function recordWindow(laneRoot, w) {
@@ -446,8 +480,20 @@ export function assess(lane, d) {
   if (!rec && id && fs.existsSync(claimPath(lane.root, id))) {
     // another run of this same hook claimed it: wait for it to record what it found, then report the same
     duplicate = true;
-    for (const t0 = Date.now(); fs.existsSync(claimPath(lane.root, id)) && Date.now() - t0 < DUPLICATE_WAIT_MS;) sleep(25);
+    const age = () => {
+      try {
+        return Date.now() - fs.statSync(claimPath(lane.root, id)).mtimeMs;
+      } catch {
+        return Infinity;
+      }
+    };
+    while (fs.existsSync(claimPath(lane.root, id)) && age() < DUPLICATE_WAIT_MS) sleep(25);
+    // the run that claimed it died: its claim must not read as a call in flight for the next quarter hour
+    fs.rmSync(claimPath(lane.root, id), { force: true });
   }
+  // A run of this call that finished first recorded what it reported; a second run reports exactly that.
+  const done = id ? (readJson(windowsPath(lane.root))?.calls ?? []).find((w) => w.id === id && w.report) : null;
+  if (!rec && done) return { changed: [], after: null, via: 'duplicate', overlap: false, from: done.from, claimed: false, duplicate: true, report: done.report };
   const last = readLast(lane.root);
   let base = null;
   let via;
@@ -468,6 +514,7 @@ export function assess(lane, d) {
     if (Number.isFinite(start)) base = { taken: start + RACY_MS, partial: true, entries: {} };
     via = base ? 'session' : 'none';
   }
+  ensureOrigin(lane, d, base && !base.partial ? base.entries : null);
   const after = snapshot(lane.root, base?.partial ? last : base);
   const from = rec ? rec.taken : base?.taken ?? 0;
   if (!after || !base) return { changed: [], after, via, overlap: false, from, claimed: Boolean(rec), duplicate };
@@ -476,11 +523,15 @@ export function assess(lane, d) {
   return { changed, after, via, overlap, from, claimed: Boolean(rec), duplicate };
 }
 
-/** After assess(): record the call's window and delete its claim, so the directory holds no per-call file afterwards. */
-export function release(lane, d, r) {
+/**
+ * After assess(): record the call's window, with what it reported (`report`: the rels this call was judged to have
+ * changed and those that appeared while it overlapped others), and delete its claim, so the directory holds no
+ * per-call file afterwards and a duplicate run of the hook can report the same.
+ */
+export function release(lane, d, r, report = null) {
   const id = toolUseId(d);
   if (id && r?.claimed) {
-    recordWindow(lane.root, { id, from: r.from, to: r.after?.taken ?? Date.now() });
+    recordWindow(lane.root, { id, from: r.from, to: r.after?.taken ?? Date.now(), ...(report ? { report } : {}) });
     fs.rmSync(claimPath(lane.root, id), { force: true });
   }
   prune(lane.root);
@@ -495,52 +546,169 @@ export function outsideSpec(lane) {
   return (rel) => !rel.startsWith('.claude/') && !K.globMatch(rel, allowed);
 }
 
-function readFlags(laneRoot) {
-  const v = readJson(flaggedPath(laneRoot));
-  return v && v.paths && typeof v.paths === 'object' ? v.paths : {};
+function gitZ(args, cwd) {
+  const p = spawnSync('git', args, { cwd, encoding: 'utf8', timeout: 20000, maxBuffer: 1 << 28 });
+  return p.status === 0 && typeof p.stdout === 'string' ? p.stdout.split('\0').filter(Boolean) : null;
 }
 
 /**
- * The flagged paths still outstanding against `current` (a snapshot, or entries for at least the flagged paths):
- * [{ rel, xy, kind, prior, call, how, at }]. A path is cleared when git no longer lists it (removed, or restored to
- * HEAD), when it is back to the content it had before the command, or when the spec now allows it. Writes the
- * cleared list back when it changed.
+ * The commit the lane started from: lane.json `base_commit` (what `lane.js start` resolved the base to), else
+ * `start_commit`. null for a lane.json that records neither, or names a commit this clone does not have; the lane's
+ * changes are then judged against HEAD, which misses what the lane already committed.
  */
-export function outstanding(lane, current, outside = outsideSpec(lane)) {
-  const flags = readFlags(lane.root);
+export function laneBase(lane) {
+  for (const c of [lane?.data?.base_commit, lane?.data?.start_commit]) {
+    if (typeof c !== 'string' || !/^[0-9a-f]{7,64}$/.test(c)) continue;
+    const p = spawnSync('git', ['rev-parse', '--verify', '-q', `${c}^{commit}`], { cwd: lane.root, encoding: 'utf8', timeout: 20000 });
+    if (p.status === 0) return p.stdout.trim();
+  }
+  return null;
+}
+
+const checksWrotePath = (laneRoot) => path.join(stateDir(laneRoot), 'checks.json');
+
+/** Untracked files the project's own checks (run by post-edit-check) created: theirs, not the lane's change. */
+export function recordChecksWrote(laneRoot, before, end) {
+  const prev = new Set(readJson(checksWrotePath(laneRoot))?.paths ?? []);
+  const next = new Set([...prev].filter((rel) => end.entries[rel]?.xy === '??'));
+  for (const [rel, e] of Object.entries(end.entries)) if (e.xy === '??' && !before.entries[rel]) next.add(rel);
+  if (next.size !== prev.size || [...next].some((r) => !prev.has(r))) writeJson(checksWrotePath(laneRoot), { v: SCHEMA, paths: [...next].sort() });
+}
+
+/**
+ * Every path in which the lane differs from its base, as git sees it: Map rel -> { untracked }. Committed changes
+ * (base..HEAD), the working tree against the base (tracked paths), and untracked regular files or symlinks written
+ * since the lane was created and the session started (so a sandbox mask or a file that was already there is not the
+ * session's), minus what the project's own checks wrote. null when git cannot answer.
+ */
+export function laneChanges(lane, d = null) {
+  const base = laneBase(lane);
+  const out = new Map();
+  out.base = base;
+  const add = (rels, info) => {
+    for (const rel of rels ?? []) if (!rel.startsWith(SESSION_PREFIX)) out.set(rel, { untracked: false, committed: false, ...out.get(rel), ...info });
+  };
+  const work = gitZ(['diff', '--name-only', '-z', '--no-renames', base ?? 'HEAD'], lane.root);
+  if (!work) return null;
+  add(work, {});
+  if (base) {
+    const committed = gitZ(['diff', '--name-only', '-z', '--no-renames', base, 'HEAD'], lane.root);
+    if (!committed) return null;
+    add(committed, { committed: true });
+  }
+  // An untracked file is the session's change unless it was already there: written before the lane was created or
+  // this session started (a sandbox mask, a setup's or a human's file), or still the content it had when this
+  // session's hooks first looked (origin.json; a rewrite with the same bytes moves the ctime, not the content).
+  const floor = sessionFloor(lane, d);
+  const origin = ensureOrigin(lane, d, null, floor);
+  const byChecks = new Set(readJson(checksWrotePath(lane.root))?.paths ?? []);
+  for (const rel of gitZ(['ls-files', '--others', '--exclude-standard', '-z'], lane.root) ?? []) {
+    if (byChecks.has(rel) || rel.startsWith(SESSION_PREFIX)) continue;
+    let st;
+    try {
+      st = fs.lstatSync(path.join(lane.root, rel));
+    } catch {
+      continue;
+    }
+    if (!CONTENT_KINDS.has(kindOf(st))) continue;
+    const preexisting = st.ctimeMs < floor || (Object.hasOwn(origin, rel) && sameContent(unpack(origin[rel]), entryFor(path.join(lane.root, rel))));
+    out.set(rel, { untracked: true, committed: false, preexisting });
+  }
+  return out;
+}
+
+/** Untracked files older than this are not the session's: when the lane was created or the session started, whichever is later. */
+function sessionFloor(lane, d) {
+  return Math.max(wallClockMs(lane.data?.created ?? lane.data?.started) || 0, sessionStartMs(d, lane) || 0);
+}
+
+const originPath = (laneRoot) => path.join(stateDir(laneRoot), 'origin.json');
+
+/**
+ * The untracked files that were there before this session started, with their content, recorded the first time a hook
+ * looks in the session: { rel: packed entry }. Only files older than the session go in, so a file the session wrote
+ * never does, even if this record is deleted and made again later (it can then only miss a file, never hide one).
+ */
+export function ensureOrigin(lane, d, entries = null, floor = sessionFloor(lane, d)) {
+  const session = typeof d?.session_id === 'string' ? d.session_id : '';
+  const cur = readJson(originPath(lane.root));
+  if (cur && cur.session === session && cur.paths && typeof cur.paths === 'object') return cur.paths;
+  const paths = {};
+  if (entries) {
+    for (const [rel, e] of Object.entries(entries)) if (e.xy === '??' && CONTENT_KINDS.has(e.k) && e.c < floor) paths[rel] = pack(e);
+  } else {
+    for (const rel of gitZ(['ls-files', '--others', '--exclude-standard', '-z'], lane.root) ?? []) {
+      if (rel.startsWith(SESSION_PREFIX)) continue;
+      const e = entryFor(path.join(lane.root, rel));
+      if (CONTENT_KINDS.has(e.k) && e.c < floor) paths[rel] = pack({ xy: '??', ...e });
+    }
+  }
+  writeJson(originPath(lane.root), { v: SCHEMA, session, paths });
+  return paths;
+}
+
+/** The flag cache: { head, paths } or null when it is missing or unreadable (then it is rebuilt from git). */
+function readFlagCache(laneRoot) {
+  const v = readJson(flaggedPath(laneRoot));
+  return v && v.paths && typeof v.paths === 'object' && !Array.isArray(v.paths) ? { head: v.head ?? null, paths: v.paths } : null;
+}
+
+function headOf(root) {
+  const p = spawnSync('git', ['rev-parse', '-q', '--verify', 'HEAD'], { cwd: root, encoding: 'utf8', timeout: 20000 });
+  return p.status === 0 ? p.stdout.trim() : null;
+}
+
+/**
+ * The lane's out-of-scope changes: [{ rel, untracked, committed, inBase, base, prior, call, how, at }], judged against the lane's base
+ * commit, not HEAD, so committing a flagged file does not clear it, and a commit that brings one in is found.
+ *
+ * flagged.json is a cache of this list with each path's history (which call changed it, and the content an untracked
+ * file had before, if it was there already); git is the source. A path stays until its content equals the base (or it
+ * is gone, if the base does not have it), or until the spec allows it; an untracked file that was already there
+ * before the command clears when its earlier content is back. A missing or unreadable cache is rebuilt from git, so
+ * deleting it changes nothing. With `force: false` the git comparison is skipped when the cache is valid, names no
+ * path and HEAD has not moved since it was written: then every change since came through a Bash call, which flagged
+ * it itself, or through Edit/Write, which guard-edit keeps inside the spec. done-check always forces.
+ */
+export function reconcile(lane, { force = true, head = undefined, d = null, outside = outsideSpec(lane) } = {}) {
+  const cache = readFlagCache(lane.root);
+  const flags = cache?.paths ?? {};
+  const now = head === undefined ? headOf(lane.root) : head;
+  if (!force && cache && cache.head && cache.head === now && !Object.keys(flags).length) return [];
+  const changes = laneChanges(lane, d);
+  if (!changes) {
+    // git cannot answer: keep what is flagged rather than clear it
+    return Object.entries(flags).map(([rel, f]) => ({ rel, untracked: false, committed: false, inBase: true, base: null, prior: null, call: f.call, how: f.how, at: f.at }));
+  }
   const keep = {};
   const out = [];
-  for (const [rel, f] of Object.entries(flags)) {
-    const cur = current.entries[rel];
-    const there = cur && (CONTENT_KINDS.has(cur.k) || cur.k === null);
+  for (const rel of new Set([...Object.keys(flags), ...changes.keys()])) {
+    if (!outside(rel) || !changes.has(rel)) continue;
+    const { untracked, committed, preexisting } = changes.get(rel);
+    if (untracked && preexisting && !flags[rel]) continue;
+    const f = flags[rel] ?? { session: '', call: null, how: 'found', at: Date.now(), prior: null };
     const prior = f.prior ? unpack(f.prior) : null;
-    if (!there || (prior && sameContent(prior, cur)) || !outside(rel)) continue;
+    if (untracked && prior && CONTENT_KINDS.has(prior.k) && sameContent(prior, entryFor(path.join(lane.root, rel)))) continue;
     keep[rel] = f;
-    out.push({ rel, xy: cur.xy, kind: cur.k, prior, call: f.call, how: f.how, at: f.at });
+    out.push({ rel, untracked, committed, base: changes.base, prior: untracked ? prior : null, call: f.call, how: f.how, at: f.at });
   }
-  if (Object.keys(keep).length !== Object.keys(flags).length) writeJson(flaggedPath(lane.root), { v: SCHEMA, paths: keep });
+  // which of them the base has: those go back to the base's content, the others are removed
+  const tracked = out.filter((c) => !c.untracked).map((c) => c.rel);
+  const inBase = new Set(tracked.length ? gitZ(['ls-tree', '-r', '-z', '--name-only', changes.base ?? 'HEAD', '--', ...tracked], lane.root) ?? [] : []);
+  for (const c of out) c.inBase = inBase.has(c.rel);
+  writeJson(flaggedPath(lane.root), { v: SCHEMA, head: now, paths: keep });
   return out.sort((x, y) => (x.rel < y.rel ? -1 : x.rel > y.rel ? 1 : 0));
 }
 
 /** Flag out-of-scope changes this call made (or that appeared while it overlapped others). */
 export function flag(lane, d, bad, how) {
   if (!bad.length) return;
-  const flags = readFlags(lane.root);
+  const cache = readFlagCache(lane.root);
+  const flags = cache?.paths ?? {};
   const at = Date.now();
   for (const c of bad) {
-    if (Object.hasOwn(flags, c.rel)) continue; // first write wins: its prior is the content to go back to
+    if (Object.hasOwn(flags, c.rel) && flags[c.rel].call) continue; // first write wins: its prior is the content to go back to
     flags[c.rel] = { session: typeof d.session_id === 'string' ? d.session_id : '', call: toolUseId(d), how, at, prior: c.prior ? pack(c.prior) : null };
   }
-  writeJson(flaggedPath(lane.root), { v: SCHEMA, paths: flags });
-}
-
-/** Outstanding flagged paths now, for a hook that has no snapshot of its own (done-check, post-edit-check on Edit). */
-export function outstandingNow(lane, outside = outsideSpec(lane)) {
-  const flags = readFlags(lane.root);
-  if (!Object.keys(flags).length) return [];
-  const dirty = dirtyPaths(lane.root);
-  if (!dirty) return [];
-  const entries = {};
-  for (const rel of Object.keys(flags)) if (dirty.has(rel)) entries[rel] = { xy: dirty.get(rel), ...entryFor(path.join(lane.root, rel)) };
-  return outstanding(lane, { entries }, outside);
+  writeJson(flaggedPath(lane.root), { v: SCHEMA, head: cache?.head ?? null, paths: flags });
 }

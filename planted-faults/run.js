@@ -681,8 +681,12 @@ process.stderr.write('fake gh: unexpected ' + j); process.exit(9);
     fs.symlinkSync('/dev/null', masks54[0]);
     sh('mkfifo', [masks54[1]]);
     write(masks54[2], 'a human note, untracked\n');
+    // the session starts after they exist; Claude Code hands every hook its transcript, whose first line says when
+    const transcript54 = path.join(tmp, 'session-54.jsonl');
+    spawnSync('sleep', ['0.05']);
+    write(transcript54, JSON.stringify({ type: 'queue-operation', timestamp: new Date().toISOString() }) + '\n');
     const bash54 = (id, command) => {
-      const b = { ...base, tool_name: 'Bash', tool_input: { command }, tool_use_id: id };
+      const b = { ...base, tool_name: 'Bash', tool_input: { command }, tool_use_id: id, transcript_path: transcript54 };
       const g = hook('hook_guard_bash.js', { ...b, hook_event_name: 'PreToolUse' });
       sh('bash', ['-c', command], { cwd: wt });
       const p = hook('hook_post_edit_check.js', { ...b, hook_event_name: 'PostToolUse', tool_response: 'ok' });

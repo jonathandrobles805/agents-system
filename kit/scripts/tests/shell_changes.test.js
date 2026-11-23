@@ -11,7 +11,7 @@ import path from 'node:path';
 import { spawn, spawnSync } from 'node:child_process';
 import { isoSeconds } from '../kitlib.js';
 import * as S from '../shell_changes.js';
-import { commitAll } from './fixtures.js';
+import { commitAll, git } from './fixtures.js';
 import { SCRIPTS, makeRepo, runScript, tmpPath } from './helpers.js';
 import { GOOD_SPEC } from './testdata.js';
 
@@ -28,15 +28,30 @@ function laneRepo(t, kit = { commands: { test: 'true' } }) {
   const repo = makeRepo(t);
   write(repo, 'docs/specs/refund-endpoint.md', GOOD_SPEC);
   commitAll(repo, 'spec');
-  write(repo, '.claude/lane.json', JSON.stringify({ feature: 'refund-endpoint', spec: 'docs/specs/refund-endpoint.md', stage: 'build', started: isoSeconds(new Date(Date.now() - 2 * 3.6e6)) }));
+  const baseCommit = git(['rev-parse', 'HEAD'], repo).trim();
+  const started = isoSeconds(new Date(Date.now() - 2 * 3.6e6));
+  write(repo, '.claude/lane.json', JSON.stringify({ feature: 'refund-endpoint', spec: 'docs/specs/refund-endpoint.md', stage: 'build', started, created: started, base_commit: baseCommit, start_commit: baseCommit }));
   write(repo, '.claude/kit.json', JSON.stringify(kit));
   return repo;
 }
 
 let seq = 0;
+/**
+ * The session's transcript, as Claude Code passes it to every hook: started at the session's first call, so what the
+ * test wrote before that call existed before the session.
+ */
+function transcriptFor(repo) {
+  const tp = path.join(repo, '..', 'session.jsonl');
+  if (!fs.existsSync(tp)) {
+    sleep(15);
+    fs.writeFileSync(tp, JSON.stringify({ type: 'queue-operation', timestamp: new Date().toISOString() }) + '\n');
+  }
+  return tp;
+}
+
 /** One Bash call as Claude Code makes it. `pre: false` is a session whose guard-bash took no snapshot. */
 function call(repo, command, { pre = true, id = `toolu_${++seq}`, extra = {} } = {}) {
-  const base = { session_id: SID, cwd: repo, tool_name: 'Bash', tool_input: { command }, tool_use_id: id, ...extra };
+  const base = { session_id: SID, cwd: repo, tool_name: 'Bash', tool_input: { command }, tool_use_id: id, transcript_path: transcriptFor(repo), ...extra };
   if (pre) {
     const g = runScript('hook_guard_bash.js', [], { stdin: JSON.stringify({ ...base, hook_event_name: 'PreToolUse' }) });
     assert.equal(g.returncode, 0, g.stderr);
@@ -141,19 +156,20 @@ test('read-only calls are not blamed for what was there before them: masks, syml
 
 test('real shell writes outside the spec are still caught, new untracked files included, with a remedy that works', (t) => {
   const cases = [
-    ["echo '// x' >> src/payment.ts", 'src/payment.ts', 'git restore --source=HEAD --staged --worktree -- src/payment.ts'],
-    ["sed -i 's/charge/charge2/' src/payment.ts", 'src/payment.ts', 'git restore --source=HEAD --staged --worktree -- src/payment.ts'],
+    ["echo '// x' >> src/payment.ts", 'src/payment.ts', 'git restore --source=BASE --staged --worktree -- src/payment.ts'],
+    ["sed -i 's/charge/charge2/' src/payment.ts", 'src/payment.ts', 'git restore --source=BASE --staged --worktree -- src/payment.ts'],
     ["cat > src/other.ts <<'EOF'\nexport const x = 1;\nEOF", 'src/other.ts', 'rm -- src/other.ts'],
     // no redirect, no sed: SHELL_WRITES does not recognise it, the measured change does
     ['node -e "require(\'fs\').writeFileSync(\'evidence.txt\', \'x\')"', 'evidence.txt', 'rm -- evidence.txt'],
-    ["rm src/payment.ts", 'src/payment.ts', 'git restore --source=HEAD --staged --worktree -- src/payment.ts'],
+    ["rm src/payment.ts", 'src/payment.ts', 'git restore --source=BASE --staged --worktree -- src/payment.ts'],
     ["echo x > 'my notes.md'", 'my notes.md', "rm -- 'my notes.md'"],
   ];
   for (const [cmd, rel, undo] of cases) {
     const repo = laneRepo(t);
     const r = call(repo, cmd);
     assert.ok(r.reason.includes('[scope]') && r.reason.includes(rel), `${cmd}: ${r.out}`);
-    assert.ok(r.reason.includes(undo), `${cmd}: ${r.reason}`);
+    const base = git(['rev-parse', 'HEAD'], repo).trim().slice(0, 12);
+    assert.ok(r.reason.includes(undo.replace('BASE', base)), `${cmd}: ${r.reason}`);
     assert.ok(!r.reason.includes('git checkout --'), r.reason);
     assert.match(read(repo, 'docs/specs/refund-endpoint.events.jsonl'), /shell edit outside spec/);
   }
@@ -228,7 +244,7 @@ test('the state directory does not grow: 50 calls leave the lane state and nothi
   }
   const names = fs.readdirSync(dir).sort();
   assert.deepEqual(names.filter((n) => /^(before|claim)\.|\.tmp$/.test(n)), [], names.join(' '));
-  assert.ok(names.length <= 3, names.join(' ')); // last.json, windows.json (and flagged.json once anything was flagged)
+  assert.ok(names.length <= 5, names.join(' ')); // last, windows, flagged, origin and checks .json
   // a read-only call does not rewrite the recorded state
   const m0 = fs.statSync(S.lastPath(repo)).mtimeMs;
   sleep(20);
@@ -256,7 +272,7 @@ test('an out-of-scope file is reported on every later call until it is undone (t
   // a tracked file: cleared when restored to HEAD
   assert.ok(call(repo, "echo '// x' >> src/payment.ts").reason.includes('src/payment.ts'));
   assert.ok(call(repo, 'ls').reason.includes('src/payment.ts'));
-  assert.equal(call(repo, 'git restore --source=HEAD --staged --worktree -- src/payment.ts').out, '');
+  assert.equal(call(repo, 'git restore --staged --worktree -- src/payment.ts').out, '');
   assert.equal(call(repo, 'ls').out, '');
 });
 
@@ -266,7 +282,7 @@ test('done-check refuses "done" while a flagged path is still there, unless an e
   const stop = () => runScript('hook_done_check.js', [], { stdin: JSON.stringify({ hook_event_name: 'Stop', session_id: SID, cwd: repo, stop_hook_active: false }) });
   call(repo, `node -e "require('fs').writeFileSync('out.txt', 'x')"`);
   let r = stop();
-  assert.match(JSON.parse(r.stdout).reason, /done-check: files outside the spec's allow-list .* still there: out\.txt/);
+  assert.match(JSON.parse(r.stdout).reason, /done-check: files outside the spec's allow-list .* still changed: out\.txt/);
   fs.rmSync(path.join(repo, 'out.txt'));
   r = stop();
   assert.doesNotMatch(r.stdout, /out\.txt/, 'cleared once removed; the other checks decide');
@@ -327,6 +343,99 @@ test('every scope block says not to mark anything done in build, read-only calls
   assert.ok(r.reason.startsWith('post-edit-check found problems. Fix them before continuing; do not mark anything done.'), r.reason);
   const w = call(repo, "echo '// ok' >> src/routes.ts");
   assert.ok(w.reason.startsWith('post-edit-check found problems. Fix them before continuing; do not mark anything done.'), w.reason);
+});
+
+const stopCheck = (repo) => runScript('hook_done_check.js', [], { stdin: JSON.stringify({ hook_event_name: 'Stop', session_id: SID, cwd: repo, stop_hook_active: false, transcript_path: transcriptFor(repo) }) });
+const PROGRESS = '# Progress: refund-endpoint\n\n## Done-criteria\n\n| # | Criterion | Test | Red run | Green run |\n|---|---|---|---|---|\n\n## Escalation\n\n- Attempts: {{n}}\n- Failure: —\n';
+
+test('committing a flagged file does not clear it; judged against the lane\'s base commit (the review\'s repro)', (t) => {
+  const repo = makeRepo(t);
+  write(repo, 'README.md', '# proj\n');
+  commitAll(repo, 'readme');
+  const repo2 = repo; // laneRepo on an existing repo: spec + lane.json with base_commit
+  write(repo2, 'docs/specs/refund-endpoint.md', GOOD_SPEC);
+  commitAll(repo2, 'spec');
+  const baseCommit = git(['rev-parse', 'HEAD'], repo2).trim();
+  write(repo2, '.claude/lane.json', JSON.stringify({ feature: 'refund-endpoint', spec: 'docs/specs/refund-endpoint.md', stage: 'build', started: isoSeconds(new Date(Date.now() - 2 * 3.6e6)), created: isoSeconds(new Date(Date.now() - 2 * 3.6e6)), base_commit: baseCommit, start_commit: baseCommit }));
+  write(repo2, '.claude/kit.json', JSON.stringify({ commands: { test: 'true' } }));
+  write(repo2, 'docs/specs/refund-endpoint.progress.md', PROGRESS);
+  let r = call(repo2, 'echo hi >> README.md');
+  assert.ok(r.reason.includes('this shell command changed') && r.reason.includes('README.md'), r.out);
+  r = call(repo2, "git -c user.name=t -c user.email=t@t commit -qam wip");
+  assert.ok(r.reason.includes('README.md'), `the commit cleared the flag: ${r.out}`);
+  assert.ok(Object.keys(JSON.parse(fs.readFileSync(S.flaggedPath(repo2), 'utf8')).paths).includes('README.md'));
+  assert.match(JSON.parse(stopCheck(repo2).stdout).reason, /done-check: .*README\.md/);
+  const undo = `git restore --source=${baseCommit.slice(0, 12)} --staged --worktree -- README.md, then commit`;
+  assert.ok(r.reason.includes(undo), r.reason);
+  // undone and committed: equal to the base again, cleared
+  r = call(repo2, `${undo.replace(', then commit', '')} && git -c user.name=t -c user.email=t@t commit -qm undo`);
+  assert.equal(r.out, '');
+  assert.doesNotMatch(stopCheck(repo2).stdout, /README/);
+  // a commit that brings an out-of-scope file in without any Bash write being seen is found at the next check
+  write(repo2, 'docs/extra.md', 'x\n');
+  git(['add', 'docs/extra.md'], repo2);
+  git(['-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-qm', 'sneak'], repo2);
+  r = call(repo2, 'ls');
+  assert.ok(r.reason.includes('the lane has changed files outside the spec\'s allow-list since its base commit: docs/extra.md'), r.out);
+  assert.ok(r.reason.includes('git rm -f -- docs/extra.md, then commit'), r.reason);
+  assert.match(JSON.parse(stopCheck(repo2).stdout).reason, /docs\/extra\.md/);
+});
+
+test('flagged.json is a cache: deleted or corrupted, done is still refused while an out-of-scope change exists', (t) => {
+  const repo = laneRepo(t);
+  write(repo, 'docs/specs/refund-endpoint.progress.md', PROGRESS);
+  call(repo, `node -e "require('fs').writeFileSync('out.txt', 'x')"`);
+  fs.rmSync(S.flaggedPath(repo));
+  assert.match(JSON.parse(stopCheck(repo).stdout).reason, /out\.txt/, 'deleted');
+  assert.ok(JSON.parse(fs.readFileSync(S.flaggedPath(repo), 'utf8')).paths['out.txt'], 'rebuilt from git');
+  fs.writeFileSync(S.flaggedPath(repo), '{"v": 2, "paths": [');
+  assert.match(JSON.parse(stopCheck(repo).stdout).reason, /out\.txt/, 'corrupt');
+  fs.writeFileSync(S.flaggedPath(repo), JSON.stringify({ v: 2, head: git(['rev-parse', 'HEAD'], repo).trim(), paths: {} }));
+  assert.match(JSON.parse(stopCheck(repo).stdout).reason, /out\.txt/, 'emptied by hand');
+  assert.ok(call(repo, 'ls').reason.includes('out.txt'), 'and the next Bash call says so too');
+  fs.rmSync(path.join(repo, 'out.txt'));
+  assert.doesNotMatch(stopCheck(repo).stdout, /out\.txt/);
+});
+
+test('a claim left by a run that died is removed once the duplicate has waited, and does not read as an overlap', (t) => {
+  const repo = laneRepo(t);
+  const base = { session_id: SID, cwd: repo, tool_name: 'Bash', tool_input: { command: 'ls' }, tool_use_id: 'toolu_dead', transcript_path: transcriptFor(repo) };
+  runScript('hook_guard_bash.js', [], { stdin: JSON.stringify({ ...base, hook_event_name: 'PreToolUse' }) });
+  // the first run claimed the record and was killed
+  const claim = path.join(path.dirname(S.lastPath(repo)), 'claim.toolu_dead.json');
+  fs.renameSync(S.beforePath(repo, 'toolu_dead'), claim);
+  const old = new Date(Date.now() - S.DUPLICATE_WAIT_MS - 5000);
+  fs.utimesSync(claim, old, old);
+  const t0 = Date.now();
+  const p = runScript('hook_post_edit_check.js', [], { stdin: JSON.stringify({ ...base, hook_event_name: 'PostToolUse', tool_response: 'ok' }) });
+  assert.equal(p.stdout.trim(), '');
+  assert.ok(Date.now() - t0 < S.DUPLICATE_WAIT_MS, 'an expired claim is not waited for');
+  assert.ok(!fs.existsSync(claim), 'the stale claim is gone');
+  const r = call(repo, `node -e "require('fs').writeFileSync('out.txt', 'x')"`);
+  assert.ok(r.reason.includes('this shell command changed files outside the spec\'s allow-list: out.txt'), r.reason);
+  // a stale claim of another call that the transcript shows as finished is removed too, and is no overlap
+  const repo2 = laneRepo(t);
+  const tp = transcriptFor(repo2);
+  fs.appendFileSync(tp, JSON.stringify({ type: 'user', message: { content: [{ type: 'tool_result', tool_use_id: 'toolu_gone', content: 'ok' }] } }) + '\n');
+  fs.mkdirSync(path.dirname(S.lastPath(repo2)), { recursive: true });
+  const claim2 = path.join(path.dirname(S.lastPath(repo2)), 'claim.toolu_gone.json');
+  fs.writeFileSync(claim2, '{}');
+  fs.utimesSync(claim2, old, old);
+  const r2 = call(repo2, `node -e "require('fs').writeFileSync('out.txt', 'x')"`);
+  assert.ok(r2.reason.includes('this shell command changed files outside the spec\'s allow-list: out.txt'), r2.reason);
+  assert.ok(!fs.existsSync(claim2));
+});
+
+test('a duplicate run that finishes after the first reports this call\'s file as this call\'s', (t) => {
+  const repo = laneRepo(t);
+  const base = { session_id: SID, cwd: repo, tool_name: 'Bash', tool_input: { command: 'x' }, tool_use_id: 'toolu_seq', transcript_path: transcriptFor(repo) };
+  runScript('hook_guard_bash.js', [], { stdin: JSON.stringify({ ...base, hook_event_name: 'PreToolUse' }) });
+  write(repo, 'out.txt', 'x');
+  const post = () => JSON.parse(runScript('hook_post_edit_check.js', [], { stdin: JSON.stringify({ ...base, hook_event_name: 'PostToolUse', tool_response: 'ok' }) }).stdout).reason;
+  const first = post();
+  const second = post();
+  assert.equal(second, first);
+  assert.ok(second.includes('this shell command changed files outside the spec\'s allow-list: out.txt') && !second.includes('earlier'), second);
 });
 
 test('srt reproduction: /dev/null bind-mounted over absent dotfiles (bubblewrap), then ls; nothing is blamed', (t) => {

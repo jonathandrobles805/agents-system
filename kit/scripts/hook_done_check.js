@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // Stop hook inside a lane: refuse to end the turn while done-criteria lack a green run and no escalation is written,
-// or while a file outside the spec that a shell command changed is still there (shell_changes.js flags).
+// or while the lane has changed a file outside the spec since its base commit (shell_changes.js reconcile).
 // Allows the stop when: every done-criterion row in progress.md has a green run ref that exists in the log,
 // or the Escalation section is filled in, or stop_hook_active is set (we already asked once).
 import path from 'node:path';
@@ -49,13 +49,14 @@ export function main() {
       return 0;
     }
   }
-  // An out-of-scope file a shell command wrote and nobody undid is part of the lane's diff: not done while it is there.
+  // A file outside the spec that the lane changed (by a shell command, or in a commit) and nobody undid is part of the
+  // lane's diff: not done while it is there.
   // After the escalation check on purpose: leaving them and recording that the spec needs amending is the other way out
   // post-edit-check offers.
-  const flagged = S.outstandingNow(lane);
+  const flagged = S.reconcile(lane, { force: true, d }); // from git, against the lane's base; flagged.json is only a cache
   if (flagged.length) {
     K.appendEvent(lane.eventsPath, { event: 'stop_refused', tool: 'hook', result: 'fail', summary: 'out-of-spec shell changes still there: ' + flagged.slice(0, 5).map((f) => f.rel).join(', ') });
-    return K.feedbackBlock(`done-check: files outside the spec's allow-list that a shell command changed are still there: ${flagged.map((f) => f.rel).join(', ')}. ` +
+    return K.feedbackBlock(`done-check: files outside the spec's allow-list that the lane changed since its base commit are still changed: ${flagged.map((f) => f.rel).join(', ')}. ` +
       'Undo them as post-edit-check said, or record under Escalation that the spec needs amending, then stop.');
   }
   const rows = sections.get('done-criteria')?.tableRows() ?? [];

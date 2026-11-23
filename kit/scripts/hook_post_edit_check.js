@@ -134,26 +134,28 @@ export function shellScopeViolations(lane, changed) {
 const shq = (s) => (/^[A-Za-z0-9_./@%+=:,-]+$/.test(s) ? s : `'${s.replaceAll("'", `'\\''`)}'`);
 
 /**
- * How to undo one change. A path that was already there, changed, before the command goes back to that content: no
- * command can do that for it, and removing or resetting it would destroy work that was not the command's. Otherwise a
- * path HEAD has is restored from HEAD (index and worktree) and a path HEAD does not have is removed.
- * `git checkout -- <path>` was the old advice for every path, and it cannot undo a new untracked file.
+ * How to undo one out-of-scope change, judged against the lane's base commit. An untracked file that was already
+ * there before the command goes back to that content: no command can do that for it, and removing it would destroy
+ * work that was not the command's. Any other untracked file is removed. A tracked path the base has goes back to the
+ * base's content; one the base does not have is removed from the index and the tree. A change already committed also
+ * needs a commit that undoes it. `git checkout -- <path>` was the old advice for every path: it cannot remove an
+ * untracked file, and restores from the index, not the base.
  */
 export function undoCommand(c) {
   const p = shq(c.rel);
-  if (c.prior && c.prior.k === null) return `rm -- ${p}   (it was deleted before the command)`;
-  if (c.prior) return `put back the content ${p} had before the command (it was already there and changed; do not delete or reset it)`;
-  if (c.xy === '??') return `rm -- ${p}`;
-  if ('ARC'.includes(c.xy[0])) return `git rm -f -- ${p}`;
-  return `git restore --source=HEAD --staged --worktree -- ${p}`;
+  if (c.untracked) return c.prior ? `put back the content ${p} had before the command (it was already there; do not delete it)` : `rm -- ${p}`;
+  const then = c.committed ? ', then commit' : '';
+  if (c.inBase) return `git restore --source=${c.base ? c.base.slice(0, 12) : 'HEAD'} --staged --worktree -- ${p}${then}`;
+  return `git rm -f -- ${p}${then}`;
 }
 
 /**
  * The [scope] finding: what this command changed, what appeared while other calls overlapped it (which cannot be put
- * on this command alone), and what earlier commands changed and is still there. One remedy list for all of them.
+ * on this command alone), what earlier commands changed and is still there, and what else the lane has changed
+ * outside the spec since its base (a commit, or a change no call recorded). One remedy list for all of them.
  */
-export function scopeMessage({ mine = [], overlap = [], earlier = [] }) {
-  const all = [...mine, ...overlap, ...earlier];
+export function scopeMessage({ mine = [], overlap = [], earlier = [], found = [] }) {
+  const all = [...mine, ...overlap, ...earlier, ...found];
   if (!all.length) return null;
   const names = (xs) => xs.map((c) => c.rel).join(', ');
   const lines = [];
@@ -164,20 +166,27 @@ export function scopeMessage({ mine = [], overlap = [], earlier = [] }) {
       '\nThey are outside the allow-list whichever command wrote them; if one still running meant to write them, let it finish first.');
   }
   if (earlier.length) lines.push("[scope] files outside the spec's allow-list that an earlier shell command changed are still there: " + names(earlier));
+  if (found.length) lines.push("[scope] the lane has changed files outside the spec's allow-list since its base commit: " + names(found));
   return lines.join('\n') + '\nUndo each one:\n' + all.map((c) => '  ' + undoCommand(c)).join('\n') +
     '\nor, if the spec is what is wrong, leave them and stop: record under Escalation that the spec needs amending.';
 }
 
 /**
- * Sort the lane's outstanding flagged paths for the message: flagged by this call (as it was judged), flagged by
- * another call during this one's window (overlap), or flagged before it (earlier).
+ * Sort the lane's outstanding out-of-scope paths for the message. A run that finished first for the same call left
+ * `report` (what it put on this call); otherwise: flagged by this call (as judged), by another call during this one's
+ * window (overlap), by a call before it (earlier), or found by comparing with the base (no call recorded it).
  */
-export function groupFlags(list, id, from) {
-  const g = { mine: [], overlap: [], earlier: [] };
+export function groupFlags(list, id, from, report = null) {
+  const g = { mine: [], overlap: [], earlier: [], found: [] };
+  const mine = new Set(report?.mine ?? []);
+  const over = new Set(report?.overlap ?? []);
   for (const f of list) {
-    if (id && f.call === id) g[f.how === 'overlap' ? 'overlap' : 'mine'].push(f);
-    else if (id && f.at >= from) g.overlap.push(f);
-    else g.earlier.push(f);
+    if (mine.has(f.rel)) g.mine.push(f);
+    else if (over.has(f.rel)) g.overlap.push(f);
+    else if (report) g[f.call ? 'earlier' : 'found'].push(f);
+    else if (id && f.call === id) g[f.how === 'overlap' ? 'overlap' : 'mine'].push(f);
+    else if (id && f.call && f.at >= from) g.overlap.push(f);
+    else g[f.call ? 'earlier' : 'found'].push(f);
   }
   return g;
 }
@@ -253,14 +262,16 @@ export function main() {
     try {
       const r = S.assess(lane, d);
       after = r.after;
-      const bad = shellScopeViolations(lane, r.changed);
-      S.flag(lane, d, bad, r.overlap ? 'overlap' : 'this');
-      const still = after ? S.outstanding(lane, after) : [];
-      S.release(lane, d, r);
-      scope = groupFlags(still, text(d.tool_use_id), r.from);
-      if (bad.length) {
-        K.appendEvent(events, { event: 'blocked', tool: 'Bash', result: 'blocked', summary: (r.overlap ? 'shell edit outside spec (overlapping calls): ' : 'shell edit outside spec: ') + bad.slice(0, 5).map((c) => c.rel).join(', ') });
+      if (r.via !== 'duplicate') {
+        const bad = shellScopeViolations(lane, r.changed);
+        S.flag(lane, d, bad, r.overlap ? 'overlap' : 'this');
+        if (bad.length) {
+          K.appendEvent(events, { event: 'blocked', tool: 'Bash', result: 'blocked', summary: (r.overlap ? 'shell edit outside spec (overlapping calls): ' : 'shell edit outside spec: ') + bad.slice(0, 5).map((c) => c.rel).join(', ') });
+        }
       }
+      const still = S.reconcile(lane, { force: false, head: after ? after.head : undefined, d });
+      scope = groupFlags(still, text(d.tool_use_id), r.from, r.report ?? null);
+      S.release(lane, d, r, { mine: scope.mine.map((c) => c.rel), overlap: scope.overlap.map((c) => c.rel) });
     } catch (e) {
       K.appendEvent(events, { event: 'scope_unchecked', tool: 'Bash', result: 'fail', summary: `shell scope check could not run: ${clip(String(e?.message ?? e), 200)}` });
     }
@@ -273,6 +284,7 @@ export function main() {
         // a run with no checks leaves the worktree as `after` found it; otherwise look again, past what the checks wrote
         const end = after && !checksMayWrite ? after : S.snapshot(lane.root, after ?? S.readLast(lane.root));
         if (end) S.writeLast(lane.root, end);
+        if (end && after && end !== after) S.recordChecksWrote(lane.root, after, end);
       } catch {
         // the next call falls back to the session start; nothing to block on
       }
@@ -339,8 +351,8 @@ function checkCall({ d, lane, root, kit, timeout, rel, events, scope }) {
   // Shell edits outside the spec are invisible to the pre-edit hook; they were measured in main(). An Edit or Write
   // run reports the ones still there, so they are not forgotten while the agent works on through the editor.
   if (lane && !scope && d.tool_name !== 'Bash') {
-    const still = S.outstandingNow(lane);
-    if (still.length) scope = { earlier: still };
+    const still = S.reconcile(lane, { force: false, d });
+    if (still.length) scope = groupFlags(still, null, 0);
   }
   const scopeMsg = scope ? scopeMessage(scope) : null;
   if (scopeMsg) failures.push(scopeMsg);
