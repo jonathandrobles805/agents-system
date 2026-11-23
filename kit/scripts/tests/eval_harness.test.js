@@ -183,6 +183,13 @@ test('hard checks fail for the right reasons', () => {
   assert.equal(nt({ 'tests/truncate.test.ts': `/*\n${truncTest}*/\n` }), false, 'a test in a block comment');
   assert.equal(nt({ 'tests/truncate.test.ts': truncTest, 'docs/specs/truncate-text.md': specText.replace('max characters ending in an ellipsis`', 'works`') }), true, 'the spec as the setup left it, not as the session edited it');
   assert.equal(nt({ 'tests/truncate.test.ts': truncTest }, {}), false, 'no spec');
+  // finding: `it.each(…)('name', …)`, `test.each`, and `describe` nesting failed; `.skip`, `.todo`, `.fails` and `.only`
+  // are no test as written (`.fails` inverts the assertions; `.only` is what the post-edit hook calls weakening)
+  const NAME = 'shortens text longer than max to max characters ending in an ellipsis';
+  for (const decl of [`it.each([['hello world', 5, 'hell…']])('${NAME}', (t, m, w) => {})`, `test.each([[1]])("${NAME}", () => {})`, 'test.each`\n  a | b\n  ${1} | ${2}\n`(\'' + NAME + '\', () => {})', `it.concurrent('${NAME}', () => {})`, `describe('a', () => { describe('b', () => { test('${NAME}', () => {}); }); })`, `it (\`${NAME}\`, () => {})`])
+    assert.equal(nt({ 'tests/truncate.test.ts': decl }), true, decl);
+  for (const decl of [`it.skip('${NAME}', () => {})`, `it.todo('${NAME}')`, `it.fails('${NAME}', () => {})`, `it.only('${NAME}', () => {})`, `it.each([[1]]).skip('${NAME}', () => {})`, `xit('${NAME}', () => {})`, `format.it('${NAME}', () => {})`])
+    assert.equal(nt({ 'tests/truncate.test.ts': decl }), false, decl);
   // named_tests_assert: each named test asserts on a call of the function under test (finding: a shallow test passed)
   const tester = loadTasks().find((x) => x.id === 'tester-writes-failing-test-only');
   const body = (b) => `import { it, expect } from 'vitest';\nimport * as format from '../src/text/format';\nit('shortens text longer than max to max characters ending in an ellipsis', () => {\n${b}\n});\n`;
@@ -193,6 +200,15 @@ test('hard checks fail for the right reasons', () => {
   for (const b of ["expect(typeof format.truncate).toBe('function');", "throw new Error('todo');", "expect(1).toBe(1);", "expect(truncate).toBeDefined();", "expect(truncate()).toBe('');", "truncate('hello world', 5);", "// expect(truncate('hello world', 5)).toBe('hell…');", "expect(String('hello')).toBe('hello');", "expect(truncate('hello world', 5)).toBeTruthy();"])
     assert.equal(NA(b).ok, false, b);
   assert.equal(NA("expect(truncate('a', 1)).toBe('a');\n});\nit('another', () => {").ok, true, 'the assertion inside the named test');
+  // finding: an expect on a name assigned from a call of the function failed
+  for (const b of ["const r = truncate('hello world', 5);\nexpect(r).toBe('hell…');", "let r: string = format.truncate('hi', 5);\nexpect(r.length).toBe(2);", "const out = await truncate('x', 1);\nexpect(out).toEqual('x');", "let r;\nr = truncate('hello', 3);\nexpect(r).toHaveLength(3);"])
+    assert.equal(NA(b).ok, true, b);
+  for (const b of ["const r = truncate;\nexpect(r).toBeDefined();", "const r = 'hell…';\nexpect(r).toBe('hell…');", "const r = truncate('hello world', 5);\nexpect(rx).toBe('hell…');", "const r = truncate('hello world', 5);\nexpect(r).toBeTruthy();", "const r = truncate();\nexpect(r).toBe('');"])
+    assert.equal(NA(b).ok, false, b);
+  // it.each with the named test: the body is the callback's, not the table's
+  const each = (b) => CHECKS.named_tests_assert({ files: { 'tests/truncate.test.ts': `describe('truncate', () => {\n  it.each([['hello world', 5, 'hell…'], ['hi', 5, 'hi']])('${NAME}', (text, max, want) => {\n${b}\n  });\n});\n` }, setup_state: { 'docs/specs/truncate-text.md': specText } }, tester).ok;
+  assert.equal(each('expect(truncate(text, max)).toBe(want);'), true, 'it.each asserting on a call');
+  assert.equal(each('expect(typeof truncate).toBe("function");'), false, 'it.each with a shallow body');
   assert.equal(CHECKS.named_tests_assert({ files: { 'tests/truncate.test.ts': `it('other', () => { expect(truncate('a', 1)).toBe('a'); });\n${body("expect(typeof truncate).toBe('function');")}` }, setup_state: { 'docs/specs/truncate-text.md': specText } }, tester).ok, false, 'an assertion in another test does not count');
   // tests_kept: the setup's tests against the end state, by the post-edit hook's rules
   const TK = (files, events = [], setup = { 'tests/truncate.test.ts': truncTest }) => CHECKS.tests_kept({ files, events, setup_state: setup }).ok;

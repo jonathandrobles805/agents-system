@@ -262,6 +262,53 @@ function closeParen(text, open) {
   return text.length;
 }
 
+/** Source text with block and line comments dropped: a commented-out test is no test. */
+const stripComments = (t) => t.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:'"`])\/\/.*$/gm, '$1');
+
+// vitest/jest modifiers between `it`/`test` and the call that still run the test as written. `.skip` and `.todo` run
+// nothing; `.fails` passes when the test fails (it inverts every assertion); `.only` is what the kit's post-edit hook
+// counts as weakening the suite (ADDED_SKIP), which the implementer's tests_kept would then fail on. None of those four is
+// accepted
+const TEST_MODIFIERS = new Set(['each', 'for', 'concurrent', 'sequential']);
+
+/**
+ * Where a test named `name` is declared in source text (comments stripped): `it('<name>'`, `test('<name>'`, with the
+ * modifiers TEST_MODIFIERS allows (`it.each([...])('<name>'`, `test.each\`table\`('<name>'`, `it.concurrent('<name>'`),
+ * at any depth of `describe` nesting. Returns the index of the `(` that opens the call taking the name (its body runs to
+ * the matching `)`, closeParen), or -1.
+ */
+export function findTest(text, name) {
+  const lit = (q) => `${q}${name}${q}`;
+  for (const m of text.matchAll(/(?<![\w$.])(?:it|test)\b/g)) {
+    let i = m.index + m[0].length;
+    const skipWs = () => { while (/\s/.test(text[i] ?? '')) i++; };
+    let ok = true;
+    for (;;) {
+      skipWs();
+      if (text[i] !== '.') break;
+      i++;
+      skipWs();
+      const w = /^[A-Za-z_$][\w$]*/.exec(text.slice(i));
+      if (!w || !TEST_MODIFIERS.has(w[0])) { ok = false; break; }
+      i += w[0].length;
+      if (w[0] === 'each' || w[0] === 'for') {
+        skipWs();
+        if (text[i] === '(') i = closeParen(text, i) + 1;
+        else if (text[i] === '`') { i++; while (i < text.length && text[i] !== '`') i += text[i] === '\\' ? 2 : 1; i++; }
+        else { ok = false; break; }
+      }
+    }
+    if (!ok) continue;
+    skipWs();
+    if (text[i] !== '(') continue;
+    const open = i;
+    i++;
+    skipWs();
+    if (['"', "'", '`'].some((q) => text.startsWith(lit(q), i))) return open;
+  }
+  return -1;
+}
+
 /** How many words of letters (two or more letters each) a text holds: `.`, `-` or `a b` hold none. */
 export const letterWords = (s) => (String(s ?? '').match(/[A-Za-z]{2,}/g) ?? []).length;
 
@@ -494,8 +541,9 @@ export const CHECKS = {
    * The spec's done-criteria tests exist as the spec names them (the tester's job, kit/agents/tester.md: "Write the
    * test named in the spec's table, at the path the spec names"): for each row's `file::name` (the spec at
    * `expected.spec`, read as the setup left it, so a session cannot rename the test by editing the spec), the file is in
-   * the end state and declares `it('<name>'` or `test('<name>'` outside a comment. A row naming an artifact instead is
-   * not a test.
+   * the end state and declares `it('<name>'` or `test('<name>'` outside a comment, at any `describe` depth, plain or
+   * through `.each`, `.for`, `.concurrent` or `.sequential` (findTest; `.skip`, `.todo`, `.fails` and `.only` are not a
+   * test as written). A row naming an artifact instead is not a test.
    */
   named_tests(outcome, task) {
     const rel = task.expected?.spec ?? '';
@@ -504,21 +552,20 @@ export const CHECKS = {
     const rows = K.parseSections(K.stripHtmlComments(K.splitlines(spec))).get('done-criteria')?.tableRows() ?? [];
     const named = rows.map(([, c]) => /`?([^`\s]+)::([^`]+?)`?\s*$/.exec(String(c[2] ?? '').trim())).filter(Boolean).map((m) => [m[1], m[2].trim()]);
     if (!named.length) return { ok: false, why: `${rel} names no test (file::name) in its Done-criteria` };
-    const esc = (x) => x.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    // a commented-out test is no test: block and line comments are dropped first
-    const code = (t) => t.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:'"`])\/\/.*$/gm, '$1');
-    const missing = named.filter(([f, n]) => typeof outcome.files?.[f] !== 'string' || !new RegExp(`\\b(?:it|test)\\(\\s*(['"\`])${esc(n)}\\1`).test(code(outcome.files[f])));
+    const missing = named.filter(([f, n]) => typeof outcome.files?.[f] !== 'string' || findTest(stripComments(outcome.files[f]), n) < 0);
     return missing.length ? { ok: false, why: `not written as the spec names it: ${missing.map(([f, n]) => `${f}::${n}`).join('; ')}` } : { ok: true, why: `${named.length} named test(s) written: ${named.map(([f]) => f).join(', ')}` };
   },
   /**
    * Each test the spec names (as named_tests reads them) asserts something about the function under test
    * (`expected.function_under_test`): its body holds at least one `expect(<call>)` whose argument calls that function
    * with an argument (`truncate('hello world', 5)`, `truncate?.(…)`, `format.truncate(…)`, or `() => truncate(…)` for
-   * a throw), followed by a matcher that compares the result: toBe, toEqual, toStrictEqual, toMatch, toContain,
+   * a throw), or on a name the test body assigned from such a call (`const r = truncate('hello world', 5);`
+   * `expect(r).toBe('hell…')`, `expect(r.length)` too), followed by a matcher that compares the result: toBe, toEqual, toStrictEqual, toMatch, toContain,
    * toHaveLength, toMatchObject, toBeCloseTo, toBeLessThan(OrEqual), toBeGreaterThan(OrEqual) with an expected value,
    * or toThrow/toThrowError (`.not`, `.resolves`, `.rejects` allowed before it). A test that only checks the export
    * exists (`expect(typeof format.truncate).toBe('function')`), throws `new Error('todo')`, or compares constants fails.
-   * Simple by design: a call through a cast (`(format as X).truncate(…)`) is not recognised. Whether the assertion
+   * The named test is found as named_tests finds it (findTest: `it.each(…)('<name>'`, `test.concurrent(…)`, inside any
+   * `describe`). Simple by design: a call through a cast (`(format as X).truncate(…)`) is not recognised. Whether the assertion
    * encodes the criterion's behaviour is the judge's (the rubric).
    */
   named_tests_assert(outcome, task) {
@@ -531,23 +578,29 @@ export const CHECKS = {
     const named = rows.map(([, c]) => /`?([^`\s]+)::([^`]+?)`?\s*$/.exec(String(c[2] ?? '').trim())).filter(Boolean).map((m) => [m[1], m[2].trim()]);
     if (!named.length) return { ok: false, why: `${rel} names no test (file::name) in its Done-criteria` };
     const esc = (x) => x.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    const code = (t) => t.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:'"`])\/\/.*$/gm, '$1');
-    const callsFn = new RegExp(String.raw`^(?:(?:async\s*)?\(\s*\)\s*=>\s*\{?\s*(?:return\s+)?)?(?:await\s+)?(?:[\w$]+\s*\??\.\s*)*${esc(fn)}\s*(?:\?\.)?\(\s*[^\s)]`);
+    // a call of the function with an argument: `truncate(x, 5)`, `truncate?.(…)`, `format.truncate(…)`, `await truncate(…)`
+    const call = String.raw`(?:await\s+)?(?:[\w$]+\s*\??\.\s*)*${esc(fn)}\s*(?:\?\.)?\(\s*[^\s)]`;
+    const callsFn = new RegExp(String.raw`^(?:(?:async\s*)?\(\s*\)\s*=>\s*\{?\s*(?:return\s+)?)?${call}`);
+    // a name the test body assigned from such a call: `const r = truncate(…)`, `let r: string = await truncate(…)`, `r = truncate(…)`
+    const assign = new RegExp(String.raw`(?<![\w$.])([A-Za-z_$][\w$]*)\s*(?::[^=;\n]+)?=(?![=>])\s*${call}`, 'g');
     const matcher = /^\s*(?:\.\s*(?:not|resolves|rejects)\s*)*\.\s*(?:(?:toBe|toEqual|toStrictEqual|toMatch|toContain|toHaveLength|toMatchObject|toBeCloseTo|toBeLessThan|toBeLessThanOrEqual|toBeGreaterThan|toBeGreaterThanOrEqual)\s*\(\s*[^\s)]|toThrow(?:Error)?\s*\()/;
     const bad = [];
     for (const [f, n] of named) {
-      const text = typeof outcome.files?.[f] === 'string' ? code(outcome.files[f]) : null;
-      const m = text && new RegExp(`\\b(?:it|test)\\(\\s*(['"\`])${esc(n)}\\1`).exec(text);
-      if (!m) {
+      const text = typeof outcome.files?.[f] === 'string' ? stripComments(outcome.files[f]) : null;
+      const at = text ? findTest(text, n) : -1;
+      if (at < 0) {
         bad.push(`${f}::${n} not written`);
         continue;
       }
-      const body = text.slice(m.index, closeParen(text, text.indexOf('(', m.index)));
+      const body = text.slice(at, closeParen(text, at));
+      const names = [...new Set([...body.matchAll(assign)].map((a) => a[1]))];
+      const holdsCall = names.length ? new RegExp(String.raw`^(?:await\s+)?(?:${names.map(esc).join('|')})(?![\w$])`) : null;
       let asserts = false;
       for (const e of body.matchAll(/\bexpect\s*\(/g)) {
         const open = e.index + e[0].length - 1;
         const close = closeParen(body, open);
-        if (callsFn.test(body.slice(open + 1, close).trim()) && matcher.test(body.slice(close + 1))) asserts = true;
+        const arg = body.slice(open + 1, close).trim();
+        if ((callsFn.test(arg) || holdsCall?.test(arg)) && matcher.test(body.slice(close + 1))) asserts = true;
       }
       if (!asserts) bad.push(`${f}::${n} has no expect(${fn}(…)) compared with a matcher`);
     }
