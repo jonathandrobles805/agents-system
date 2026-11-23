@@ -675,7 +675,8 @@ process.stderr.write('fake gh: unexpected ' + j); process.exit(9);
     //    eval on 516ffdd: `ls` and `npx tsc` blocked for eleven srt /dev/null masks). Driven as Claude Code does:
     //    guard-bash (PreToolUse), the command, post-edit-check (PostToolUse), one tool_use_id. Paths that existed
     //    before the call -- a symlink to /dev/null, a FIFO, an untracked file -- must not be named; a write through an
-    //    interpreter, which no redirect reveals, must be, with a remedy that can undo an untracked file.
+    //    interpreter, which no redirect reveals, must be, with a remedy that can undo an untracked file, and every later
+    //    call must still report it until it is gone (PR #109 review).
     const masks54 = ['.mcp.json', '.bashrc', 'notes-54.txt', 'evidence-54.txt'].map((f) => path.join(wt, f));
     fs.symlinkSync('/dev/null', masks54[0]);
     sh('mkfifo', [masks54[1]]);
@@ -695,10 +696,13 @@ process.stderr.write('fake gh: unexpected ' + j); process.exit(9);
     };
     const ro54 = bash54('toolu_pf54_ls', 'ls -la 2>/dev/null');
     const wr54 = bash54('toolu_pf54_node', `node -e "require('fs').writeFileSync('evidence-54.txt', 'x')"`);
+    const later54 = bash54('toolu_pf54_later', 'ls'); // not undone: every later call still reports it
     for (const f of masks54) fs.rmSync(f, { force: true });
+    const cleared54 = bash54('toolu_pf54_after', 'ls');
     const caught54 = ro54.guard === 0 && !ro54.reason.includes('[scope]') && wr54.reason.includes('[scope]') && wr54.reason.includes('evidence-54.txt') &&
-      wr54.reason.includes('rm -- evidence-54.txt') && !/\.mcp\.json|\.bashrc|notes-54/.test(wr54.reason) && !wr54.reason.includes('git checkout --');
-    record(54, 'the shell scope check blames a Bash call for paths it did not change (sandbox masks, pre-existing untracked files) or misses an interpreter write', 'post-edit-check compares the worktree before (guard-bash) and after the call; regular files and symlinks only', caught54, `ls -> ${ro54.reason.includes('[scope]') ? ro54.reason.split('\n').find((l) => l.startsWith('[scope]')) : 'no scope finding'}; node write -> ${wr54.reason.includes('[scope]') ? wr54.reason.split('\n').slice(-4).join(' / ') : 'not caught'}`, 'mechanical');
+      wr54.reason.includes('rm -- evidence-54.txt') && !/\.mcp\.json|\.bashrc|notes-54/.test(wr54.reason) && !wr54.reason.includes('git checkout --') &&
+      later54.reason.includes('evidence-54.txt') && !cleared54.reason.includes('[scope]');
+    record(54, 'the shell scope check blames a Bash call for paths it did not change (sandbox masks, pre-existing untracked files), misses an interpreter write, or forgets it on the next call', 'post-edit-check compares the worktree before (guard-bash) and after the call; regular files and symlinks only', caught54, `ls -> ${ro54.reason.includes('[scope]') ? ro54.reason.split('\n').find((l) => l.startsWith('[scope]')) : 'no scope finding'}; node write -> ${wr54.reason.includes('[scope]') ? wr54.reason.split('\n').slice(-4).join(' / ') : 'not caught'}; next call -> ${later54.reason.includes('evidence-54.txt') ? 'still reported' : 'forgotten'}`, 'mechanical');
 
     // 48 "no checks reported" (CI not started yet) or a red check is read as mergeable
     const req48 = G.projectChecks(root);

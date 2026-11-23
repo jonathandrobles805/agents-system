@@ -118,16 +118,15 @@ function git(args, cwd) {
 /**
  * After a Bash command: the files THIS call changed (shell_changes.js: a snapshot before the call against one after
  * it; only regular files and symlinks) that are outside the spec's allow-list. Catches sed -i, redirects, heredocs,
- * cp, mv and interpreter writes, new untracked files included. Each entry: { rel, xy, kind }.
+ * cp, mv and interpreter writes, new untracked files included. Each entry: { rel, xy, kind, prior }.
  */
 export function shellScopeViolations(lane, changed) {
-  const [, change, create] = K.specFileLists(lane.specPath);
-  const allowed = [...change, ...create, ...lane.alwaysAllowed(), 'ROADMAP.md'];
+  const outside = S.outsideSpec(lane);
   const bad = [];
   for (const c of changed) {
     const rel = c.rel;
     if (rel.startsWith('.claude/')) continue;
-    if (!K.globMatch(rel, allowed)) bad.push(c);
+    if (outside(rel)) bad.push(c);
   }
   return bad;
 }
@@ -135,20 +134,58 @@ export function shellScopeViolations(lane, changed) {
 const shq = (s) => (/^[A-Za-z0-9_./@%+=:,-]+$/.test(s) ? s : `'${s.replaceAll("'", `'\\''`)}'`);
 
 /**
- * How to undo each change: a path HEAD has is restored from HEAD (index and worktree), a path HEAD does not have is
- * removed. `git checkout -- <path>` was the old advice for every path, and it cannot undo a new untracked file.
+ * How to undo one change. A path that was already there, changed, before the command goes back to that content: no
+ * command can do that for it, and removing or resetting it would destroy work that was not the command's. Otherwise a
+ * path HEAD has is restored from HEAD (index and worktree) and a path HEAD does not have is removed.
+ * `git checkout -- <path>` was the old advice for every path, and it cannot undo a new untracked file.
  */
 export function undoCommand(c) {
   const p = shq(c.rel);
+  if (c.prior && c.prior.k === null) return `rm -- ${p}   (it was deleted before the command)`;
+  if (c.prior) return `put back the content ${p} had before the command (it was already there and changed; do not delete or reset it)`;
   if (c.xy === '??') return `rm -- ${p}`;
   if ('ARC'.includes(c.xy[0])) return `git rm -f -- ${p}`;
   return `git restore --source=HEAD --staged --worktree -- ${p}`;
 }
 
-export function scopeMessage(bad) {
-  return "[scope] this shell command changed files outside the spec's allow-list: " + bad.map((c) => c.rel).join(', ') +
-    '\nUndo each one:\n' + bad.map((c) => '  ' + undoCommand(c)).join('\n') +
+/**
+ * The [scope] finding: what this command changed, what appeared while other calls overlapped it (which cannot be put
+ * on this command alone), and what earlier commands changed and is still there. One remedy list for all of them.
+ */
+export function scopeMessage({ mine = [], overlap = [], earlier = [] }) {
+  const all = [...mine, ...overlap, ...earlier];
+  if (!all.length) return null;
+  const names = (xs) => xs.map((c) => c.rel).join(', ');
+  const lines = [];
+  if (mine.length) lines.push("[scope] this shell command changed files outside the spec's allow-list: " + names(mine));
+  if (overlap.length) {
+    lines.push("[scope] files outside the spec's allow-list changed while other shell commands were running alongside this one, " +
+      'so they cannot be attributed to this command alone: ' + names(overlap) +
+      '\nThey are outside the allow-list whichever command wrote them; if one still running meant to write them, let it finish first.');
+  }
+  if (earlier.length) lines.push("[scope] files outside the spec's allow-list that an earlier shell command changed are still there: " + names(earlier));
+  return lines.join('\n') + '\nUndo each one:\n' + all.map((c) => '  ' + undoCommand(c)).join('\n') +
     '\nor, if the spec is what is wrong, leave them and stop: record under Escalation that the spec needs amending.';
+}
+
+/**
+ * Sort the lane's outstanding flagged paths for the message: flagged by this call (as it was judged), flagged by
+ * another call during this one's window (overlap), or flagged before it (earlier).
+ */
+export function groupFlags(list, id, from) {
+  const g = { mine: [], overlap: [], earlier: [] };
+  for (const f of list) {
+    if (id && f.call === id) g[f.how === 'overlap' ? 'overlap' : 'mine'].push(f);
+    else if (id && f.at >= from) g.overlap.push(f);
+    else g.earlier.push(f);
+  }
+  return g;
+}
+
+/** The block for a list of findings: in build red checks are failures to fix; elsewhere only scope and weakened tests block. */
+function problems(lane, parts) {
+  const head = lane && !attemptsCount(lane) ? 'post-edit-check found problems. Fix them before continuing.' : 'post-edit-check found problems. Fix them before continuing; do not mark anything done.';
+  return K.feedbackBlock(head + '\n\n' + parts.join('\n\n'));
 }
 
 /** Run a shell command: [exit code, stdout + stderr]. 124 on timeout. */
@@ -205,28 +242,37 @@ export function main() {
 
   // What this Bash call changed is measured before any check runs, so a file the checks themselves write (coverage,
   // build info) is never blamed on the command, and on every Bash call, not only those SHELL_WRITES recognises: an
-  // interpreter or a formatter writes without a redirect. After the run, the lane's state is recorded again as the
-  // baseline for a later call that has no before-snapshot (shell_changes.js).
-  let scopeBad = [];
+  // interpreter or a formatter writes without a redirect. Out-of-scope changes are flagged and reported on every later
+  // run until they are undone. After the run, the lane's state is recorded as the baseline for a later call that has
+  // no before-snapshot, rewritten only when it changed (shell_changes.js).
+  let scope = null;
   let after = null;
+  let checksMayWrite = true;
   if (lane && d.tool_name === 'Bash') {
+    checksMayWrite = SHELL_WRITES.test(text(ti0.command));
     try {
-      const r = S.changedByCall(lane, d);
+      const r = S.assess(lane, d);
       after = r.after;
-      scopeBad = shellScopeViolations(lane, r.changed);
+      const bad = shellScopeViolations(lane, r.changed);
+      S.flag(lane, d, bad, r.overlap ? 'overlap' : 'this');
+      const still = after ? S.outstanding(lane, after) : [];
+      S.release(lane, d, r);
+      scope = groupFlags(still, text(d.tool_use_id), r.from);
+      if (bad.length) {
+        K.appendEvent(events, { event: 'blocked', tool: 'Bash', result: 'blocked', summary: (r.overlap ? 'shell edit outside spec (overlapping calls): ' : 'shell edit outside spec: ') + bad.slice(0, 5).map((c) => c.rel).join(', ') });
+      }
     } catch (e) {
       K.appendEvent(events, { event: 'scope_unchecked', tool: 'Bash', result: 'fail', summary: `shell scope check could not run: ${clip(String(e?.message ?? e), 200)}` });
     }
-    if (scopeBad.length) {
-      K.appendEvent(events, { event: 'blocked', tool: 'Bash', result: 'blocked', summary: 'shell edit outside spec: ' + scopeBad.slice(0, 5).map((c) => c.rel).join(', ') });
-    }
   }
   try {
-    return checkCall({ d, lane, root, kit, timeout, rel, events, scopeBad });
+    return checkCall({ d, lane, root, kit, timeout, rel, events, scope });
   } finally {
     if (lane) {
       try {
-        S.saveLast(lane, after);
+        // a run with no checks leaves the worktree as `after` found it; otherwise look again, past what the checks wrote
+        const end = after && !checksMayWrite ? after : S.snapshot(lane.root, after ?? S.readLast(lane.root));
+        if (end) S.writeLast(lane.root, end);
       } catch {
         // the next call falls back to the session start; nothing to block on
       }
@@ -234,13 +280,13 @@ export function main() {
   }
 }
 
-function checkCall({ d, lane, root, kit, timeout, rel, events, scopeBad }) {
+function checkCall({ d, lane, root, kit, timeout, rel, events, scope }) {
   const cmds = kit.commands ?? {};
   const ti = d.tool_input && typeof d.tool_input === 'object' ? d.tool_input : {};
   if (d.tool_name === 'Bash' && !SHELL_WRITES.test(text(ti.command))) {
-    // A command that does not look like a write runs no checks; what it changed was still measured above.
-    if (scopeBad.length) return K.feedbackBlock('post-edit-check found problems. Fix them before continuing.\n\n' + scopeMessage(scopeBad));
-    return 0;
+    // A command that does not look like a write runs no checks; what it changed was still measured in main().
+    const msg = scope ? scopeMessage(scope) : null;
+    return msg ? problems(lane, [msg]) : 0;
   }
 
   const log = lane ? lane.logPath : path.join(root, '.claude', 'session', 'checks.log');
@@ -290,8 +336,14 @@ function checkCall({ d, lane, root, kit, timeout, rel, events, scopeBad }) {
     failures.push('[tests weakened] ' + weak.join('; ') + '\nRemoving assertions or skipping tests is not a fix. Restore them, or record why in progress.md under Uncertainties and let the reviewer decide.');
   }
 
-  // Shell edits outside the spec are invisible to the pre-edit hook; they were measured in main().
-  if (scopeBad.length) failures.push(scopeMessage(scopeBad));
+  // Shell edits outside the spec are invisible to the pre-edit hook; they were measured in main(). An Edit or Write
+  // run reports the ones still there, so they are not forgotten while the agent works on through the editor.
+  if (lane && !scope && d.tool_name !== 'Bash') {
+    const still = S.outstandingNow(lane);
+    if (still.length) scope = { earlier: still };
+  }
+  const scopeMsg = scope ? scopeMessage(scope) : null;
+  if (scopeMsg) failures.push(scopeMsg);
 
   // Attempt counter: the same failure red N times in a row is an escalation, not a fourth try. Only in build: while
   // reproducing, planning or writing tests, red is the expected result, not a failed fix (field test #36).
@@ -316,9 +368,9 @@ function checkCall({ d, lane, root, kit, timeout, rel, events, scopeBad }) {
     if (lane && !attemptsCount(lane)) {
       const blocking = failures.filter((f) => f.startsWith('[scope]') || f.startsWith('[tests weakened]'));
       if (!blocking.length) return 0;
-      return K.feedbackBlock('post-edit-check found problems. Fix them before continuing.\n\n' + blocking.join('\n\n'));
+      return problems(lane, blocking);
     }
-    return K.feedbackBlock('post-edit-check found problems. Fix them before continuing; do not mark anything done.\n\n' + failures.join('\n\n'));
+    return problems(lane, failures);
   }
   return 0;
 }

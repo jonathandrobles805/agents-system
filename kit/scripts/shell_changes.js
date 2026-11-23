@@ -1,6 +1,7 @@
 // shell_changes: which files in a lane's worktree a Bash call changed, judged by comparing a snapshot taken before the
-// call with one taken after it. Used by guard-bash (PreToolUse: the snapshot before) and post-edit-check
-// (PostToolUse: the snapshot after, the difference, and the lane's last known state).
+// call with one taken after it, and which out-of-scope changes are still there. Used by guard-bash (PreToolUse: the
+// snapshot before), post-edit-check (PostToolUse: the snapshot after, the difference, the flagged paths) and
+// done-check (Stop: no "done" while a flagged path is still there).
 //
 // Why a difference and not `git status`. `git status` answers "what differs from HEAD", which is everything the lane,
 // the setup, a human or the sandbox left in the worktree, not what this command did. The first real-agent eval
@@ -19,39 +20,58 @@
 // and no remedy an agent can apply, so it is never a change here. lstat, not stat: a symlink is judged by its target
 // string, never by what it points at, and reading a FIFO would hang.
 //
-// How a regular file is compared: by a SHA-256 of its content, so a command that rewrites a file with the same bytes
+// How a regular file is compared: by a hash of its content, so a command that rewrites a file with the same bytes
 // (a formatter run over the tree, `git stash && git stash pop`) changes nothing, and a write that keeps the size and
-// lands in the same timestamp tick is still seen. Hashing is kept cheap the way git keeps its index cheap: a file
-// whose (size, mtime, ctime, inode) are those recorded in the previous snapshot reuses that snapshot's hash, unless
-// its ctime was within RACY_MS of when that snapshot was taken (a write in the same tick would not have moved it).
-// Only paths git reports as differing from HEAD are snapshotted, so the cost follows the size of the lane's change,
-// not of the repository. A file over HASH_MAX_BYTES is compared by (size, mtime, ctime, inode) alone.
+// lands in the same timestamp tick is still seen. A file whose (size, mtime, ctime, inode) are those of the previous
+// snapshot is not hashed again; the one exception is git's "racy" case, a file whose ctime was within RACY_MS of
+// when that snapshot was taken, which a same-tick write would not have moved (only files touched in the two seconds
+// before the previous snapshot). Only paths git reports as differing from HEAD are snapshotted, so the cost follows
+// the size of the lane's change, not of the repository. A file over HASH_MAX_BYTES is compared by its stat tuple.
 //
 // The baseline, best first:
 //   before   the snapshot guard-bash took for this tool_use_id (PreToolUse), the same mechanism the read log uses to
-//            hand PreToolUse state to PostToolUse: a file under .claude/session/
-//   last     the lane's last known state, written by post-edit-check at the end of every run it makes in the lane
-//            (a session whose guard-bash predates this file, or a call with no tool_use_id)
+//            hand PreToolUse state to PostToolUse: a file under .claude/session/. It is a reference, not a copy, when
+//            the worktree is as the lane's last state recorded it, which is the usual case.
+//   last     the lane's last known state, written by post-edit-check after every run it makes in the lane, and
+//            rewritten only when it changed (a session whose guard-bash predates this file, or no tool_use_id)
 //   session  neither exists: only a regular file or symlink whose ctime is after the session started (the
 //            transcript's first timestamp, else the lane stage's `started`) counts, and no deletion does, so nothing
 //            that existed before the session is ever blamed on it
 //
-// Calls that run in parallel share a window: a file written by one is reported by every call whose window covers
-// the write. It was still written by a shell command of this session, which is what the scope check is for.
+// Calls that overlap. Claude Code runs a message's tool calls in parallel, and a write by one lands in the window of
+// every call running alongside it. When another call was in flight during this one (its before-file is there and
+// the transcript has no result for it) or finished inside this one's window, a change is reported as having
+// appeared during overlapping calls, not as written by this command. It still blocks.
+//
+// Flagged paths. An out-of-scope change is recorded in flagged.json and reported on every later post-edit-check run
+// in the lane, and done-check refuses "done", until the path is removed, restored to HEAD, put back to the content it
+// had before the command, or the spec is amended to allow it. A path is flagged for the lane, not only the session
+// that wrote it: the worktree is shared, and what any session left behind is in the lane's diff.
+//
+// Duplicate runs. Claude Code runs "the same handler in more than one settings file" once; it says nothing of the
+// same command in settings and in an agent's frontmatter [docs: https://code.claude.com/docs/en/hooks @ 2026-11-23],
+// and the kit registers post-edit-check in both. The first run claims the before-file by renaming it (atomic: one
+// run wins) and deletes it when done; a second run waits for the claim to go and then reads the flags the first
+// one recorded, so both report the same thing and nothing is kept for the duplicate.
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import * as K from './kitlib.js';
 
-export const SCHEMA = 1;
+export const SCHEMA = 2;
 export const HASH_MAX_BYTES = 8 * 1024 * 1024;
 /** Timestamp granularity to allow for: ext4 and APFS are well under it; FAT's 2 s is the coarsest a worktree may sit on. */
 export const RACY_MS = 2000;
-/** Before-snapshots of calls that never reached PostToolUse (a guard refused, the human denied) are pruned after this. */
-export const STALE_BEFORE_MS = 24 * 3600 * 1000;
+/** Claude Code's Bash tool runs at most 10 minutes; a before-file older than this belongs to a call that never got a PostToolUse. */
+export const ORPHAN_MS = 15 * 60 * 1000;
+/** A temporary file is renamed within milliseconds of being written; one this old was left by a killed process. */
+export const TMP_ORPHAN_MS = 60 * 1000;
+/** How long a duplicate post-edit-check run waits for the run that claimed the before-file. */
+export const DUPLICATE_WAIT_MS = 20 * 1000;
 const STATE_DIR = path.join(K.SESSION_DIR, 'shell');
 const SESSION_PREFIX = K.SESSION_DIR.split(path.sep).join('/') + '/';
+const TRANSCRIPT_TAIL = 4 * 1024 * 1024;
 
 /** The only kinds that have content a shell command can change. */
 export const CONTENT_KINDS = new Set(['file', 'symlink']);
@@ -67,19 +87,14 @@ export function kindOf(st) {
 
 function lstatOrNull(lstat, p) {
   try {
-    return lstat(p, { bigint: true });
+    return lstat(p);
   } catch (e) {
     if (e?.code === 'ENOENT' || e?.code === 'ENOTDIR') return null;
     throw e;
   }
 }
 
-const ns = (st, key) => {
-  const v = st[`${key}Ns`];
-  return typeof v === 'bigint' ? v : BigInt(Math.round(Number(st[`${key}Ms`] ?? 0) * 1e6));
-};
-
-/** SHA-256 of a regular file's content; null when it is not a regular file by the time it is opened. Never blocks on a FIFO. */
+/** Hash of a regular file's content (128 bits of SHA-256); null when it is not a regular file by the time it is opened. Never blocks on a FIFO. */
 function hashFile(abs) {
   let fd;
   try {
@@ -92,7 +107,7 @@ function hashFile(abs) {
     const h = crypto.createHash('sha256');
     const buf = Buffer.allocUnsafe(1 << 16);
     for (let n; (n = fs.readSync(fd, buf, 0, buf.length, null)) > 0;) h.update(buf.subarray(0, n));
-    return h.digest('hex');
+    return h.digest('hex').slice(0, 32);
   } catch {
     return null;
   } finally {
@@ -101,15 +116,14 @@ function hashFile(abs) {
 }
 
 /**
- * One path's state. `prev` is the same path's entry in the previous snapshot and `prevTaken` when that snapshot was
- * taken, so an unchanged file is not hashed again. `lstat` is injectable for tests.
+ * One path's state: { k, c, m?, h?, t? } (kind, ctime ms, stat tuple, content hash, symlink target). `prev` is the
+ * same path's entry in the previous snapshot and `prevTaken` when that was taken. `lstat` is injectable for tests.
  */
 export function entryFor(abs, { prev = null, prevTaken = 0, lstat = fs.lstatSync } = {}) {
   const st = lstatOrNull(lstat, abs);
   const k = kindOf(st);
   if (k === null) return { k: null };
-  const ctimeNs = ns(st, 'ctime');
-  const e = { k, c: Number(ctimeNs / 1000000n) };
+  const e = { k, c: Math.floor(Number(st.ctimeMs)) };
   if (k === 'symlink') {
     try {
       e.t = fs.readlinkSync(abs);
@@ -117,9 +131,9 @@ export function entryFor(abs, { prev = null, prevTaken = 0, lstat = fs.lstatSync
       e.t = null;
     }
   } else if (k === 'file') {
-    const size = BigInt(st.size);
-    e.m = `${size}:${ns(st, 'mtime')}:${ctimeNs}:${st.ino}`;
-    if (size <= BigInt(HASH_MAX_BYTES)) {
+    const size = Number(st.size);
+    e.m = `${size}:${Number(st.mtimeMs)}:${Number(st.ctimeMs)}:${st.ino}`;
+    if (size <= HASH_MAX_BYTES) {
       const reuse = prev && prev.k === 'file' && prev.m === e.m && prev.h && prev.c < prevTaken - RACY_MS;
       e.h = reuse ? prev.h : hashFile(abs);
     }
@@ -140,16 +154,17 @@ export function dirtyPaths(root) {
     const rec = parts[i];
     if (rec.length < 4) continue;
     const xy = rec.slice(0, 2);
-    out.set(rec.slice(3), xy);
+    const rel = rec.slice(3);
     if (xy[0] === 'R' || xy[0] === 'C') {
       const src = parts[++i];
-      if (src && xy[0] === 'R' && !out.has(src)) out.set(src, ' D');
+      if (src && xy[0] === 'R' && !out.has(src) && !src.startsWith(SESSION_PREFIX)) out.set(src, ' D');
     }
+    if (!rel.startsWith(SESSION_PREFIX)) out.set(rel, xy); // the hooks' own state, these files included, never a command's
   }
   return out;
 }
 
-/** Snapshot of the lane's changed paths: { v, taken, entries: { rel: entry } }. null when git cannot answer. */
+/** Snapshot of the lane's changed paths: { taken, entries: { rel: entry } }. null when git cannot answer. */
 export function snapshot(root, prev = null, { lstat = fs.lstatSync, now = Date.now } = {}) {
   const taken = now();
   const dirty = dirtyPaths(root);
@@ -158,13 +173,13 @@ export function snapshot(root, prev = null, { lstat = fs.lstatSync, now = Date.n
   const prevTaken = Number(prev?.taken) || 0;
   const entries = {};
   for (const [rel, xy] of dirty) {
-    if (rel.startsWith(SESSION_PREFIX)) continue; // the hooks' own state, these snapshots included, never a command's
     entries[rel] = { xy, ...entryFor(path.join(root, rel), { prev: prevEntries[rel] ?? null, prevTaken, lstat }) };
   }
-  return { v: SCHEMA, taken, entries };
+  return { taken, entries };
 }
 
-function sameContent(a, b) {
+export function sameContent(a, b) {
+  if (!a || !b) return !a && !b;
   if (a.k !== b.k) return false;
   if (a.k === 'file') return a.h && b.h ? a.h === b.h : a.m === b.m;
   if (a.k === 'symlink') return a.t === b.t;
@@ -172,7 +187,8 @@ function sameContent(a, b) {
 }
 
 /**
- * The paths whose content changed between `before` and `after`: [{ rel, xy, kind }] (kind null = deleted).
+ * The paths whose content changed between `before` and `after`: [{ rel, xy, kind, prior }] (kind null = deleted;
+ * prior = the path's entry in `before`, null when git did not list it there).
  *
  * A path in `before` is changed when its content differs. A path git did not list in `before` was then identical to
  * HEAD, so it changed if it is gone now, or if its ctime is after `before` was taken: a path that differs from HEAD
@@ -194,31 +210,109 @@ export function changedPaths(before, after) {
     } else {
       changed = CONTENT_KINDS.has(a.k) && a.c >= since - RACY_MS;
     }
-    if (changed) out.push({ rel, xy: a.xy, kind: a.k });
+    if (changed) out.push({ rel, xy: a.xy, kind: a.k, prior: b });
   }
   return out.sort((x, y) => (x.rel < y.rel ? -1 : x.rel > y.rel ? 1 : 0));
 }
 
+// ---------------------------------------------------------------------------------------------- storage
+
 const stateDir = (laneRoot) => path.join(laneRoot, STATE_DIR);
 const safeId = (id) => String(id).replace(/[^A-Za-z0-9_.-]/g, '_');
 export const beforePath = (laneRoot, toolUseId) => path.join(stateDir(laneRoot), `before.${safeId(toolUseId)}.json`);
+const claimPath = (laneRoot, toolUseId) => path.join(stateDir(laneRoot), `claim.${safeId(toolUseId)}.json`);
 export const lastPath = (laneRoot) => path.join(stateDir(laneRoot), 'last.json');
+export const flaggedPath = (laneRoot) => path.join(stateDir(laneRoot), 'flagged.json');
+const windowsPath = (laneRoot) => path.join(stateDir(laneRoot), 'windows.json');
+
+/** Entries on disk: one array per path, [xy, kind, ctime, stat tuple, hash or link target]. */
+const pack = (e) => [e.xy ?? '', e.k, e.c ?? 0, e.m ?? null, e.k === 'symlink' ? e.t ?? null : e.h ?? null];
+function unpack(a) {
+  if (!Array.isArray(a)) return null;
+  const [xy, k, c, m, x] = a;
+  const e = { xy, k, c };
+  if (m !== null) e.m = m;
+  if (k === 'symlink') e.t = x;
+  else if (x !== null) e.h = x;
+  return e;
+}
+const packEntries = (entries) => Object.fromEntries(Object.entries(entries).map(([rel, e]) => [rel, pack(e)]));
+const unpackEntries = (packed) => Object.fromEntries(Object.entries(packed ?? {}).map(([rel, a]) => [rel, unpack(a)]));
+
+/** The packed entries and their digest: two snapshots with the same digest record the same state. */
+function serialize(snap) {
+  const packed = packEntries(snap.entries);
+  const text = JSON.stringify(packed);
+  return { packed, digest: crypto.createHash('sha256').update(text).digest('hex').slice(0, 32) };
+}
 
 function readJson(p) {
   try {
     const v = JSON.parse(fs.readFileSync(p, 'utf8'));
-    return v && typeof v === 'object' && v.v === SCHEMA && v.entries && typeof v.entries === 'object' ? v : null;
+    return v && typeof v === 'object' && v.v === SCHEMA ? v : null;
   } catch {
     return null;
   }
 }
 
-/** Write via a temporary file and rename, so a parallel reader never sees half a snapshot. */
+/** Write via a temporary file and rename, so a parallel reader never sees half a file. */
 function writeJson(p, value) {
   fs.mkdirSync(path.dirname(p), { recursive: true });
   const tmp = `${p}.${process.pid}.${crypto.randomBytes(4).toString('hex')}.tmp`;
   fs.writeFileSync(tmp, JSON.stringify(value));
   fs.renameSync(tmp, p);
+}
+
+/** The lane's last known state: { taken, digest, entries } or null. */
+export function readLast(laneRoot) {
+  const v = readJson(lastPath(laneRoot));
+  return v && v.entries ? { taken: Number(v.taken) || 0, digest: v.digest, entries: unpackEntries(v.entries) } : null;
+}
+
+/** True when two snapshots record the same entries (compared field by field: cheaper than serializing them). */
+export function sameEntries(a, b) {
+  const ka = Object.keys(a.entries);
+  if (ka.length !== Object.keys(b.entries).length) return false;
+  for (const rel of ka) {
+    const x = a.entries[rel];
+    const y = b.entries[rel];
+    if (!y || x.xy !== y.xy || x.k !== y.k || x.c !== y.c || x.m !== y.m || x.h !== y.h || x.t !== y.t) return false;
+  }
+  return true;
+}
+
+/** Whether `last` holds a hash that was "racy" when taken (see entryFor) but would not be now: worth recording again once. */
+const settles = (last, now) => Object.values(last.entries).some((e) => e.h && e.c >= last.taken - RACY_MS && e.c < now - RACY_MS);
+
+/**
+ * Record `snap` as the lane's last state, unless it is the state already recorded: an unchanged worktree costs no
+ * write. It is rewritten once more when that lets recently written files' hashes be reused from then on.
+ */
+export function writeLast(laneRoot, snap, last = readLast(laneRoot)) {
+  if (last && sameEntries(snap, last) && !settles(last, snap.taken)) return last.digest;
+  const { packed, digest } = serialize(snap);
+  writeJson(lastPath(laneRoot), { v: SCHEMA, taken: snap.taken, digest, entries: packed });
+  return digest;
+}
+
+/** Remove what a killed or refused call left: before- and claim-files past ORPHAN_MS, temporary files past TMP_ORPHAN_MS. */
+export function prune(laneRoot, now = Date.now()) {
+  const dir = stateDir(laneRoot);
+  let names;
+  try {
+    names = fs.readdirSync(dir);
+  } catch {
+    return;
+  }
+  for (const f of names) {
+    const limit = f.endsWith('.tmp') ? TMP_ORPHAN_MS : f.startsWith('before.') || f.startsWith('claim.') ? ORPHAN_MS : null;
+    if (limit === null) continue;
+    try {
+      if (now - fs.statSync(path.join(dir, f)).mtimeMs > limit) fs.rmSync(path.join(dir, f), { force: true });
+    } catch {
+      // another hook removed it
+    }
+  }
 }
 
 /** The lane post-edit-check would judge this call in: for a Bash call, the one holding the hook's cwd. */
@@ -227,23 +321,22 @@ export function laneOf(d) {
   return K.laneFor(cwd, null);
 }
 
+const toolUseId = (d) => (typeof d?.tool_use_id === 'string' && d.tool_use_id ? d.tool_use_id : null);
+
 /** PreToolUse on Bash (guard-bash, once it lets the call through): record the lane's state for this tool_use_id. */
 export function recordBefore(d) {
-  const id = typeof d?.tool_use_id === 'string' && d.tool_use_id ? d.tool_use_id : null;
+  const id = toolUseId(d);
   const lane = id ? laneOf(d) : null;
   if (!lane) return null;
-  const snap = snapshot(lane.root, readJson(lastPath(lane.root)));
+  const last = readLast(lane.root);
+  const snap = snapshot(lane.root, last);
   if (!snap) return null;
-  writeJson(beforePath(lane.root, id), snap);
-  const dir = stateDir(lane.root);
-  for (const f of fs.readdirSync(dir)) {
-    if (!f.startsWith('before.')) continue;
-    try {
-      if (Date.now() - fs.statSync(path.join(dir, f)).mtimeMs > STALE_BEFORE_MS) fs.rmSync(path.join(dir, f), { force: true });
-    } catch {
-      // another hook removed it
-    }
-  }
+  const rec = { v: SCHEMA, session: typeof d.session_id === 'string' ? d.session_id : '', taken: snap.taken };
+  // The usual case: nothing changed since post-edit-check recorded the lane's state, so a reference is enough.
+  if (last && sameEntries(snap, last)) Object.assign(rec, { same_as_last: true, digest: last.digest });
+  else rec.entries = packEntries(snap.entries);
+  writeJson(beforePath(lane.root, id), rec);
+  prune(lane.root);
   return snap;
 }
 
@@ -253,56 +346,201 @@ function wallClockMs(s) {
   return m ? new Date(+m[1], +m[2] - 1, +m[3], +m[4], +m[5], +(m[6] ?? 0)).getTime() : NaN;
 }
 
+function readHead(p, n) {
+  try {
+    const fd = fs.openSync(p, 'r');
+    try {
+      const buf = Buffer.alloc(n);
+      return buf.subarray(0, fs.readSync(fd, buf, 0, n, 0)).toString('utf8');
+    } finally {
+      fs.closeSync(fd);
+    }
+  } catch {
+    return null;
+  }
+}
+
+function readTail(p, n) {
+  try {
+    const fd = fs.openSync(p, 'r');
+    try {
+      const size = fs.fstatSync(fd).size;
+      const len = Math.min(size, n);
+      const buf = Buffer.alloc(len);
+      return buf.subarray(0, fs.readSync(fd, buf, 0, len, size - len)).toString('utf8');
+    } finally {
+      fs.closeSync(fd);
+    }
+  } catch {
+    return null;
+  }
+}
+
 /** When the session started: the transcript's first timestamp, else the lane stage's `started`; NaN when neither is known. */
 export function sessionStartMs(d, lane) {
   const tp = typeof d?.transcript_path === 'string' ? d.transcript_path : '';
-  if (tp) {
+  const head = tp ? readHead(tp, 64 * 1024) : null;
+  const m = head ? /"timestamp"\s*:\s*"([^"]+)"/.exec(head) : null;
+  const t = m ? Date.parse(m[1]) : NaN;
+  return Number.isFinite(t) ? t : wallClockMs(lane?.data?.started);
+}
+
+const sleep = (ms) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+
+/** Take this call's before-file for this run alone; null when there is none (or another run of the same hook took it). */
+function claimBefore(laneRoot, id) {
+  const claim = claimPath(laneRoot, id);
+  try {
+    fs.renameSync(beforePath(laneRoot, id), claim);
+  } catch {
+    return null;
+  }
+  return readJson(claim);
+}
+
+/**
+ * Whether another Bash call ran during [from, to]: one still in flight (its before- or claim-file is there, is not an
+ * orphan, and the transcript has no result for it) or one that finished inside the window.
+ */
+function overlapped(lane, d, id, from, to) {
+  const wins = readJson(windowsPath(lane.root))?.calls ?? [];
+  if (wins.some((w) => w.id !== id && w.to > from && w.from < to)) return true;
+  let names;
+  try {
+    names = fs.readdirSync(stateDir(lane.root));
+  } catch {
+    return false;
+  }
+  const others = [];
+  for (const f of names) {
+    const m = /^(?:before|claim)\.(.+)\.json$/.exec(f);
+    if (!m || m[1] === safeId(id)) continue;
     try {
-      const fd = fs.openSync(tp, 'r');
-      const buf = Buffer.alloc(64 * 1024);
-      const n = fs.readSync(fd, buf, 0, buf.length, 0);
-      fs.closeSync(fd);
-      const m = /"timestamp"\s*:\s*"([^"]+)"/.exec(buf.subarray(0, n).toString('utf8'));
-      const t = m ? Date.parse(m[1]) : NaN;
-      if (Number.isFinite(t)) return t;
+      const st = fs.statSync(path.join(stateDir(lane.root), f));
+      if (to - st.mtimeMs < ORPHAN_MS && st.mtimeMs < to) others.push(m[1]);
     } catch {
-      // no transcript
+      // finished meanwhile
     }
   }
-  return wallClockMs(lane?.data?.started);
+  if (!others.length) return false;
+  // A call the human or a permission rule refused never gets a PostToolUse, but the transcript has its result.
+  const tp = typeof d?.transcript_path === 'string' ? d.transcript_path : '';
+  const tail = tp ? readTail(tp, TRANSCRIPT_TAIL) : null;
+  return others.some((o) => !tail || !new RegExp(`"tool_use_id"\\s*:\\s*"${o.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}"`).test(tail));
+}
+
+function recordWindow(laneRoot, w) {
+  const cutoff = w.to - ORPHAN_MS;
+  const calls = (readJson(windowsPath(laneRoot))?.calls ?? []).filter((x) => x.to > cutoff && x.id !== w.id).slice(-199);
+  writeJson(windowsPath(laneRoot), { v: SCHEMA, calls: [...calls, w] });
 }
 
 /**
- * The state to compare this call's end state with: { snap, via: 'before' | 'last' | 'session' | 'none' }. With 'none'
- * (no snapshot and no known session start) nothing can be attributed and nothing is.
+ * PostToolUse on Bash: what this call changed. { changed, after, via, overlap, from, claimed }.
+ * Call release() once the result is recorded.
  */
-export function baselineFor(lane, d) {
-  const id = typeof d?.tool_use_id === 'string' && d.tool_use_id ? d.tool_use_id : null;
-  const before = id ? readJson(beforePath(lane.root, id)) : null;
-  if (before) return { snap: before, via: 'before' };
-  const last = readJson(lastPath(lane.root));
-  if (last) return { snap: last, via: 'last' };
-  const start = sessionStartMs(d, lane);
-  if (Number.isFinite(start)) return { snap: { v: SCHEMA, taken: start + RACY_MS, partial: true, entries: {} }, via: 'session' };
-  return { snap: null, via: 'none' };
+export function assess(lane, d) {
+  const id = toolUseId(d);
+  let rec = id ? claimBefore(lane.root, id) : null;
+  let duplicate = false;
+  if (!rec && id && fs.existsSync(claimPath(lane.root, id))) {
+    // another run of this same hook claimed it: wait for it to record what it found, then report the same
+    duplicate = true;
+    for (const t0 = Date.now(); fs.existsSync(claimPath(lane.root, id)) && Date.now() - t0 < DUPLICATE_WAIT_MS;) sleep(25);
+  }
+  const last = readLast(lane.root);
+  let base = null;
+  let via;
+  let overlap = false;
+  if (rec?.entries) {
+    base = { taken: rec.taken, entries: unpackEntries(rec.entries) };
+    via = 'before';
+  } else if (rec?.same_as_last && last) {
+    base = last.digest === rec.digest ? { taken: rec.taken, entries: last.entries } : last;
+    // the recorded state moved on between this call's start and now: another call finished in between
+    overlap = last.digest !== rec.digest;
+    via = 'before';
+  } else if (last) {
+    base = last;
+    via = 'last';
+  } else {
+    const start = sessionStartMs(d, lane);
+    if (Number.isFinite(start)) base = { taken: start + RACY_MS, partial: true, entries: {} };
+    via = base ? 'session' : 'none';
+  }
+  const after = snapshot(lane.root, base?.partial ? last : base);
+  const from = rec ? rec.taken : base?.taken ?? 0;
+  if (!after || !base) return { changed: [], after, via, overlap: false, from, claimed: Boolean(rec), duplicate };
+  const changed = changedPaths(base, after);
+  if (changed.length && !overlap) overlap = overlapped(lane, d, id, from, after.taken);
+  return { changed, after, via, overlap, from, claimed: Boolean(rec), duplicate };
+}
+
+/** After assess(): record the call's window and delete its claim, so the directory holds no per-call file afterwards. */
+export function release(lane, d, r) {
+  const id = toolUseId(d);
+  if (id && r?.claimed) {
+    recordWindow(lane.root, { id, from: r.from, to: r.after?.taken ?? Date.now() });
+    fs.rmSync(claimPath(lane.root, id), { force: true });
+  }
+  prune(lane.root);
+}
+
+// ---------------------------------------------------------------------------------------------- flagged paths
+
+/** The spec's allow-list as a predicate: true for a path no Bash call in this lane may change. */
+export function outsideSpec(lane) {
+  const [, change, create] = K.specFileLists(lane.specPath);
+  const allowed = [...change, ...create, ...lane.alwaysAllowed(), 'ROADMAP.md'];
+  return (rel) => !rel.startsWith('.claude/') && !K.globMatch(rel, allowed);
+}
+
+function readFlags(laneRoot) {
+  const v = readJson(flaggedPath(laneRoot));
+  return v && v.paths && typeof v.paths === 'object' ? v.paths : {};
 }
 
 /**
- * PostToolUse on Bash: what this call changed. { changed, after, via }. The before-snapshot is left in place (a
- * project's settings and an agent's frontmatter can both register post-edit-check, and both runs must see it) and
- * pruned later by recordBefore.
+ * The flagged paths still outstanding against `current` (a snapshot, or entries for at least the flagged paths):
+ * [{ rel, xy, kind, prior, call, how, at }]. A path is cleared when git no longer lists it (removed, or restored to
+ * HEAD), when it is back to the content it had before the command, or when the spec now allows it. Writes the
+ * cleared list back when it changed.
  */
-export function changedByCall(lane, d) {
-  const { snap, via } = baselineFor(lane, d);
-  const last = via === 'last' ? snap : readJson(lastPath(lane.root));
-  const after = snapshot(lane.root, via === 'before' ? snap : last);
-  if (!after || !snap) return { changed: [], after, via };
-  return { changed: changedPaths(snap, after), after, via };
+export function outstanding(lane, current, outside = outsideSpec(lane)) {
+  const flags = readFlags(lane.root);
+  const keep = {};
+  const out = [];
+  for (const [rel, f] of Object.entries(flags)) {
+    const cur = current.entries[rel];
+    const there = cur && (CONTENT_KINDS.has(cur.k) || cur.k === null);
+    const prior = f.prior ? unpack(f.prior) : null;
+    if (!there || (prior && sameContent(prior, cur)) || !outside(rel)) continue;
+    keep[rel] = f;
+    out.push({ rel, xy: cur.xy, kind: cur.k, prior, call: f.call, how: f.how, at: f.at });
+  }
+  if (Object.keys(keep).length !== Object.keys(flags).length) writeJson(flaggedPath(lane.root), { v: SCHEMA, paths: keep });
+  return out.sort((x, y) => (x.rel < y.rel ? -1 : x.rel > y.rel ? 1 : 0));
 }
 
-/** Record the lane's state after a post-edit-check run, as the baseline for a later call that has no before-snapshot. */
-export function saveLast(lane, prev = null) {
-  const snap = snapshot(lane.root, prev ?? readJson(lastPath(lane.root)));
-  if (snap) writeJson(lastPath(lane.root), snap);
-  return snap;
+/** Flag out-of-scope changes this call made (or that appeared while it overlapped others). */
+export function flag(lane, d, bad, how) {
+  if (!bad.length) return;
+  const flags = readFlags(lane.root);
+  const at = Date.now();
+  for (const c of bad) {
+    if (Object.hasOwn(flags, c.rel)) continue; // first write wins: its prior is the content to go back to
+    flags[c.rel] = { session: typeof d.session_id === 'string' ? d.session_id : '', call: toolUseId(d), how, at, prior: c.prior ? pack(c.prior) : null };
+  }
+  writeJson(flaggedPath(lane.root), { v: SCHEMA, paths: flags });
+}
+
+/** Outstanding flagged paths now, for a hook that has no snapshot of its own (done-check, post-edit-check on Edit). */
+export function outstandingNow(lane, outside = outsideSpec(lane)) {
+  const flags = readFlags(lane.root);
+  if (!Object.keys(flags).length) return [];
+  const dirty = dirtyPaths(lane.root);
+  if (!dirty) return [];
+  const entries = {};
+  for (const rel of Object.keys(flags)) if (dirty.has(rel)) entries[rel] = { xy: dirty.get(rel), ...entryFor(path.join(lane.root, rel)) };
+  return outstanding(lane, { entries }, outside);
 }
