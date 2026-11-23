@@ -135,9 +135,13 @@ export function telemetryEnv({ project, slug, stage = 'build', port = Number(pro
   };
 }
 
-/** The command the host side runs to start a headless lane session inside the sandbox. Argument list, not a shell string. */
-export function launchCommand(cfg, { wt, settingsPath, prompt }) {
-  const claude = ['claude', '-p', prompt, '--permission-mode', 'default'];
+/**
+ * The command the host side runs to start a headless lane session inside the sandbox. Argument list, not a shell string.
+ * `agent` runs the whole session as that agent (`claude --agent`): the eval names the kit agent a task measures; a
+ * lane names none, so its session is the orchestrator that spawns the agents.
+ */
+export function launchCommand(cfg, { wt, settingsPath, prompt, agent = null }) {
+  const claude = ['claude', '-p', prompt, '--permission-mode', 'default', ...(agent ? ['--agent', agent] : [])];
   if (cfg.runtime === 'srt') return ['srt', '--settings', settingsPath, '--', ...claude];
   if (cfg.runtime === 'container') {
     const eng = cfg.engine || 'docker';

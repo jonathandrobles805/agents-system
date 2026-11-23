@@ -93,6 +93,17 @@ test('launchCommand per runtime', () => {
   assert.ok(c.includes('--network') && c.includes('kit-lane') && c.includes('/w:/w') && c.includes('KIT_ALLOWED_DOMAIN=a.example'));
   const none = launchCommand({ ...base, runtime: null }, { wt: '/w', settingsPath: '/x', prompt: 'p' });
   assert.equal(none[0], 'claude');
+  // a lane names no agent: its command is exactly what it was before `agent` existed
+  for (const runtime of ['srt', 'container', null]) {
+    const cfg = { ...base, runtime };
+    const lane = launchCommand(cfg, { wt: '/w', settingsPath: '/x', prompt: '/zi-run x' });
+    assert.ok(!lane.includes('--agent'), `${runtime}: ${lane.join(' ')}`);
+    assert.deepEqual(lane.slice(lane.indexOf('claude')), ['claude', '-p', '/zi-run x', '--permission-mode', 'default']);
+    // the eval names the kit agent the task measures: the session runs as it
+    const evalCmd = launchCommand(cfg, { wt: '/w', settingsPath: '/x', prompt: 'p', agent: 'tester' });
+    assert.deepEqual(evalCmd.slice(evalCmd.indexOf('claude')), ['claude', '-p', 'p', '--permission-mode', 'default', '--agent', 'tester']);
+    assert.deepEqual(evalCmd.slice(0, evalCmd.indexOf('claude')), lane.slice(0, lane.indexOf('claude')), 'the launcher before claude is unchanged');
+  }
 });
 
 test('probe: launches `true` through the runtime with a lane\'s settings and reports the runtime\'s own failure (what CI runs before the real agents)', (t) => {
