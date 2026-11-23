@@ -137,7 +137,9 @@ export async function runSet({ set, runner = 'fixture', n = set === 'full' ? 3 :
   }
   const base = baseline ? JSON.parse(fs.readFileSync(baseline, 'utf8')) : null;
   const regressions = set === 'full' && base ? compare(results, base) : [];
-  const report = { run_id: runId, set, runner, n, tasks: tasks.length, touched, baseline: baseline ? path.basename(baseline) : null, violations, regressions, results, ok: violations.length === 0 && regressions.length === 0 };
+  // a check's `why` quotes the session's files and output (provenance_tags quotes a line, a worker's stderr is kept):
+  // the whole report goes through the transcripts' redaction before it is written or returned
+  const report = JSON.parse(claudeRunner.redact(K.jsonDumps({ run_id: runId, set, runner, n, tasks: tasks.length, touched, baseline: baseline ? path.basename(baseline) : null, violations, regressions, results, ok: violations.length === 0 && regressions.length === 0 })));
   fs.writeFileSync(path.join(outDir, 'report.json'), K.jsonDumps(report, { indent: 2 }) + '\n');
   return { ...report, out: outDir };
 }

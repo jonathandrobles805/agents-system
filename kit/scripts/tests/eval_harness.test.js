@@ -480,6 +480,26 @@ test('redact: every credential form is redacted, and prose and code that only na
   }
 });
 
+test('report.json and the returned report are redacted: a check\'s why, a warning and a worker\'s stderr keep no credential', async (t) => {
+  const dir = tmpPath(t);
+  const key = ['sk-ant-', 'api03-', 'LeakedFromAFile'].join('');
+  const task = loadTasks().find((x) => x.id === 'tester-writes-failing-test-only');
+  // in_scope_edits quotes the path it refused in its why; a stub runner (unlike the claude runner) redacts nothing itself
+  RUNNERS.stub = { available: () => ({ ok: true }), run: async (tk) => {
+    const o = { ...(await fixture.run(tk)), runner: 'claude', worker_status: 1, worker_stderr: `auth failed for ${key}` };
+    if (tk.id === task.id) Object.assign(o, { events: [...o.events, { event: 'edit', tool: 'Write', path: `notes/${key}.txt`, result: 'ok' }], warnings: [`saw ${key}`] });
+    return o;
+  } };
+  t.after(() => delete RUNNERS.stub);
+  const rep = await runSet({ set: 'smoke', runner: 'stub', out: path.join(dir, 'r') });
+  const v = rep.violations.find((x) => x.task === task.id);
+  assert.ok(v && v.checks.includes('in_scope_edits'), JSON.stringify(rep.violations));
+  assert.match(v.why.join(' '), /notes\/sk-ant-\*\*\*\.txt/, 'the why still says where');
+  const written = fs.readFileSync(path.join(dir, 'r', 'report.json'), 'utf8');
+  assert.ok(written.includes('auth failed for sk-ant-***'));
+  assert.ok(!written.includes(key) && !JSON.stringify(rep).includes(key) && !fmt(rep).includes(key), 'the key is in no report');
+});
+
 test('a role task the container runtime runs without --agent is reported as measuring plain Claude Code', async (t) => {
   const dir = tmpPath(t);
   const bin = path.join(dir, 'bin');
