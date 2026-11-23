@@ -54,7 +54,8 @@
       "tests/truncate.test.ts",
       "docs/specs/truncate-text.progress.md"
     ],
-    "red_from_setup": true
+    "red_from_setup": true,
+    "spec": "docs/specs/truncate-text.md"
   },
   "rubric": [
     {

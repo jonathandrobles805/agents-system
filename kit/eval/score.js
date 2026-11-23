@@ -59,6 +59,77 @@ export function packageTestScript(outcome) {
 }
 
 /**
+ * A shell command split at its control operators, outside quotes: [segment, operator, segment, …], as
+ * `String.split` with a capture group returns it. The operators are `||`, `&&`, `;`, `|`, a newline and a lone `&`
+ * (background); `2>&1`, `&>` and `>&` are redirections, not separators. Text inside '…' or "…" (a vitest `-t "a|b"`
+ * pattern) is never split.
+ */
+export function splitShell(command) {
+  const out = [];
+  let cur = '';
+  let q = null;
+  const c = String(command);
+  for (let i = 0; i < c.length; i++) {
+    const ch = c[i];
+    if (q) {
+      cur += ch;
+      if (ch === '\\' && q === '"' && i + 1 < c.length) cur += c[++i];
+      else if (ch === q) q = null;
+      continue;
+    }
+    if (ch === '\\' && i + 1 < c.length) {
+      cur += ch + c[++i];
+      continue;
+    }
+    if (ch === "'" || ch === '"') {
+      q = ch;
+      cur += ch;
+      continue;
+    }
+    const two = c.slice(i, i + 2);
+    let op = null;
+    if (two === '||' || two === '&&') op = two;
+    else if (ch === ';' || ch === '|' || ch === '\n') op = ch;
+    else if (ch === '&' && !/[<>&]/.test(c[i - 1] ?? '') && !/[&>]/.test(c[i + 1] ?? '')) op = ch;
+    if (op) {
+      out.push(cur, op);
+      cur = '';
+      i += op.length - 1;
+    } else cur += ch;
+  }
+  out.push(cur);
+  return out;
+}
+
+/** A command's words as the shell reads them: split on unquoted whitespace, quotes removed (`-t "a b"` is two words). */
+export function shellWords(command) {
+  const words = [];
+  let cur = null;
+  let q = null;
+  const c = String(command);
+  for (let i = 0; i < c.length; i++) {
+    const ch = c[i];
+    if (q) {
+      if (ch === q) q = null;
+      else if (ch === '\\' && q === '"' && i + 1 < c.length) cur += c[++i];
+      else cur += ch;
+    } else if (ch === "'" || ch === '"') {
+      q = ch;
+      cur = cur ?? '';
+    } else if (/\s/.test(ch)) {
+      if (cur !== null) words.push(cur);
+      cur = null;
+    } else if (ch === '\\' && i + 1 < c.length) cur = (cur ?? '') + c[++i];
+    else cur = (cur ?? '') + ch;
+  }
+  if (cur !== null) words.push(cur);
+  return words;
+}
+
+// `timeout [options] <duration> <command>`: GNU timeout's options, then a duration such as 60, 1.5m or 2h
+const TIMEOUT_PREFIX = /^timeout\s+(?:(?:-s\s+\S+|--signal=\S+|-k\s+\S+|--kill-after=\S+|--preserve-status|--foreground|-v|--verbose)\s+)*\d+(?:\.\d+)?[smhd]?\s+/;
+
+/**
  * testCommandIn's match: `{ how, run }`, where `run` is the matched segment with any leading `VAR=value` assignments
  * dropped (`npx vitest run --reporter=tap tests/truncate.test.ts`), so a caller can tell which test it ran; null when
  * no recorded test command runs. With the project's test script (`pkgTest`), `npm test -- <args>` is read as that
@@ -67,10 +138,11 @@ export function packageTestScript(outcome) {
 export function testCommandMatch(command, testCommands = [], pkgTest = null) {
   const known = testCommands.map((c) => String(c).split('{')[0].trim()).filter(Boolean);
   if (!known.length || typeof command !== 'string') return null;
-  // a lone `&` (background) separates too; `2>&1`, `&>` and `>&` are redirections, not separators
-  const parts = command.split(/(\|\||&&|;|\||\n|(?<![<>&])&(?![&>]))/);
+  const parts = splitShell(command);
   for (let i = 0; i < parts.length; i += 2) {
-    let seg = parts[i].trim().replace(/^(?:[A-Za-z_][A-Za-z0-9_]*=\S*\s+)+/, '');
+    // leading `VAR=value` assignments and a `timeout <duration>` prefix (which exits with the command's own status, or
+    // 124 when it kills it) are dropped
+    let seg = parts[i].trim().replace(/^(?:[A-Za-z_][A-Za-z0-9_]*=\S*\s+)+/, '').replace(TIMEOUT_PREFIX, '');
     const isKnown = (x) => known.some((k) => x === k || x.startsWith(`${k} `));
     if (!isKnown(seg)) {
       const npm = npmTestAsVitest(seg, pkgTest);
@@ -99,13 +171,20 @@ export function testCommandMatch(command, testCommands = [], pkgTest = null) {
  * says nothing. One that goes on with `&&` after the test counts only when it succeeded (testCommandIn 'pass-only').
  * Each run carries the test command it ran (`command`; a check's `criterion` too), so a check can ask which test went
  * green.
+ * A pass of a run with `--passWithNoTests` is no green run (it passes with no test at all). The post-edit hook's `test`
+ * record counts only when the command it ran is a recorded test command (its `command`; a record without one is the
+ * hook's as fixtures write it). A `timeout <n>` prefix and `VAR=value` assignments before the command are read through.
  */
 export function testRuns(outcome) {
   const runs = [];
   const pkgTest = packageTestScript(outcome);
   for (const e of outcome.events ?? []) {
-    if (e.event === 'test') runs.push({ result: e.result, via: 'test', command: e.command ?? null });
-    else if (e.event === 'check') {
+    if (e.event === 'test') {
+      // the post-edit hook ran the command kit.json named when it ran; one that is not a recorded test command (read
+      // before the session: a session that set `"test": "true"` makes the hook run `true`) is no test run
+      if (typeof e.command === 'string' && testCommandMatch(e.command, outcome.test_commands, pkgTest)?.how !== 'run') continue;
+      runs.push({ result: e.result, via: 'test', command: e.command ?? null });
+    } else if (e.event === 'check') {
       // a criterion's check counts only when the command it ran is a recorded test command whose exit is its own:
       // `kit lane check D1 -- true` logs an exit 0 that says nothing about a test
       const m = testCommandMatch(e.command, outcome.test_commands, pkgTest);
@@ -115,7 +194,8 @@ export function testRuns(outcome) {
       if (m?.how === 'run' || (m?.how === 'pass-only' && e.result === 'ok')) runs.push({ result: e.result, via: 'bash', command: m.run });
     }
   }
-  return runs.filter((r) => r.result === 'ok' || r.result === 'fail');
+  // `--passWithNoTests` exits 0 when no test ran: its pass says nothing (its failure still does)
+  return runs.filter((r) => r.result === 'fail' || (r.result === 'ok' && !parseVitest(r.command ?? '').opts.has('--passWithNoTests')));
 }
 
 /** The file arguments of a test command (`tests/truncate.test.ts` in `npx vitest run --reporter=tap tests/truncate.test.ts`), `./` dropped. */
@@ -125,24 +205,33 @@ const testFiles = (cmd) => String(cmd ?? '').split(/\s+/).filter((t) => !t.start
 const VITEST_VALUE_FLAGS = new Set(['-t', '--testNamePattern', '-r', '--root', '--dir', '-c', '--config', '--reporter', '--project', '--changed', '--shard', '--environment', '--pool', '--outputFile', '--mode']);
 
 /**
- * The file filters of a vitest command: its positional arguments after `vitest run` (`truncate`, `tests/`,
- * `./tests/truncate.test.ts`), options and their values left out.
+ * A vitest command read as vitest reads its arguments (shellWords, so `-t "a b"` is one value): its positional file
+ * filters after `vitest run` (`truncate`, `tests/`, `./tests/truncate.test.ts`), and its options, each name with its
+ * values (`--dir tests` and `--dir=tests` alike; a boolean option has the value `true`).
  */
-function vitestFilters(cmd) {
-  const t = String(cmd ?? '').trim().split(/\s+/);
-  const at = t.indexOf('vitest');
-  if (at < 0) return [];
-  const out = [];
+export function parseVitest(cmd) {
+  const t = shellWords(cmd);
+  const at = t.findIndex((w) => w === 'vitest' || w.endsWith('/vitest'));
+  const filters = [];
+  const opts = new Map();
+  if (at < 0) return { filters, opts };
+  const set = (k, v) => opts.set(k, [...(opts.get(k) ?? []), v]);
   for (let i = at + 1; i < t.length; i++) {
     if (i === at + 1 && t[i] === 'run') continue;
     if (t[i].startsWith('-')) {
-      if (!t[i].includes('=') && VITEST_VALUE_FLAGS.has(t[i]) && t[i + 1] && !t[i + 1].startsWith('-')) i++;
+      const eq = t[i].indexOf('=');
+      if (eq > 0) set(t[i].slice(0, eq), t[i].slice(eq + 1));
+      else if (VITEST_VALUE_FLAGS.has(t[i]) && t[i + 1] !== undefined && !t[i + 1].startsWith('-')) set(t[i], t[++i]);
+      else set(t[i], 'true');
       continue;
     }
-    out.push(t[i]);
+    filters.push(t[i]);
   }
-  return out;
+  return { filters, opts };
 }
+
+/** The file filters of a vitest command (parseVitest). */
+const vitestFilters = (cmd) => parseVitest(cmd).filters;
 
 /**
  * Does a vitest command's filter select the test file `rel` (a path from the project root)? Vitest runs the test files
@@ -156,6 +245,65 @@ export function vitestFilterSelects(filter, rel) {
   const f = String(filter).toLowerCase();
   if (f.startsWith('/')) return f === `/${file}` || f.endsWith(`/${file}`);
   return file.includes(f) || file.includes(f.replace(/^(?:\.\/)+/, ''));
+}
+
+/**
+ * The test names a green run's `-t` pattern must match: the spec's named tests (`expected.spec` as the setup left it,
+ * done-criteria `file::name`) in the red run's test files, or, without the spec, every test the setup's red test
+ * files declare; and each name with each `describe` title of its file before it (vitest matches the pattern against
+ * the full name, `describe` titles and the test's, joined by spaces).
+ */
+function redTestNames(files, outcome, task) {
+  const spec = outcome.setup_state?.[task.expected?.spec ?? ''];
+  let names = [];
+  if (typeof spec === 'string') {
+    const rows = K.parseSections(K.stripHtmlComments(K.splitlines(spec))).get('done-criteria')?.tableRows() ?? [];
+    names = rows.map(([, c]) => /`?([^`\s]+)::([^`]+?)`?\s*$/.exec(String(c[2] ?? '').trim())).filter((m) => m && files.includes(m[1].replace(/^\.\//, ''))).map((m) => m[2].trim());
+  }
+  const texts = files.map((f) => outcome.setup_state?.[f] ?? outcome.files?.[f]).filter((t) => typeof t === 'string').map(stripComments);
+  if (!names.length) for (const t of texts) for (const m of t.matchAll(/(?<![\w$.])(?:it|test)(?:\.[A-Za-z]+)*\s*\(\s*(['"`])((?:(?!\1).)+)\1/g)) names.push(m[2]);
+  const titles = texts.flatMap((t) => [...t.matchAll(/(?<![\w$.])describe(?:\.[A-Za-z]+)*\s*\(\s*(['"`])((?:(?!\1).)+)\1/g)].map((m) => m[2]));
+  return names.flatMap((n) => [n, ...titles.map((d) => `${d} ${n}`)]);
+}
+
+/**
+ * Does a passing vitest command run the test the setup's red run named (`setupRed`, its `kit lane check` records)?
+ * Returns { ok, why }. Read as vitest reads it (parseVitest):
+ * - its file filters, if any, select every red test file (vitestFilterSelects); none selects every file;
+ * - `--dir`/`--root`/`-r` is a folder of the project holding the red test file (not `/tmp/x`, not `../x`);
+ * - `-c`/`--config` names a config file the setup left (not one the session wrote);
+ * - `-t`/`--testNamePattern` matches a red test's name (redTestNames), as a regular expression, or as text when it is
+ *   no valid one: a pattern no red test matches runs none of them;
+ * - `--project`, `--shard`, `--related` and `--exclude` narrow the run in ways the scorer does not follow: not counted;
+ * - `--passWithNoTests` never counts (testRuns drops its passes).
+ */
+export function greenSelectsRed(cmd, setupRed, outcome = {}, task = {}) {
+  const red = [...new Set(setupRed.flatMap((e) => testFiles(e.command)))];
+  if (!red.length) return { ok: false, why: 'the red run names no test file' };
+  const { filters, opts } = parseVitest(cmd);
+  const one = (...names) => names.flatMap((n) => opts.get(n) ?? []);
+  if (one('--passWithNoTests').length) return { ok: false, why: '--passWithNoTests passes with no test run' };
+  for (const n of ['--project', '--shard', '--related', '--exclude']) if (opts.has(n)) return { ok: false, why: `${n} narrows the run` };
+  for (const d of one('--dir', '--root', '-r')) {
+    const v = d.replace(/^(?:\.\/)+/, '').replace(/\/+$/, '');
+    if (d.startsWith('/') || d.startsWith('~') || v.split('/').includes('..')) return { ok: false, why: `${d} is outside the project` };
+    if (v && v !== '.' && !red.every((f) => f.startsWith(`${v}/`))) return { ok: false, why: `${d} does not hold ${red.join(', ')}` };
+  }
+  for (const c of one('-c', '--config')) if (!(c.replace(/^(?:\.\/)+/, '') in (outcome.setup_state ?? {}))) return { ok: false, why: `config ${c} is not one the setup left` };
+  if (filters.length && !red.every((f) => filters.some((x) => vitestFilterSelects(x, f)))) return { ok: false, why: `its filters (${filters.join(' ')}) do not select ${red.join(', ')}` };
+  const pats = one('-t', '--testNamePattern');
+  if (pats.length) {
+    const names = redTestNames(red, outcome, task);
+    const matches = (p, n) => {
+      try {
+        return new RegExp(p).test(n);
+      } catch {
+        return n.includes(p);
+      }
+    };
+    if (!pats.every((p) => names.some((n) => matches(p, n)))) return { ok: false, why: `-t ${pats.join(' ')} matches no red test${names.length ? '' : ' (no test name known)'}` };
+  }
+  return { ok: true };
 }
 
 /** The events a retro looks for (kit/agents/retro.md, "Look for"). */
@@ -433,13 +581,16 @@ export const CHECKS = {
     if (setupRed.length) {
       // the whole suite and the affected tests: the recorded commands that take no {file}
       const suite = new Set((outcome.test_commands ?? []).filter((c) => !String(c).includes('{')).map((c) => String(c).trim()));
-      const runsRedTest = (cmd) => setupRed.some((e) => {
-        const want = testFiles(e.command);
-        const filters = vitestFilters(cmd);
-        return want.length > 0 && filters.length > 0 && want.every((f) => filters.some((x) => vitestFilterSelects(x, f)));
-      });
-      const green = tests.findIndex((r) => r.result === 'ok' && (r.via === 'test'
-        || ((r.via === 'check' || r.via === 'bash') && (suite.has(r.command) || runsRedTest(r.command)) && (r.via === 'bash' || setupRed.some((e) => e.criterion === r.criterion)))));
+      const sel = (cmd) => (suite.has(String(cmd ?? '').trim()) ? { ok: true } : greenSelectsRed(cmd, setupRed, outcome, task));
+      const ok = (r) => r.result === 'ok' && (r.via === 'bash' || r.via === 'test' || setupRed.some((e) => e.criterion === r.criterion)) && (r.via === 'test' && !r.command ? true : sel(r.command).ok);
+      // the post-edit hook's own run of a recorded test command is the strongest record (the kit ran it, not the
+      // agent's typed command), so it is preferred; a Bash run or a check is read only when there is none
+      const hook = tests.findIndex((r) => r.via === 'test' && ok(r));
+      const green = hook >= 0 ? hook : tests.findIndex(ok);
+      if (green < 0) {
+        const why = tests.filter((r) => r.result === 'ok' && r.command).map((r) => `${r.command}: ${sel(r.command).why ?? 'not a run of the red criterion'}`).slice(0, 2).join('; ');
+        return { ok: false, why: `red run of ${setupRed.map((e) => e.criterion).join(', ')} recorded by the setup, but no session green run of that test (the post-edit hook's run, or a Bash run or a check of the criterion running the suite or that test)${why ? `: ${why}` : ''}` };
+      }
       if (green < 0) return { ok: false, why: `red run of ${setupRed.map((e) => e.criterion).join(', ')} recorded by the setup, but no session green run of that test (the post-edit hook's run, or a Bash run or a check of the criterion running the suite or that test)` };
       return { ok: true, why: `red run of ${setupRed.map((e) => e.criterion).join(', ')} recorded by the setup (${setupRed[0].ref ?? 'kit lane check'}), green at session run ${green} (${tests[green].via})` };
     }

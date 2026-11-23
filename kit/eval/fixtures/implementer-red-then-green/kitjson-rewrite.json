@@ -81,6 +81,7 @@
   "expect": {
     "hard_ok": false,
     "violations": [
+      "red_before_green",
       "in_scope_edits"
     ]
   },
