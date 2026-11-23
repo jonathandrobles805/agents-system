@@ -225,7 +225,8 @@ test('hard checks fail for the right reasons', () => {
   const quoting = lesson('hook (stop/post-edit runner) and ci', 'kit/scripts/ci_lane_artifacts.js fails a placeholder', ['`progress.md` was committed with `{{n}}`/`{{what fails}}` placeholders', 'no check reads the rest of the file', 'no committed lane file holds a placeholder']);
   assert.equal(CHECKS.lesson_proposed({ output: quoting }).ok, true, CHECKS.lesson_proposed({ output: quoting }).why);
   assert.match(CHECKS.lesson_proposed({ output: quoting.replace('`{{n}}`', '{{n}}') }).why, /template-placeholder: unfilled template placeholder: \{\{n\}\}/, 'a foreign placeholder in prose');
-  assert.match(CHECKS.lesson_proposed({ output: quoting.replace('`{{n}}`', '`{{one or two sentences}}`') }).why, /template-placeholder/, "the lesson template's own placeholder, even in backticks");
+  assert.match(CHECKS.lesson_proposed({ output: quoting.replace('`{{n}}`', '{{One or two sentences}}') }).why, /template-placeholder/, "the lesson template's own placeholder, in prose, in any case");
+  assert.match(CHECKS.lesson_proposed({ output: quoting.replace('`{{n}}`', '{{{n}}}') }).why, /template-placeholder/, 'three braces in prose');
   assert.match(CHECKS.lesson_proposed({ output: lesson('text-only and ci', 'none (text-only, reason: needs a model)') }).why, /lesson-enforced-by: 'text-only' stands alone/);
   // an entry is required when the lane recorded a finding (a finding event the setup recorded, a review FAIL row); a
   // lane with none passes with no entry, the honest "no findings" answer

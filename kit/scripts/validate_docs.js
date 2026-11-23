@@ -72,32 +72,47 @@ export function parseEnforcedBy(value) {
 
 /**
  * The template each document type validate_docs checks is filled from (kit/templates/<name>.md, the file
- * `kit lane template <name>` prints). Its `{{…}}` tokens are that document's own placeholders (placeholderUnfilled).
+ * `kit lane template <name>` prints). Its `{{…}}` tokens are that document's own placeholders (unfilledPlaceholders).
  */
 export const TEMPLATE_OF = { research: "research", spec: "spec", review: "review", lesson: "lesson", goal: "goal" };
-const PLACEHOLDER_G = new RegExp(K.PLACEHOLDER.source, "g");
-const placeholderKey = (tok) => tok.slice(2, -2).replace(/\s+/g, " ").trim();
+/**
+ * A `{{…}}` token: two or more opening braces, the text up to the first `}`, two or more closing braces. Extra braces
+ * belong to the token, so `{{{feature}}}` is the token `feature`, whatever the brace count.
+ */
+export const PLACEHOLDER_TOKEN_G = /\{\{+([^}]*)\}\}+/g;
+/** A token compared by its text: case ignored, whitespace collapsed, none around `|` (`{{PASS | FAIL}}` is `pass|fail`). */
+export const placeholderKey = (inner) => inner.replace(/\s+/g, " ").replace(/ ?\| ?/g, "|").trim().toLowerCase();
 const templateTokens = new Map();
 
 /**
- * The `{{…}}` tokens of a document type's template (whitespace inside a token collapsed), read once per process.
+ * The `{{…}}` tokens of a document type's template, read once per process: `all` (placeholderKey of each) and `inCode`
+ * (those the template itself writes inside a code span or fenced block, as research.md writes "`{{snippet}}`").
  * Null when the type has no template or the template cannot be read: then every `{{…}}` counts as unfilled, wherever
- * it stands (placeholderUnfilled fails closed).
+ * it stands (unfilledPlaceholders fails closed).
  */
 export function templatePlaceholders(kind) {
   if (!Object.hasOwn(TEMPLATE_OF, kind)) return null;
   if (!templateTokens.has(kind)) {
-    let set = null;
+    let tokens = null;
     try {
-      const text = fs.readFileSync(path.join(kitDir(), "templates", `${TEMPLATE_OF[kind]}.md`), "utf8");
-      set = new Set([...text.matchAll(PLACEHOLDER_G)].map((m) => placeholderKey(m[0])));
+      const lines = fs.readFileSync(path.join(kitDir(), "templates", `${TEMPLATE_OF[kind]}.md`), "utf8").split("\n");
+      const code = codeRanges(lines);
+      tokens = { all: new Set(), inCode: new Set() };
+      lines.forEach((t, idx) => {
+        for (const m of t.matchAll(PLACEHOLDER_TOKEN_G)) {
+          tokens.all.add(placeholderKey(m[1]));
+          if (inRanges(code[idx], m)) tokens.inCode.add(placeholderKey(m[1]));
+        }
+      });
     } catch {
-      set = null;
+      tokens = null;
     }
-    templateTokens.set(kind, set);
+    templateTokens.set(kind, tokens);
   }
   return templateTokens.get(kind);
 }
+
+const inRanges = (ranges, m) => ranges.some(([a, b]) => m.index >= a && m.index + m[0].length <= b);
 
 /**
  * Which character ranges of each line are code: a whole line inside a fenced block (``` or ~~~, closed by a fence of
@@ -133,20 +148,21 @@ export function codeRanges(lines) {
 }
 
 /**
- * The unfilled placeholders in a document of type `kind`: one of the type's own template placeholders
- * (templatePlaceholders) wherever it stands, inside backticks and fenced blocks too, since the research template itself
- * writes "`{{snippet}}`"; any other `{{…}}` only outside code spans and fenced blocks, so a lesson may quote another
- * file's placeholder (`{{n}}` from progress.md) while a stray `{{x}}` in prose is still caught. Returns
- * [{ line, token }], the first unfilled token of each line, lines numbered from 1.
+ * The unfilled placeholders in a document of type `kind`. Outside code spans and fenced blocks every `{{…}}` is
+ * unfilled. Inside them a token is unfilled only when the type's template itself writes that token in code
+ * (templatePlaceholders `inCode`: research's "`{{snippet}}`", review's "`{{file}}:{{line}}`"), so a document may quote
+ * another file's placeholder (`{{n}}`, `{{what fails}}` from progress.md, even though review.md has `{{n}}` in prose)
+ * while a stray `{{x}}` in prose, or its own template's code placeholder left in place, is still caught. Tokens compare
+ * by placeholderKey (case and whitespace ignored). Returns [{ line, token }], the first unfilled token of each line,
+ * lines numbered from 1.
  */
 export function unfilledPlaceholders(kind, lines) {
   const own = templatePlaceholders(kind);
   const code = codeRanges(lines);
   const found = [];
   lines.forEach((t, idx) => {
-    for (const m of t.matchAll(PLACEHOLDER_G)) {
-      const inCode = code[idx].some(([a, b]) => m.index >= a && m.index + m[0].length <= b);
-      if (own === null || own.has(placeholderKey(m[0])) || !inCode) {
+    for (const m of t.matchAll(PLACEHOLDER_TOKEN_G)) {
+      if (own === null || !inRanges(code[idx], m) || own.inCode.has(placeholderKey(m[1]))) {
         found.push({ line: idx + 1, token: m[0] });
         return;
       }

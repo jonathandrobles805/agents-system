@@ -446,6 +446,8 @@ export function reviewEvidence(row, evidence, ctx = evidenceContext({})) {
     // a command that only prints (`echo all tests passed`, `printf`, `true`, `:`) tests nothing: its output is whatever
     // it was told to say, so citing it fails the row, run or not
     if (printsOnly(cmd)) invented.push(`\`${cmd.slice(0, 40)}\` (prints, tests nothing)`);
+    // proves the command ran: a part of one the session ran passes (a shortened `git diff main...HEAD -- tests` of
+    // `… -- src tests` too), so spacing never fails a real citation. Citing it verbatim is reviewer.md's rule, the judge's to grade
     else if (ctx.commands.some((c) => c.includes(cmd))) real++;
   }
   if (invented.length) return { ok: false, why: `cites ${invented.slice(0, 2).join(', ')}` };

@@ -187,33 +187,43 @@ function rules(kind, text) {
   return v.v.filter((x) => x.rule === 'template-placeholder').map((x) => x.message);
 }
 
-// Each type: its good document, where a free-text line can be added, and one of its own template's placeholders.
+// Each type: its good document, where a free-text line can be added, a placeholder its template writes in prose, and
+// one its template writes in code (null when the template has none in code).
 const TYPES = [
-  ['research', GOOD_RESEARCH, '## Recommendation\n', '{{snippet}}'],
-  ['spec', GOOD_SPEC, '## Approach\n', '{{path}}'],
-  ['review', GOOD_REVIEW, '## Verdict\n', '{{evidence}}'],
-  ['lesson', GOOD_LESSONS, '- Status: approved\n', '{{short title}}'],
-  ['goal', GOOD_GOAL, '## What we want\n', '{{human name}}'],
+  ['research', GOOD_RESEARCH, '## Recommendation\n', '{{claim}}', '{{snippet}}'],
+  ['spec', GOOD_SPEC, '## Approach\n', '{{why}}', '{{path}}'],
+  ['review', GOOD_REVIEW, '## Verdict\n', '{{n}}', '{{file}}'],
+  ['lesson', GOOD_LESSONS, '- Status: approved\n', '{{short title}}', null],
+  ['goal', GOOD_GOAL, '## What we want\n', '{{human name}}', null],
 ];
+const msg = (tok) => [`unfilled template placeholder: ${tok}`];
 
-for (const [kind, good, at, own] of TYPES) {
+for (const [kind, good, at, prose, code] of TYPES) {
   const add = (line) => {
     assert.ok(good.includes(at), `${kind}: anchor ${at}`);
     return good.replace(at, `${at}\n${line}\n`);
   };
-  test(`${kind}: another file's placeholder quoted in code is no placeholder of this document`, () => {
+  test(`${kind}: a placeholder quoted in code is unfilled only when the template itself writes it in code`, () => {
     assert.deepEqual(rules(kind, good), []);
-    assert.deepEqual(rules(kind, add('progress.md still had `{{what fails}}` and ``{{tried}}`` in it.')), []);
+    assert.deepEqual(rules(kind, add('progress.md still had `{{what fails}}` and ``{{tried}}`` in it.')), [], "another file's");
     assert.deepEqual(rules(kind, add('```\nAttempts: {{what fails}}\n```')), [], 'in a fenced block');
     assert.deepEqual(rules(kind, add('~~~~\n{{what fails}}\n~~~~')), [], 'in a tilde fence');
+    assert.deepEqual(rules(kind, add(`progress.md still had \`${prose}\` in it.`)), [], 'one its template writes in prose, quoted');
   });
   test(`${kind}: a placeholder left unfilled is caught`, () => {
-    assert.deepEqual(rules(kind, add('progress.md still had {{what fails}} in it.')), ['unfilled template placeholder: {{what fails}}'], 'a stray one in prose');
-    assert.deepEqual(rules(kind, add(`the value is \`${own}\` here`)), [`unfilled template placeholder: ${own}`], 'its own, in backticks');
-    assert.deepEqual(rules(kind, add(`\`\`\`\n${own}\n\`\`\``)), [`unfilled template placeholder: ${own}`], 'its own, in a fenced block');
-    assert.deepEqual(rules(kind, add(`${own.replace('{{', '{{ ')}`)), [`unfilled template placeholder: ${own.replace('{{', '{{ ')}`], 'its own, spaced differently');
-    assert.deepEqual(rules(kind, add('an `unclosed {{x}} backtick')), ['unfilled template placeholder: {{x}}'], 'an unclosed backtick is no code span');
+    assert.deepEqual(rules(kind, add('progress.md still had {{what fails}} in it.')), msg('{{what fails}}'), 'a stray one in prose');
+    assert.deepEqual(rules(kind, add(`the value is ${prose} here`)), msg(prose), 'its own, in prose');
+    const upper = prose.replace(/\{\{(.)/, (_, c) => `{{ ${c.toUpperCase()}`);
+    assert.deepEqual(rules(kind, add(`the value is ${upper} here`)), msg(upper), 'its own, cased and spaced differently');
+    assert.deepEqual(rules(kind, add(`the value is {${prose}} here`)), msg(`{${prose}}`), 'its own, in three braces');
+    assert.deepEqual(rules(kind, add('an `unclosed {{x}} backtick')), msg('{{x}}'), 'an unclosed backtick is no code span');
     assert.deepEqual(rules(kind, add('```\n{{x}}')).length, 0, 'an unclosed fence runs to the end, as Markdown reads it');
+    if (code) {
+      assert.deepEqual(rules(kind, add(`the value is \`${code}\` here`)), msg(code), 'its own code placeholder, in backticks');
+      assert.deepEqual(rules(kind, add(`\`\`\`\n${code}\n\`\`\``)), msg(code), 'its own code placeholder, in a fenced block');
+      const odd = `{{{ ${code.slice(2, -2).toUpperCase()} }}}`;
+      assert.deepEqual(rules(kind, add(`the value is \`${odd}\` here`)), msg(odd), 'its own code placeholder, cased, spaced and in three braces');
+    }
   });
   test(`${kind}: the kit's own template, untouched, fails on every line that holds a placeholder`, () => {
     const tmpl = fs.readFileSync(path.join(KIT, 'templates', `${V.TEMPLATE_OF[kind]}.md`), 'utf8').split('\n');
@@ -223,8 +233,19 @@ for (const [kind, good, at, own] of TYPES) {
   });
 }
 
-test('the research template\'s own "`{{snippet}}`" is caught inside its backticks', () => {
+test('the research template\'s own "`{{snippet}}`" is caught inside its backticks, in any case', () => {
   assert.deepEqual(V.unfilledPlaceholders('research', ['- F1. claim [verified: a.ts:1-2] `{{snippet}}`']), [{ line: 1, token: '{{snippet}}' }]);
+  assert.deepEqual(V.unfilledPlaceholders('research', ['- F1. claim `{{Snippet}}`']), [{ line: 1, token: '{{Snippet}}' }]);
+});
+
+// The reviewer's first write of its report in the 516ffdd eval run, row R10, verbatim: it quotes progress.md's `{{n}}`
+// (a token review.md writes in prose) and `{{what fails}}` in backticks. Both are quotes, not unfilled placeholders.
+const REVIEW_R10_516 = "| R10 | progress.md complete and consistent with log | FAIL | docs/specs/truncate-text.progress.md:17 says Current step `reading the spec's files`, but the log shows D1 already green (truncate-text.log#21) and the work committed (caac6fa). progress.md:7 `Last update: 2026-11-23T18:16:52` is the same as Started (line 6) and earlier than the red run at log#1 (18:17:02). progress.md:25-28 still has template placeholders (`{{n}}`, `{{what fails}}`). The Red/Green refs on line 13 (log#1, log#21) do match the log. The committed copy of the lane log, `docs/specs/truncate-text.checks.txt`, is missing from the diff, so those refs point only to the gitignored `.claude/session/truncate-text.log`. [verified: docs/specs/truncate-text.progress.md:6-28] |";
+
+test('the 516ffdd reviewer row quoting progress.md placeholders is no unfilled placeholder', () => {
+  assert.deepEqual(V.unfilledPlaceholders('review', [REVIEW_R10_516]), []);
+  assert.deepEqual(rules('review', GOOD_REVIEW.replace(/^\| R10 \|.*$/m, REVIEW_R10_516)), []);
+  assert.deepEqual(rules('review', GOOD_REVIEW.replace(/^\| R10 \|.*$/m, REVIEW_R10_516.replace('`{{n}}`', '{{n}}'))), msg('{{n}}'), 'unquoted, it is caught');
 });
 
 test('a type with no template counts every {{…}} as unfilled, code or not (fails closed)', () => {
