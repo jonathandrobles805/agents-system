@@ -833,9 +833,18 @@ export async function run(task, { attempt = 0, timeoutMs = 20 * 60 * 1000, trans
   try {
     // the session home is for srt only: a container runtime runs the host's docker/podman CLI, which needs the real HOME
     const srt = SB.detectRuntime(process.env).runtime === 'srt';
-    const home = srt ? sessionHome(dir) : null;
-    // the worker runs where its goal is: the fixture repo, or the lane's worktree when the task sets one up
-    const { root, cwd, lane: slug, deps } = fixtureRepo(task, dir, home?.config);
+    // the session's home, the fixture repo and the task's setup (the install and its gates included): a failure here is
+    // the harness's, not the agent's, and the harness reports it as a setup failure (harness.js runSet)
+    let home;
+    let built;
+    try {
+      home = srt ? sessionHome(dir) : null;
+      // the worker runs where its goal is: the fixture repo, or the lane's worktree when the task sets one up
+      built = fixtureRepo(task, dir, home?.config);
+    } catch (e) {
+      throw Object.assign(e instanceof Error ? e : new Error(String(e)), { stage: 'setup' });
+    }
+    const { root, cwd, lane: slug, deps } = built;
     // Claude Code looks up a worktree's trust under its main repository (seen: "Ignoring 16 permissions.allow entries ...
     // projects["<repo>"].hasTrustDialogAccepted" for a session in the lane's worktree), so both are trusted
     if (home) for (const p of new Set([root, cwd])) trustWorkspace(home.config, p);
@@ -921,7 +930,8 @@ export async function run(task, { attempt = 0, timeoutMs = 20 * 60 * 1000, trans
     // `session_diff`, `setup_files`: what the judge was told the session and the setup changed
     // `transcript_commands`: the Bash commands from the worker's transcript (redacted), beside the hook's `bash` events
     // `setup_deps`: the direct dependencies' versions the setup installed (installDeps), so the report says which tools ran
-    return { runner: name, variant: null, setup_deps: deps, files, setup_state: setupState, events, setup_events: setupEvents, transcript_commands: bashCalls.map((c) => c.command), lane_log_lines: laneLogLines, node_modules_lines: nodeModules, not_work: notWork, session_diff: sessionDiff, setup_files: setupFiles, judge_prompt: judgeInput, git, judge, test_commands: testCommands, transcripts: kept, ms: Date.now() - started, worker_command: work.command, worker_status: work.status, worker_signal: work.signal, worker_error: work.error, worker_stderr: work.stderr.slice(-2000), output: redact(work.stdout).slice(-20000), worker_agent: agent, warnings, judge_session: judgeSession };
+    // `session_roots`: the directory the worker ran in (its path and real path), so the scorer can place a `cd` into it
+    return { runner: name, variant: null, setup_deps: deps, session_roots: [...new Set([cwd, fs.realpathSync(cwd)])], files, setup_state: setupState, events, setup_events: setupEvents, transcript_commands: bashCalls.map((c) => c.command), lane_log_lines: laneLogLines, node_modules_lines: nodeModules, not_work: notWork, session_diff: sessionDiff, setup_files: setupFiles, judge_prompt: judgeInput, git, judge, test_commands: testCommands, transcripts: kept, ms: Date.now() - started, worker_command: work.command, worker_status: work.status, worker_signal: work.signal, worker_error: work.error, worker_stderr: work.stderr.slice(-2000), output: redact(work.stdout).slice(-20000), worker_agent: agent, warnings, judge_session: judgeSession };
   } finally {
     if (!process.env.KIT_EVAL_KEEP) fs.rmSync(dir, { recursive: true, force: true });
   }

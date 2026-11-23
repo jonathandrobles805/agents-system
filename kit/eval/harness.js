@@ -77,7 +77,8 @@ const std = (xs) => {
 /** Per-task metric series from attempts. */
 export function summarize(attempts) {
   const series = { score: [], rubric_score: [], hard_ok: [] };
-  for (const a of attempts) {
+  // an attempt the harness could not run (harness_error) has no score: it is neither an agent pass nor a fail
+  for (const a of attempts.filter((x) => x.scored)) {
     series.score.push(a.scored.score);
     series.rubric_score.push(a.scored.rubric.score);
     series.hard_ok.push(a.scored.hard_ok ? 1 : 0);
@@ -98,7 +99,7 @@ export function compare(results, baseline, { floor = 0.05 } = {}) {
     if (!b) continue;
     for (const m of METRICS) {
       const bm = b[m];
-      if (!bm) continue;
+      if (!bm || !r.summary[m].n) continue;
       const allowed = Math.max(bm.std ?? 0, floor);
       if (r.summary[m].mean < bm.mean - allowed) regressions.push({ task: id, metric: m, baseline: bm.mean, run: r.summary[m].mean, allowed });
     }
@@ -120,12 +121,24 @@ export async function runSet({ set, runner = 'fixture', n = set === 'full' ? 3 :
   // rubric items the judge failed (gate the smoke set) or did not grade (gate every set)
   const rubricFails = [];
   const ungraded = [];
+  // attempts the harness could not run: the setup failed (npm ci, the project's typecheck or lint gate) or the runner
+  // threw. Recorded per task with the reason; the set fails; the other tasks still run and the report is written
+  const harnessErrors = [];
   for (const task of tasks) {
     const attempts = [];
     for (let i = 0; i < n; i++) {
       // a real session's transcripts are kept beside the report (redacted), so a verdict can be traced to what the agent did
       const transcripts = path.join(outDir, 'transcripts', task.id, `attempt-${i}`);
-      const outcome = await R.run(task, { attempt: i, transcripts, ...(variant ? { variant } : {}) });
+      let outcome;
+      try {
+        outcome = await R.run(task, { attempt: i, transcripts, ...(variant ? { variant } : {}) });
+      } catch (e) {
+        const stage = e?.stage === 'setup' ? 'setup' : 'runner';
+        const why = `${stage === 'setup' ? 'setup failed' : 'runner failed'}: ${String(e?.message ?? e).slice(0, 2000)}`;
+        harnessErrors.push({ task: task.id, attempt: i, stage, why });
+        attempts.push({ attempt: i, runner, harness_error: { stage, why } });
+        continue;
+      }
       const scored = score(task, outcome);
       // the worker session's exit status and the tail of its stderr travel with the attempt: a session that never
       // started (no sandbox, no credential, a refused token) must be diagnosable from the report alone
@@ -149,7 +162,7 @@ export async function runSet({ set, runner = 'fixture', n = set === 'full' ? 3 :
   // a check's `why` quotes the session's files and output (provenance_tags quotes a line, a worker's stderr is kept):
   // every string in the report is redacted, decoded (redactDeep, never the serialized text, where an escaped newline
   // hides a token from the patterns), before it is written or returned
-  const report = claudeRunner.redactDeep(JSON.parse(K.jsonDumps({ run_id: runId, set, runner, n, tasks: tasks.length, touched, baseline: baseline ? path.basename(baseline) : null, violations, regressions, rubric_fails: rubricFails, ungraded, results, ok: violations.length === 0 && regressions.length === 0 && ungraded.length === 0 && (set !== 'smoke' || rubricFails.length === 0) })));
+  const report = claudeRunner.redactDeep(JSON.parse(K.jsonDumps({ run_id: runId, set, runner, n, tasks: tasks.length, touched, baseline: baseline ? path.basename(baseline) : null, violations, regressions, rubric_fails: rubricFails, ungraded, harness_errors: harnessErrors, results, ok: harnessErrors.length === 0 && violations.length === 0 && regressions.length === 0 && ungraded.length === 0 && (set !== 'smoke' || rubricFails.length === 0) })));
   fs.writeFileSync(path.join(outDir, 'report.json'), K.jsonDumps(report, { indent: 2 }) + '\n');
   return { ...report, out: outDir };
 }
@@ -158,6 +171,7 @@ export async function runSet({ set, runner = 'fixture', n = set === 'full' ? 3 :
 export function writeBaseline(reportPath, outPath, kitVersion) {
   const rep = JSON.parse(fs.readFileSync(reportPath, 'utf8'));
   if (rep.runner !== 'claude') throw new Error(`refusing to write a baseline from runner '${rep.runner}'; baselines come from real runs only`);
+  if ((rep.harness_errors ?? []).length) throw new Error(`refusing to write a baseline from a run where the harness could not run ${rep.harness_errors.length} attempt(s)`);
   const tasks = {};
   for (const [id, r] of Object.entries(rep.results)) tasks[id] = r.summary;
   const baseline = { kit_version: kitVersion, from_run: rep.run_id, set: rep.set, n: rep.n, written: new Date().toISOString(), tasks };
@@ -169,7 +183,8 @@ export function writeBaseline(reportPath, outPath, kitVersion) {
 export function fmt(rep) {
   if (rep.error) return `eval: ${rep.error}\n`;
   const lines = [`eval ${rep.set} (${rep.runner}, n=${rep.n}): ${rep.tasks} task(s)`];
-  for (const [id, r] of Object.entries(rep.results)) lines.push(`  ${id.padEnd(34)} score ${r.summary.score.mean.toFixed(2)} ±${r.summary.score.std.toFixed(2)}  hard ${r.summary.hard_ok.mean === 1 ? 'ok' : 'VIOLATION'}`);
+  for (const [id, r] of Object.entries(rep.results)) lines.push(r.summary.score.n ? `  ${id.padEnd(34)} score ${r.summary.score.mean.toFixed(2)} ±${r.summary.score.std.toFixed(2)}  hard ${r.summary.hard_ok.mean === 1 ? 'ok' : 'VIOLATION'}` : `  ${id.padEnd(34)} not scored: the harness could not run it`);
+  for (const h of rep.harness_errors ?? []) lines.push(`  HARNESS ERROR ${h.task} attempt ${h.attempt}: ${h.why.split('\n')[0].slice(0, 400)}`);
   for (const v of rep.violations) lines.push(`  VIOLATION ${v.task} attempt ${v.attempt}: ${v.why.join('; ')}`);
   for (const f of rep.rubric_fails ?? []) lines.push(`  RUBRIC ${f.task} attempt ${f.attempt}: the judge failed ${f.items.join(', ')}${rep.set === 'smoke' ? '' : ' (reported; the full set gates on regressions against the baseline)'}`);
   for (const u of rep.ungraded ?? []) lines.push(`  NOT GRADED ${u.task} attempt ${u.attempt}: ${u.judge_ran ? 'the judge gave no 0/1 for' : 'the judge did not run; ungraded:'} ${u.items.join(', ')}`);
