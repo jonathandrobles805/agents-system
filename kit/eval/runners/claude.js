@@ -433,15 +433,30 @@ export function isSecretPath(rel) {
   return K.globMatch(rel, pats) || K.globMatch(rel.split('/').pop(), pats.filter((p) => !p.includes('/')));
 }
 
-/** The repository's files as text (rel -> content), secret files (isSecretPath) left out: the judge never reads them. */
+/**
+ * What under `.claude/` belongs to the lane, not to the project's controls: the hooks' and `kit lane`'s session files
+ * (`session/`: the check log, events, the sandbox settings, STOP), the lane record `lane.json` (`kit lane stage` rewrites
+ * it) and bootstrap's `backup/` (lane.js start, K.Lane.logPath, bootstrap's gitignore lines). Everything else there
+ * (`kit.json`, whose commands the hooks and the scorer run, `settings.json` and `settings.local.json`, which register
+ * the hooks, `kit-manifest.json`) controls the checks, and a session must not change it.
+ */
+export const LANE_OWNED_CLAUDE = ['session', 'lane.json', 'backup'];
+
+/**
+ * The repository's files as text (rel -> content), secret files (isSecretPath) left out: the judge never reads them.
+ * `.claude/` is in it except what the lane owns (LANE_OWNED_CLAUDE), so a change to the project's controls through Bash
+ * (`sed -i` on `.claude/kit.json`) shows in the end state as any other change does.
+ */
 export function snapshot(root) {
   const files = {};
   const walk = (d) => {
     for (const e of fs.readdirSync(d, { withFileTypes: true })) {
-      if (['.git', 'node_modules', '.claude'].includes(e.name)) continue;
+      if (['.git', 'node_modules'].includes(e.name)) continue;
       const p = path.join(d, e.name);
+      const rel = K.relTo(root, p);
+      if (rel.startsWith('.claude/') && LANE_OWNED_CLAUDE.includes(rel.split('/')[1])) continue;
       if (e.isDirectory()) walk(p);
-      else if (!isSecretPath(K.relTo(root, p)) && fs.statSync(p).size < 512 * 1024) files[K.relTo(root, p)] = fs.readFileSync(p, 'utf8');
+      else if (!isSecretPath(rel) && fs.statSync(p).size < 512 * 1024) files[rel] = fs.readFileSync(p, 'utf8');
     }
   };
   walk(root);
@@ -606,6 +621,11 @@ export async function run(task, { attempt = 0, timeoutMs = 20 * 60 * 1000, trans
     // the files as the setup left them, for the checks that compare the session's end state with it (tests_kept,
     // files_unchanged): the tester's test is untracked in the lane, so git's HEAD does not hold it
     const setupState = snapshot(cwd);
+    // the project's recorded test commands, so the scorer can tell a test run among the session's Bash calls: read
+    // before the session, so a session that rewrites `.claude/kit.json` (`"test": "true"`) does not choose what counts
+    // as a test run (the rewrite itself fails in_scope_edits: .claude/kit.json is in the snapshot)
+    const cmds = K.loadKitJson(cwd).commands ?? {};
+    const testCommands = ['test', 'test_affected', 'test_file'].map((k) => cmds[k]).filter((c) => typeof c === 'string' && c.trim());
     const base = { ...process.env, ...SB.telemetryEnv({ project: 'kit-eval', slug: task.id, stage: task.role ?? 'build' }), KIT_EVAL_ATTEMPT: String(attempt) };
     const env = { ...base, ...(home?.env ?? {}) };
     const agent = kitAgent(task, home);
@@ -623,9 +643,6 @@ export async function run(task, { attempt = 0, timeoutMs = 20 * 60 * 1000, trans
     const laneLog = laneRec && fs.existsSync(laneRec.logPath) ? fs.readFileSync(laneRec.logPath, 'utf8') : null;
     const laneLogLines = laneLog === null ? null : K.splitlines(laneLog).length;
     const git = { log: spawnSync('git', ['log', '--oneline', '-20'], { cwd, encoding: 'utf8' }).stdout.trim().split('\n') };
-    // the project's recorded test commands, so the scorer can tell a test run among the session's Bash calls
-    const cmds = K.loadKitJson(cwd).commands ?? {};
-    const testCommands = ['test', 'test_affected', 'test_file'].map((k) => cmds[k]).filter((c) => typeof c === 'string' && c.trim());
     // the Bash commands the worker ran and their output, from its own transcripts (none without a session home)
     const bashLog = home ? formatBash(transcriptBash(readTranscripts(home.config))) : '';
     // the judge: rubric + calibration examples + the session's diff against the setup's state + end state + output,
