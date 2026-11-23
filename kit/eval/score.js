@@ -1,14 +1,16 @@
 #!/usr/bin/env node
 // Scorer for one eval task outcome (KIT-SPEC 11A, decision 0012). Pure: takes the task and the outcome, returns scores.
 //
-// An outcome is what a runner produced: { files: {rel: text}, events: [the session's hook events], setup_events: [the
-// events the setup recorded before the session], git: {commits: [...]}, judge: {criterion: 0|1}, test_commands: [the
-// fixture's kit.json test commands], output: the session's printed answer }.
+// An outcome is what a runner produced: { files: {rel: text}, setup_state: {rel: text, the files as the setup left them
+// for the session}, events: [the session's hook events], setup_events: [the events the setup recorded before the
+// session], git: {commits: [...]}, judge: {criterion: 0|1}, test_commands: [the fixture's kit.json test commands],
+// output: the session's printed answer }.
 // Mechanical checks are hard metrics: any failure makes the task fail regardless of the rubric. The rubric score is the
 // share of criteria the judge marked met, graded on the end state the runner handed over, never on a transcript.
 import path from 'node:path';
 import * as K from '../scripts/kitlib.js';
 import * as V from '../scripts/validate_docs.js';
+import { ADDED_SKIP, REMOVED_ASSERT, TEST_FILE } from '../scripts/hook_post_edit_check.js';
 
 /** The kit's own research rules (validate_docs.js `research`) about provenance tags on claim bullets. */
 const TAG_RULES = new Set(['untagged-claim', 'tag-not-allowed', 'multiple-tags', 'unknown-untagged']);
@@ -301,6 +303,81 @@ export const CHECKS = {
     return thin.length
       ? { ok: false, why: `${thin.length} PASS row(s) without file:line, log#line or a command and its output: ${thin.slice(0, 3).map(([, c]) => `${c[0]} "${c[3].slice(0, 40)}"`).join('; ')}` }
       : { ok: true, why: `${rows.length} rows, each PASS or FAIL, every PASS with evidence` };
+  },
+  /**
+   * The spec's done-criteria tests exist as the spec names them (the tester's job, kit/agents/tester.md: "Write the
+   * test named in the spec's table, at the path the spec names"): for each row's `file::name` (the spec at
+   * `expected.spec`, read as the setup left it, so a session cannot rename the test by editing the spec), the file is in
+   * the end state and declares `it('<name>'` or `test('<name>'` outside a comment. A row naming an artifact instead is
+   * not a test.
+   */
+  named_tests(outcome, task) {
+    const rel = task.expected?.spec ?? '';
+    const spec = outcome.setup_state?.[rel] ?? outcome.files?.[rel];
+    if (typeof spec !== 'string') return { ok: false, why: `no spec ${rel || '(expected.spec not set)'}` };
+    const rows = K.parseSections(K.stripHtmlComments(K.splitlines(spec))).get('done-criteria')?.tableRows() ?? [];
+    const named = rows.map(([, c]) => /`?([^`\s]+)::([^`]+?)`?\s*$/.exec(String(c[2] ?? '').trim())).filter(Boolean).map((m) => [m[1], m[2].trim()]);
+    if (!named.length) return { ok: false, why: `${rel} names no test (file::name) in its Done-criteria` };
+    const esc = (x) => x.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    // a commented-out test is no test: block and line comments are dropped first
+    const code = (t) => t.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:'"`])\/\/.*$/gm, '$1');
+    const missing = named.filter(([f, n]) => typeof outcome.files?.[f] !== 'string' || !new RegExp(`\\b(?:it|test)\\(\\s*(['"\`])${esc(n)}\\1`).test(code(outcome.files[f])));
+    return missing.length ? { ok: false, why: `not written as the spec names it: ${missing.map(([f, n]) => `${f}::${n}`).join('; ')}` } : { ok: true, why: `${named.length} named test(s) written: ${named.map(([f]) => f).join(', ')}` };
+  },
+  /**
+   * The session kept the tests it was given (kit/agents/implementer.md: "do not change its assertions", "Never remove
+   * an assertion, skip a test"): no `test_weakened` event, and every test file the setup left (the tester's, untracked
+   * in the lane, which the post-edit hook's `git diff HEAD` does not see) compared with the end state by the hook's own
+   * rules: no assertion line removed or changed (REMOVED_ASSERT), no skip/only added (ADDED_SKIP), and none added to a
+   * new test file. Needs the setup's state (`outcome.setup_state`); without it the check fails.
+   */
+  tests_kept(outcome) {
+    const before = outcome.setup_state;
+    if (!before || typeof before !== 'object') return { ok: false, why: 'no record of the files the setup left (setup_state)' };
+    const weak = (outcome.events ?? []).filter((e) => e.event === 'test_weakened');
+    const bad = weak.map((e) => `test_weakened: ${e.summary ?? ''}`.trim());
+    const after = outcome.files ?? {};
+    const count = (ls) => ls.reduce((m, l) => m.set(l, (m.get(l) ?? 0) + 1), new Map());
+    for (const f of [...new Set([...Object.keys(before), ...Object.keys(after)])].filter((x) => TEST_FILE.test(x)).sort()) {
+      const a = typeof before[f] === 'string' ? K.splitlines(before[f]) : [];
+      const b = typeof after[f] === 'string' ? K.splitlines(after[f]) : [];
+      const [ca, cb] = [count(a), count(b)];
+      const removed = a.filter((l) => REMOVED_ASSERT.test(`-${l}`) && (cb.get(l) ?? 0) < ca.get(l));
+      const added = b.filter((l) => ADDED_SKIP.test(`+${l}`) && (ca.get(l) ?? 0) < cb.get(l));
+      if (removed.length) bad.push(`${f}: ${new Set(removed).size} assertion line(s) removed or changed${typeof after[f] === 'string' ? '' : ' (file deleted)'}`);
+      if (added.length) bad.push(`${f}: skip/only added`);
+    }
+    return bad.length ? { ok: false, why: bad.slice(0, 3).join('; ') } : { ok: true, why: 'no test_weakened event; every assertion the setup\'s tests held is still there, no skip added' };
+  },
+  /**
+   * The spec the session wrote is valid by the kit's own spec rules (validate_docs.js `spec`: no `{{…}}` placeholder,
+   * every header field and section, tagged file lists, a test per done-criterion, …), as the planner's own SubagentStop
+   * hook runs them, with the project's recorded test commands. Two parts are left out: citations are not range-checked
+   * (the scorer has the end state's text, not the repository; the judge reads them), and `open-questions`, which says
+   * a spec is not ready for approval, not that the planner's draft is wrong: the task asks for open questions and the
+   * rubric grades them.
+   */
+  spec_valid(outcome, task) {
+    const rel = task.expected?.spec ?? '';
+    const text = outcome.files?.[rel];
+    if (typeof text !== 'string') return { ok: false, why: `no spec ${rel || '(expected.spec not set)'}` };
+    const v = new V.Validator(path.sep, null, { commands: Object.fromEntries((outcome.test_commands ?? []).map((c, i) => [['test', 'test_affected', 'test_file'][i] ?? `test_${i}`, c])) });
+    v.resolveCitations = () => {};
+    v.spec(rel, K.splitlines(text));
+    const bad = v.v.filter((x) => x.rule !== 'open-questions');
+    return bad.length ? { ok: false, why: `${bad.length} problem(s): ${bad.slice(0, 3).map((x) => `line ${x.line} ${x.rule}: ${x.message}`).join('; ')}` } : { ok: true, why: `${rel} valid by the kit's spec rules` };
+  },
+  /**
+   * Files the session must not change are as the setup left them (`expected.unchanged`): the retro prints its lesson
+   * entries and never writes LESSONS.md itself (kit/agents/retro.md, "Do not"). Compared with the setup's state, so a
+   * shell write counts as an Edit does. Needs `outcome.setup_state`; without it the check fails.
+   */
+  files_unchanged(outcome, task) {
+    const want = task.expected?.unchanged ?? [];
+    const before = outcome.setup_state;
+    if (!before || typeof before !== 'object') return { ok: false, why: 'no record of the files the setup left (setup_state)' };
+    const changed = want.filter((f) => before[f] !== outcome.files?.[f]);
+    return changed.length ? { ok: false, why: `changed by the session: ${changed.join(', ')}` } : { ok: true, why: `${want.join(', ')} as the setup left ${want.length === 1 ? 'it' : 'them'}` };
   },
   /**
    * The first tool used is one the task expects (tool-selection tasks): `expected.first_tool`, a tool name or a list of

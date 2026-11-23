@@ -133,6 +133,44 @@ test('hard checks fail for the right reasons', () => {
   assert.equal(CHECKS.lesson_proposed({ output: lesson('hook', 'kit/scripts/hook_x.js blocks it'), setup_events: [escalation] }).ok, true, 'an escalation answered with a lesson');
   assert.equal(CHECKS.lesson_proposed({ output: 'No findings.', setup_events: [{ ...blocked, event: 'check', result: 'fail' }], files: { 'docs/specs/x.review.md': failRow['docs/specs/x.review.md'].replace('FAIL', 'PASS') } }).ok, true, 'a lane with no finding: no entry needed');
   assert.equal(CHECKS.lesson_proposed({ output: lesson('a reminder', 'none') }).ok, false, 'an entry on a lane with no finding must still be valid');
+  // named_tests: the spec's done-criterion test, at the file it names, under the name it gives
+  const specText = fs.readFileSync(path.join(K.KIT_DIR, 'eval', 'setups', 'truncate-text', 'spec.approved.md'), 'utf8');
+  const truncTest = fs.readFileSync(path.join(K.KIT_DIR, 'eval', 'setups', 'truncate-text', 'truncate.test.ts'), 'utf8');
+  const NT = { expected: { spec: 'docs/specs/truncate-text.md' } };
+  const nt = (files, setup = { 'docs/specs/truncate-text.md': specText }) => CHECKS.named_tests({ files, setup_state: setup }, NT).ok;
+  assert.equal(nt({ 'tests/truncate.test.ts': truncTest }), true);
+  assert.equal(nt({ 'tests/truncate.test.ts': truncTest.replace("it('shortens text longer", "it('cuts text longer") }), false, 'another test name');
+  assert.equal(nt({ 'tests/trunc.test.ts': truncTest }), false, 'another file');
+  assert.equal(nt({ 'tests/truncate.test.ts': `// it('shortens text longer than max to max characters ending in an ellipsis'\n` }), false, 'a commented-out test');
+  assert.equal(nt({ 'tests/truncate.test.ts': `/*\n${truncTest}*/\n` }), false, 'a test in a block comment');
+  assert.equal(nt({ 'tests/truncate.test.ts': truncTest, 'docs/specs/truncate-text.md': specText.replace('max characters ending in an ellipsis`', 'works`') }), true, 'the spec as the setup left it, not as the session edited it');
+  assert.equal(nt({ 'tests/truncate.test.ts': truncTest }, {}), false, 'no spec');
+  // tests_kept: the setup's tests against the end state, by the post-edit hook's rules
+  const TK = (files, events = [], setup = { 'tests/truncate.test.ts': truncTest }) => CHECKS.tests_kept({ files, events, setup_state: setup }).ok;
+  assert.equal(TK({ 'tests/truncate.test.ts': truncTest }), true);
+  assert.equal(TK({ 'tests/truncate.test.ts': `${truncTest}\nit('extra', () => { expect(1).toBe(1); });\n` }), true, 'an added test');
+  assert.equal(TK({ 'tests/truncate.test.ts': truncTest.replace(".toBe('hell…')", ".toBe('hello…')") }), false, 'an expect changed');
+  assert.equal(TK({ 'tests/truncate.test.ts': truncTest.replace("    expect(truncate?.('hi', 5)).toBe('hi');\n", '') }), false, 'an expect removed');
+  assert.equal(TK({ 'tests/truncate.test.ts': truncTest.replace("  it('shortens", "  it.skip('shortens") }), false, 'a skip added');
+  assert.equal(TK({}), false, 'the test file deleted');
+  assert.equal(TK({ 'tests/truncate.test.ts': truncTest, 'tests/new.test.ts': "it.only('x', () => {});\n" }), false, 'a new test file with only');
+  assert.equal(TK({ 'tests/truncate.test.ts': truncTest }, [{ event: 'test_weakened', tool: 'hook', result: 'fail', summary: 'x' }]), false, 'the hook\'s test_weakened event');
+  assert.equal(CHECKS.tests_kept({ files: {}, events: [] }).ok, false, 'no setup state: fails closed');
+  // spec_valid: the kit's spec rules on the planner's spec; the untouched template fails, open questions do not
+  const SV = (text) => CHECKS.spec_valid({ files: { 's.md': text }, test_commands: ['npx vitest run', 'npx vitest run --changed HEAD', 'npx vitest run {file}'] }, { expected: { spec: 's.md' } });
+  const waiting = fs.readFileSync(path.join(K.KIT_DIR, 'eval', 'setups', 'truncate-text', 'spec.waiting-approval.md'), 'utf8').replaceAll('{{eval:head}}', 'abc1234');
+  assert.equal(SV(waiting).ok, true, SV(waiting).why);
+  assert.equal(SV(waiting.replace('## Open questions\n\n- none', '## Open questions\n\n- Should an empty string be allowed?')).ok, true, 'open questions are the planner\'s to list');
+  assert.match(SV(fs.readFileSync(path.join(K.KIT_DIR, 'templates', 'spec.md'), 'utf8')).why, /template-placeholder/);
+  assert.equal(SV(waiting.replace('<!-- Written by spec-critic. Numbered gaps and contradictions. The planner answers each inline. -->', '- C1. {{gap}} → {{planner response}}')).ok, false, 'a placeholder left');
+  assert.equal(SV(waiting.replace('`tests/truncate.test.ts::shortens text longer than max to max characters ending in an ellipsis`', 'it works')).ok, false, 'a criterion with no test');
+  assert.equal(CHECKS.spec_valid({ files: {} }, { expected: { spec: 's.md' } }).ok, false, 'no spec');
+  // files_unchanged: the retro never writes LESSONS.md
+  const FU = { expected: { unchanged: ['LESSONS.md'] } };
+  assert.equal(CHECKS.files_unchanged({ files: { 'LESSONS.md': 'a' }, setup_state: { 'LESSONS.md': 'a' } }, FU).ok, true);
+  assert.equal(CHECKS.files_unchanged({ files: { 'LESSONS.md': 'a\n## 2026-11-22 — x' }, setup_state: { 'LESSONS.md': 'a' } }, FU).ok, false);
+  assert.equal(CHECKS.files_unchanged({ files: {}, setup_state: { 'LESSONS.md': 'a' } }, FU).ok, false, 'deleted');
+  assert.equal(CHECKS.files_unchanged({ files: { 'LESSONS.md': 'a' } }, FU).ok, false, 'no setup state: fails closed');
   assert.equal(CHECKS.first_tool({ events: [{ tool: 'Read' }, { tool: 'Edit' }] }, { expected: { first_tool: 'Read' } }).ok, true);
   assert.equal(CHECKS.first_tool({ events: [{ tool: 'Edit' }] }, { expected: { first_tool: 'Read' } }).ok, false);
   // the spec critic may start with its own caller search (spec-critic.md "Check"): any read-only tool, never an Edit
@@ -142,7 +180,9 @@ test('hard checks fail for the right reasons', () => {
   // a hard violation zeroes the score even with a perfect rubric
   const s = score(task, { events: [T('ok')], judge: { r1: 1, r2: 1, r3: 1 } });
   assert.equal(s.hard_ok, false);
-  assert.deepEqual(s.violations, ['red_before_green']); // no edits at all is in scope; the missing red run is the violation
+  // no edits at all is in scope; the missing red run is a violation, and with no record of the setup's files nothing
+  // shows the tests were kept
+  assert.deepEqual(s.violations, ['red_before_green', 'tests_kept']);
   assert.equal(s.score, 0);
   assert.equal(s.rubric.score, 1);
 });
@@ -346,7 +386,7 @@ test('every recorded outcome scores as its fixture says: each check has a passin
       for (const [name, r] of Object.entries(s.hard)) seen.set(`${name}:${r.ok}`, true);
     }
   }
-  for (const name of ['red_before_green', 'red_run', 'in_scope_edits', 'review_has_evidence', 'lesson_proposed']) for (const ok of [true, false]) assert.ok(seen.has(`${name}:${ok}`), `a fixture where ${name} is ${ok}`);
+  for (const name of ['red_before_green', 'red_run', 'in_scope_edits', 'review_has_evidence', 'lesson_proposed', 'provenance_tags', 'files_exist', 'named_tests', 'tests_kept', 'spec_valid', 'files_unchanged']) for (const ok of [true, false]) assert.ok(seen.has(`${name}:${ok}`), `a fixture where ${name} is ${ok}`);
 });
 
 test('claude runner setup: shared files come from kit/eval, carry the fixture commit, and a run is recorded in its progress row', (t) => {

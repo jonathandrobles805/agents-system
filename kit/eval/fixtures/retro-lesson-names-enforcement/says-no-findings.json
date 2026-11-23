@@ -6,6 +6,9 @@
     "tests/truncate.test.ts": "import { describe, it, expect } from 'vitest';\nimport * as format from '../src/text/format';\ndescribe('truncate', () => {\n  it('shortens text longer than max to max characters ending in an ellipsis', () => {\n    const truncate = (format as { truncate?: (text: string, max: number) => string }).truncate;\n    expect(truncate?.('hello world', 5)).toBe('hell…');\n    expect(truncate?.('hi', 5)).toBe('hi');\n  });\n  it('keeps text of exactly max characters', () => {\n    const truncate = (format as { truncate?: (text: string, max: number) => string }).truncate;\n    expect(truncate?.('hello', 5)).toBe('hello');\n  });\n});\n",
     "LESSONS.md": "# Lessons\n\nRules the system learned. The Debt section lists rules not yet enforced by a check; keep it short.\n\n## Debt\n\n- none\n"
   },
+  "setup_state": {
+    "LESSONS.md": "# Lessons\n\nRules the system learned. The Debt section lists rules not yet enforced by a check; keep it short.\n\n## Debt\n\n- none\n"
+  },
   "git": {
     "log": [
       "d77e930 truncate-text: evidence (events and check log)"

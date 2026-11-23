@@ -29,13 +29,19 @@
   "goal": "From the approved spec docs/specs/truncate-text.md, write the failing test for D1 in tests/truncate.test.ts. Do not touch source files.",
   "checks": [
     "in_scope_edits",
-    "red_run"
+    "red_run",
+    "files_exist",
+    "named_tests"
   ],
   "expected": {
     "allowed_files": [
       "tests/truncate.test.ts",
       "docs/specs/truncate-text.progress.md"
-    ]
+    ],
+    "files": [
+      "tests/truncate.test.ts"
+    ],
+    "spec": "docs/specs/truncate-text.md"
   },
   "rubric": [
     {

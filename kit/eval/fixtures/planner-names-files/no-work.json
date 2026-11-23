@@ -12,7 +12,8 @@
   "expect": {
     "hard_ok": false,
     "violations": [
-      "files_exist"
+      "files_exist",
+      "spec_valid"
     ]
   }
 }

@@ -1,8 +1,13 @@
 {
   "files": {
     "src/text/format.ts": "export function truncate(text, max) { return text.length <= max ? text : `${text.slice(0, max - 1)}…`; }\n",
-    "tests/truncate.test.ts": "it('shortens text longer than max to max characters ending in an ellipsis', ...)\n",
-    "docs/specs/truncate-text.progress.md": "| D1 | truncate shortens long text | tests/truncate.test.ts | red abc | green def |\n"
+    "tests/truncate.test.ts": "import { describe, it, expect } from 'vitest';\nimport * as format from '../src/text/format';\ndescribe('truncate', () => {\n  it('shortens text longer than max to max characters ending in an ellipsis', () => {\n    const truncate = (format as { truncate?: (text: string, max: number) => string }).truncate;\n    expect(truncate?.('hello world', 5)).toBe('hell…');\n    expect(truncate?.('hi', 5)).toBe('hi');\n  });\n});\n",
+    "docs/specs/truncate-text.progress.md": "| D1 | truncate shortens long text | tests/truncate.test.ts | red abc | green def |\n",
+    "tests/format.test.ts": "import { describe, it, expect } from 'vitest';\nimport { slugify } from '../src/text/format';\ndescribe('slugify', () => {\n  it('lowercases and joins words with dashes', () => {\n    expect(slugify('  Hello, World ')).toBe('hello-world');\n  });\n});\n"
+  },
+  "setup_state": {
+    "tests/truncate.test.ts": "import { describe, it, expect } from 'vitest';\nimport * as format from '../src/text/format';\ndescribe('truncate', () => {\n  it('shortens text longer than max to max characters ending in an ellipsis', () => {\n    const truncate = (format as { truncate?: (text: string, max: number) => string }).truncate;\n    expect(truncate?.('hello world', 5)).toBe('hell…');\n    expect(truncate?.('hi', 5)).toBe('hi');\n  });\n});\n",
+    "tests/format.test.ts": "import { describe, it, expect } from 'vitest';\nimport { slugify } from '../src/text/format';\ndescribe('slugify', () => {\n  it('lowercases and joins words with dashes', () => {\n    expect(slugify('  Hello, World ')).toBe('hello-world');\n  });\n});\n"
   },
   "events": [
     {

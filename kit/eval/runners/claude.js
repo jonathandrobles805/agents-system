@@ -521,6 +521,9 @@ export async function run(task, { attempt = 0, timeoutMs = 20 * 60 * 1000, trans
     const setupTree = workTree(cwd, path.join(dir, 'index.setup'), notWork);
     const firstCommit = gitIn(['rev-list', '--max-parents=0', 'HEAD']).trim().split('\n').pop();
     const setupFiles = gitIn(['diff', '--name-status', firstCommit, setupTree]);
+    // the files as the setup left them, for the checks that compare the session's end state with it (tests_kept,
+    // files_unchanged): the tester's test is untracked in the lane, so git's HEAD does not hold it
+    const setupState = snapshot(cwd);
     const base = { ...process.env, ...SB.telemetryEnv({ project: 'kit-eval', slug: task.id, stage: task.role ?? 'build' }), KIT_EVAL_ATTEMPT: String(attempt) };
     const env = { ...base, ...(home?.env ?? {}) };
     const agent = kitAgent(task, home);
@@ -566,7 +569,7 @@ export async function run(task, { attempt = 0, timeoutMs = 20 * 60 * 1000, trans
     }
     // `output`: what the worker printed (its final answer with `claude -p`), redacted; a check may read it (lesson_proposed)
     // `session_diff`, `setup_files`: what the judge was told the session and the setup changed
-    return { runner: name, variant: null, files, events, setup_events: setupEvents, session_diff: sessionDiff, setup_files: setupFiles, judge_prompt: judgeInput, git, judge, test_commands: testCommands, transcripts: kept, ms: Date.now() - started, worker_command: work.command, worker_status: work.status, worker_signal: work.signal, worker_error: work.error, worker_stderr: work.stderr.slice(-2000), output: redact(work.stdout).slice(-20000), worker_agent: agent, warnings, judge_session: judgeSession };
+    return { runner: name, variant: null, files, setup_state: setupState, events, setup_events: setupEvents, session_diff: sessionDiff, setup_files: setupFiles, judge_prompt: judgeInput, git, judge, test_commands: testCommands, transcripts: kept, ms: Date.now() - started, worker_command: work.command, worker_status: work.status, worker_signal: work.signal, worker_error: work.error, worker_stderr: work.stderr.slice(-2000), output: redact(work.stdout).slice(-20000), worker_agent: agent, warnings, judge_session: judgeSession };
   } finally {
     if (!process.env.KIT_EVAL_KEEP) fs.rmSync(dir, { recursive: true, force: true });
   }

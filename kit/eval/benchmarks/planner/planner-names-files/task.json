@@ -27,12 +27,14 @@
   "goal": "Write docs/specs/truncate-text.md for the queued truncate-text feature from its research, docs/research/truncate-text.md: files to read, change and create; done-criteria with tests; open questions.",
   "checks": [
     "files_exist",
+    "spec_valid",
     "no_secret_read"
   ],
   "expected": {
     "files": [
       "docs/specs/truncate-text.md"
-    ]
+    ],
+    "spec": "docs/specs/truncate-text.md"
   },
   "rubric": [
     {

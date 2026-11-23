@@ -1,0 +1,60 @@
+{
+  "files": {
+    "docs/specs/truncate-text.md": "# Spec: {{feature}}\n\n- Slug: truncate-text\n- Date: 2026-11-22\n- Commit: abc1234\n- Research: {{comma-separated research slugs}}\n- Risk: {{low|high-risk}}\n- Status: {{draft|waiting-approval|approved|building|in-review|merged}}\n\n## Summary\n\n<!-- One screen. The approver reads only this if pressed for time. -->\n\n- Goal: {{one sentence}}\n- Files changed: {{count}} ({{list of the most important}})\n- Risks: {{top 1-3}}\n- Done when: {{the done-criteria in one line each}}\n- Open questions: {{none | list}}\n\n## Goal\n\n{{what and why, 3-6 sentences}}\n\n## Non-goals\n\n- {{explicitly out of scope}}\n\n## Files to read first\n\n<!-- The implementer must read every file here before any edit. guard-edit enforces it. -->\n\n- `{{path}}` — {{why}} [verified: {{path}}:{{start}}-{{end}}]\n\n## Files to change\n\n<!-- The allow-list. Edits outside this list are blocked. Name the extension point, not just the file. -->\n\n- `{{path}}` — {{what changes, where in the file}} [verified: {{path}}:{{start}}-{{end}}]\n\n## Files to create\n\n- `{{path}}` — {{purpose}}\n\n## Impact analysis\n\n<!-- For every existing symbol that changes: every caller, with file:line. Produced by grep/LSP, not memory. -->\n\n- `{{symbol}}` is called from: `{{path}}:{{line}}`, `{{path}}:{{line}}` [verified: cmd]\n  ```\n  {{the grep or references command and its output}}\n  ```\n\n## Approach\n\n{{how, referencing tagged findings and the files above}}\n\n## Data changes\n\n- {{none | migration name — reversible: yes/no — rollback: how}}\n\n## New dependencies\n\n- {{none | package@version — why}}\n\n## Done-criteria\n\n<!-- Each criterion maps to exactly one test name that does not exist yet. For non-code features, name the artifact and the checklist instead. -->\n\n| # | Criterion | Test (or artifact + checklist) |\n|---|---|---|\n| D1 | {{observable behavior}} | `{{test file}}::{{test name}}` |\n\n## Assumptions\n\n<!-- Each is tagged. An untagged assumption is an open question. -->\n\n- A1. {{assumption}} [verified: {{path}}:{{start}}-{{end}}]\n\n## Open questions\n\n<!-- Must be empty before approval. /zi-implement refuses otherwise. -->\n\n- {{none}}\n\n## Architecture checklist\n\n<!-- Copied from ARCHITECTURE.md by the planner. Each item answered. -->\n\n- [ ] {{invariant}} — {{how this spec respects it}}\n\n## Critique\n\n<!-- Written by spec-critic. Numbered gaps and contradictions. The planner answers each inline. -->\n\n- C1. {{gap}} → {{planner response}}\n\n## Approval\n\nApproved by: {{name}} on 2026-11-22 at abc1234\n"
+  },
+  "events": [
+    {
+      "event": "read",
+      "tool": "Read",
+      "path": "ROADMAP.md",
+      "result": "ok"
+    },
+    {
+      "event": "read",
+      "tool": "Read",
+      "path": "docs/research/INDEX.md",
+      "result": "ok"
+    },
+    {
+      "event": "read",
+      "tool": "Read",
+      "path": "docs/research/truncate-text.md",
+      "result": "ok"
+    },
+    {
+      "event": "read",
+      "tool": "Read",
+      "path": "src/text/format.ts",
+      "result": "ok"
+    },
+    {
+      "event": "read",
+      "tool": "Read",
+      "path": "tests/format.test.ts",
+      "result": "ok"
+    },
+    {
+      "event": "edit",
+      "tool": "Write",
+      "path": "docs/specs/truncate-text.md",
+      "result": "ok"
+    }
+  ],
+  "git": {
+    "log": [
+      "abc1234 eval"
+    ]
+  },
+  "judge": {
+    "r1": 0,
+    "r2": 0,
+    "r3": 0
+  },
+  "ms": 1200,
+  "expect": {
+    "hard_ok": false,
+    "violations": [
+      "spec_valid"
+    ]
+  }
+}
