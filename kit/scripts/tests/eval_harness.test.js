@@ -288,7 +288,11 @@ fs.appendFileSync(${JSON.stringify(log)}, JSON.stringify({ argv: process.argv.sl
 const t = path.join(process.env.CLAUDE_CONFIG_DIR, 'projects', 'p');
 fs.mkdirSync(t, { recursive: true });
 fs.writeFileSync(path.join(t, 's.jsonl'), JSON.stringify({ type: 'user', text: 'key sk-ant-api03-abcdefSECRET in a tool result' }) + '\\n');
-if (fs.existsSync('.claude/lane.json')) fs.appendFileSync('docs/specs/refund-route.events.jsonl', JSON.stringify({ event: 'bash', tool: 'Bash', command: 'npx vitest run tests/routes.test.ts', result: 'fail' }) + '\\n');
+// in a lane: one event in the lane's file, and an earlier one in the session file hook_event_log uses for what it cannot place in a lane
+if (fs.existsSync('.claude/lane.json')) {
+  fs.appendFileSync('docs/specs/refund-route.events.jsonl', JSON.stringify({ event: 'bash', tool: 'Bash', command: 'npx vitest run tests/routes.test.ts', result: 'fail', ts: '2999-01-01T00:00:02' }) + '\\n');
+  fs.appendFileSync('.claude/session/events.jsonl', JSON.stringify({ event: 'read', tool: 'Read', path: 'docs/specs/refund-route.md', result: 'ok', lane: null, ts: '2999-01-01T00:00:01' }) + '\\n');
+}
 process.stdout.write(process.env.KIT_EVAL_JUDGE ? '{"r1": 1}' : 'done');
 `, { mode: 0o755 });
   setEnv(t, 'PATH', `${bin}${path.delimiter}${process.env.PATH}`);
@@ -307,8 +311,9 @@ process.stdout.write(process.env.KIT_EVAL_JUDGE ? '{"r1": 1}' : 'done');
   assert.match(worker.cwd, /node-api-lanes[\\/]refund-route$/);
   assert.equal(worker.zdotdir, worker.home);
   assert.ok(!judge.cwd.includes('node-api'));
-  // the session's events only: the one the stand-in's hook wrote, none of the setup's; scored as the tester's red run
-  assert.deepEqual(o.events.map((e) => e.event), ['bash']);
+  // the session's events only, from the lane's file and the session file, in time order; none of the setup's
+  // (lane.js start and stage wrote both files before the session); scored as the tester's red run
+  assert.deepEqual(o.events.map((e) => e.event), ['read', 'bash']);
   assert.deepEqual(o.test_commands, ['npx vitest run', 'npx vitest run --changed HEAD', 'npx vitest run {file}']);
   assert.equal(score(task, o).hard.red_run.ok, true);
   assert.ok('docs/specs/refund-route.md' in o.files && 'docs/specs/refund-route.progress.md' in o.files);

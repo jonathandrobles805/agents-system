@@ -299,6 +299,27 @@ function readEvents(file, from = 0) {
   return fs.readFileSync(file, 'utf8').split('\n').filter(Boolean).slice(from).map((l) => JSON.parse(l));
 }
 
+/**
+ * The events files a session's hooks may write: the lane's own (`<work>/<slug>.events.jsonl`), and the session file
+ * hook_event_log and the post-edit hook use for an event they cannot place in a lane (`.claude/session/events.jsonl`
+ * under the repository the hook resolved: the worktree, or the main repo when a subagent reports it as its cwd).
+ */
+export function eventFiles(root, cwd, laneRec) {
+  return [...new Set([laneRec?.eventsPath, path.join(cwd, '.claude', 'session', 'events.jsonl'), path.join(root, '.claude', 'session', 'events.jsonl')].filter(Boolean))];
+}
+
+/** Each file's line count now: where the session's own events start. */
+export const eventOffsets = (files) => files.map((f) => readEvents(f).length);
+
+/**
+ * The events appended to `files` after `offsets`, in time order: stably sorted by their `ts` (K.appendEvent stamps every
+ * event, to the second), so within one second the lane's own file comes first, then each file's own order.
+ */
+export function eventsSince(files, offsets) {
+  const ts = (e) => String(e.ts ?? '');
+  return files.flatMap((f, i) => readEvents(f, offsets[i])).map((e, i) => [e, i]).sort(([a, i], [b, j]) => (ts(a) < ts(b) ? -1 : ts(a) > ts(b) ? 1 : i - j)).map(([e]) => e);
+}
+
 function snapshot(root) {
   const files = {};
   const walk = (d) => {
@@ -334,16 +355,16 @@ export async function run(task, { attempt = 0, timeoutMs = 20 * 60 * 1000, trans
       fs.mkdirSync(path.dirname(settings), { recursive: true });
       fs.writeFileSync(settings, JSON.stringify(SB.srtSettings(lane), null, 2));
     }
-    // in a lane the hooks write the lane's events file; elsewhere the repo's session file
+    // in a lane the hooks write the lane's events file, and the session file for what they cannot place in it
     const laneRec = slug ? K.findLane(cwd) : null;
-    const eventsPath = laneRec ? laneRec.eventsPath : path.join(cwd, '.claude', 'session', 'events.jsonl');
-    const before = readEvents(eventsPath).length;
+    const evFiles = eventFiles(root, cwd, laneRec);
+    const before = eventOffsets(evFiles);
     const base = { ...process.env, ...SB.telemetryEnv({ project: 'kit-eval', slug: task.id, stage: task.role ?? 'build' }), KIT_EVAL_ATTEMPT: String(attempt) };
     const env = { ...base, ...(home?.env ?? {}) };
     const work = headless(task.goal, cwd, env, settings, timeoutMs, kitAgent(task, home));
     const kept = { worker: home && transcripts ? keepTranscripts(home.config, path.join(transcripts, 'worker')) : [], judge: [] };
     const files = snapshot(cwd);
-    const events = readEvents(eventsPath, before);
+    const events = eventsSince(evFiles, before);
     const git = { log: spawnSync('git', ['log', '--oneline', '-20'], { cwd, encoding: 'utf8' }).stdout.trim().split('\n') };
     // the project's recorded test commands, so the scorer can tell a test run among the session's Bash calls
     const cmds = K.loadKitJson(cwd).commands ?? {};
