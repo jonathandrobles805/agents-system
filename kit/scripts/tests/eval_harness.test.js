@@ -833,7 +833,13 @@ test('redact: every credential form is redacted, and prose and code that only na
     [j('https://user:', 'secret@host.example.com/path'), 'https://user:***@host.example.com/path'],
     [j('git clone https://x-access-token:', 's3cr/et@github.com/o/r'), 'git clone https://x-access-token:***@github.com/o/r'],
     ['password: changeme', 'password: ***'],
-    ['login(password: Password)', 'login(password: ***)'],
+    // the code-reference exemptions below stop at code: a value that is no call, env reference or type is still redacted
+    ['password: Swordfish', 'password: ***'],
+    ['password: Hunter2,', 'password: ***,'],
+    [j('token=', 'jwt_sign_abc123'), 'token=***'],
+    [j('const token = "', 'eyJx.abc"'), 'const token = "***"'],
+    [j('GITHUB_TOKEN=', 'ghp_', 'a'.repeat(36)), 'GITHUB_TOKEN=***'],
+    [j('api_key = ', 'process_env_9f8e7d6c5b4a'), 'api_key = ***'],
   ];
   for (const [input, want] of redacted) {
     assert.equal(claude.redact(input), want, input);
@@ -850,6 +856,10 @@ test('redact: every credential form is redacted, and prose and code that only na
     'function login(password: string, token: number): void', 'interface C { api_key: string | undefined; secret: unknown }',
     'see https://example.com:8443/path', 'the bearer token is short',
     'reads token: from header', 'const token = getToken();', 'const token = existingToken;', 'if (password == other) return',
+    // finding: code that names where a value comes from was mangled: a TypeScript type, an env reference, a call
+    'login(password: Password)', 'function f(token: AuthToken, secret: Secret<string>): void', 'type T = { password: Password; api_key: ApiKey }', 'password: Password | null',
+    'password: process.env.DB_PASSWORD', 'const token = process.env.GITHUB_TOKEN;', 'apiKey: import.meta.env.VITE_API_KEY', 'API_KEY=$API_KEY', 'token=${TOKEN}',
+    'const token = jwt.sign(payload, key);', 'token=jwt.sign(x)', 'password: z.string().min(8)', 'secret: z.string(),',
   ];
   // a value never takes the `)` that closes a call
   assert.ok(claude.redact('login(password: Password)').endsWith(')'));

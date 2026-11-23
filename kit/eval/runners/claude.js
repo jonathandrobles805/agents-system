@@ -155,9 +155,11 @@ export function fixtureRepo(task, dir, claudeHome) {
  * `==`/`===`), `name = value` with a token-like value (a digit or a symbol in it, or 16 characters or more: "The secret
  * = to good tests" and `token = getToken()` stay), `name: value` (not a TypeScript type: `password: string` stays;
  * after a bare `token:` a plain word followed by more prose stays, "reads token: from header";
- * a value never takes a `(` or `)`: `login(password: Password)` keeps its `)`), or with a quoted value
+ * a value never takes a `(` or `)`), or with a quoted value
  * (`"password": "x"`, `secret = 'x'`, and the `\"…\"` a JSON string escapes them to). A value stops at a quote or
- * backslash, so redacted JSON text stays JSON.
+ * backslash, so redacted JSON text stays JSON. An unquoted value that is code naming where the value comes from is left
+ * (codeRef): a call (`token = jwt.sign(…)`, `password: z.string()`), an environment reference (`process.env.X`,
+ * `import.meta.env.X`, `$X`), or a TypeScript type after `name:` (`login(password: Password)`, `secret: Secret<string>;`).
  *
  * Known limits: a token split across lines (`ghp_` then a newline) or escaped twice (`\\n` inside a JSON string that is
  * itself inside a JSON string) is not recognised.
@@ -177,6 +179,19 @@ const TYPE_WORD = String.raw`(?:string|number|boolean|bigint|symbol|any|unknown|
 const tok = (body, flags = 'g') => new RegExp(START + body, flags);
 // a value that looks like a credential rather than a word: a digit or a symbol in it, or 16 characters or more
 const tokenLike = (v) => /[^A-Za-z]/.test(v) || v.length >= 16;
+/**
+ * A value after a credential-named key that is code naming where a value comes from, not the value: a call
+ * (`jwt.sign(`, `z.string(`, `getToken(`: a name or dotted name followed by `(`), an environment reference
+ * (`process.env.DB_PASSWORD`, `import.meta.env.VITE_API_KEY`, `$TOKEN`, `${TOKEN}`), or, after `name:`, a TypeScript
+ * type (a capitalised name of letters, optionally generic or an array, `Password`, `Secret<string>`, `ApiKey[]`, followed
+ * by `)`, `,`, `;`, `|`, `&`, `=`, `>`, `]`, `}`). `next` is the text right after the value.
+ */
+const codeRef = (v, next, typed = false) =>
+  (/^[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*$/.test(v) && /^\s*\(/.test(next)) ||
+  /^[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*\(/.test(v) ||
+  /^(?:process\.env|import\.meta\.env)(?:[.[]|$)/.test(v) ||
+  /^\$(?:\{[A-Za-z_][A-Za-z0-9_]*\}|[A-Za-z_][A-Za-z0-9_]*)$/.test(v) ||
+  (typed && /^[A-Z][A-Za-z]*(?:<[\w\s,|<>]*>)?(?:\[\])*$/.test(v) && /^\s*(?:[),;|&=>\]}]|$)/.test(next) && !/^\s*$/.test(next));
 const REDACTIONS = [
   [/-----BEGIN ([A-Z0-9 ]*)PRIVATE KEY-----[\s\S]*?-----END \1PRIVATE KEY-----/g, '-----BEGIN $1PRIVATE KEY-----***-----END $1PRIVATE KEY-----'],
   // scheme://user:password@host: the password only, before the key/value forms read `x-access-token:` as a key
@@ -187,13 +202,13 @@ const REDACTIONS = [
   // a quoted value: "password": "x", secret = 'x', token: "x" (and their \"…\" form inside JSON text)
   [new RegExp(String.raw`(${CRED}(?:${Q})?\s*(?:=(?!=)|:)\s*${Q})[^"'\\]+`, 'gi'), '$1***'],
   // name=value with no space before `=` (shell, env files, query strings); `==`/`===` is a comparison
-  [new RegExp(String.raw`(${CRED}=(?!=))[^\s"'\\&,;]+`, 'gi'), '$1***'],
+  [new RegExp(String.raw`(${CRED}=(?!=))([^\s"'\\&,;]+)`, 'gi'), (m, k, v, at, str) => (codeRef(v, str.slice(at + m.length)) ? m : `${k}***`)],
   // name = value with spaces around `=`: only a token-like value (`aws_secret_access_key = wJalr…`)
-  [new RegExp(String.raw`(${CRED}[ \t]+=(?!=)[ \t]*)([^\s"'\\,;*()]+)`, 'gi'), (m, k, v) => (tokenLike(v) ? `${k}***` : m)],
+  [new RegExp(String.raw`(${CRED}[ \t]+=(?!=)[ \t]*)([^\s"'\\,;*()]+)`, 'gi'), (m, k, v, at, str) => (tokenLike(v) && !codeRef(v, str.slice(at + m.length)) ? `${k}***` : m)],
   // name: value (YAML, headers, logs), not a TypeScript annotation (`password: string`); after a bare `token:` or
   // `apikey:`, a plain word followed by more prose ("reads token: from header") is prose; a password or secret, or a
   // compound key (`private_key: abc`), is redacted whatever follows
-  [new RegExp(String.raw`(${CRED}:[ \t]*)(?!${TYPE_WORD})([^\s"'\\,;*()][^\s"'\\,;()]*)([ \t]+[A-Za-z])?`, 'gi'), (m, k, v, more) => (tokenLike(v) || /[_-]|pass|secret/i.test(k) || !more ? `${k}***${more ?? ''}` : m)],
+  [new RegExp(String.raw`(${CRED}:[ \t]*)(?!${TYPE_WORD})([^\s"'\\,;*()][^\s"'\\,;()]*)([ \t]+[A-Za-z])?`, 'gi'), (m, k, v, more, at, str) => (codeRef(v, str.slice(at + k.length + v.length), true) ? m : tokenLike(v) || /[_-]|pass|secret/i.test(k) || !more ? `${k}***${more ?? ''}` : m)],
   // a block cut off before its END line (a clipped output): its base64 body, lines and escaped newlines included
   [/-----BEGIN ([A-Z0-9 ]*)PRIVATE KEY-----(?![*]{3}-----END)(?:(?:\s|\\[nrt])*[A-Za-z0-9+\/=]+)*/g, '-----BEGIN $1PRIVATE KEY-----***'],
   [tok('sk-ant-[A-Za-z0-9_-]+'), 'sk-ant-***'],
