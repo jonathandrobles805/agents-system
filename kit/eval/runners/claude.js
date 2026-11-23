@@ -73,15 +73,102 @@ export function setProgressCell(file, criterion, column, ref) {
 }
 
 /**
+ * The npm cache the setup installs from: one for every task of a run (and later runs on the machine), in the temp
+ * directory, never the owner's ~/.npm; `KIT_EVAL_NPM_CACHE` names another. `npm ci` checks every package against the
+ * lockfile's integrity hash, so a cached package is used only when it is the one the lockfile pins.
+ */
+export const npmCache = (env = process.env) => env.KIT_EVAL_NPM_CACHE || path.join(os.tmpdir(), 'kit-eval-npm-cache');
+
+/**
+ * Is a project's install what its lockfile pins? Returns the problems: package-lock.json not matching package.json's
+ * dependency lists, a package the lockfile lists missing from node_modules (an optional one, such as another
+ * platform's binary, may be), a package at another version than the lockfile's, or a program of a direct dependency
+ * (`vitest`, `tsc`, `eslint`) missing from node_modules/.bin. An `npx <program>` that finds none there downloads
+ * whatever package has that name (`npx tsc` fetched the unrelated `tsc` package in run 45235559138).
+ */
+export function verifyInstall(dir) {
+  const read = (rel) => JSON.parse(fs.readFileSync(path.join(dir, rel), 'utf8'));
+  let lock;
+  let pkg;
+  try {
+    [lock, pkg] = [read('package-lock.json'), read('package.json')];
+  } catch (e) {
+    return [`cannot read package.json and package-lock.json: ${e.message}`];
+  }
+  if (!isObj(lock.packages) || !isObj(lock.packages[''])) return ['package-lock.json has no `packages` (a lockfile npm 7 or later wrote)'];
+  const out = [];
+  const top = lock.packages[''];
+  const sorted = (o) => JSON.stringify(Object.entries(o ?? {}).sort(([a], [b]) => (a < b ? -1 : 1)));
+  for (const f of ['dependencies', 'devDependencies', 'optionalDependencies']) if (sorted(pkg[f]) !== sorted(top[f])) out.push(`package-lock.json's ${f} differ from package.json's: regenerate it (npm install --package-lock-only)`);
+  for (const [key, meta] of Object.entries(lock.packages)) {
+    if (!key || meta.link) continue;
+    let version = null;
+    try {
+      version = read(path.join(key, 'package.json')).version;
+    } catch {
+      if (!meta.optional && !meta.devOptional) out.push(`${key} is not installed`);
+      continue;
+    }
+    if (version !== meta.version) out.push(`${key} is ${version}, the lockfile pins ${meta.version}`);
+  }
+  for (const name of Object.keys({ ...top.dependencies, ...top.devDependencies })) {
+    for (const bin of Object.keys(lock.packages[`node_modules/${name}`]?.bin ?? {})) if (!fs.existsSync(path.join(dir, 'node_modules', '.bin', bin))) out.push(`node_modules/.bin/${bin} (from ${name}) is missing`);
+  }
+  return out;
+}
+
+/**
+ * The project's dependencies, installed on the host before the session exactly as its package-lock.json pins them:
+ * `npm ci` (dev dependencies included; offline first, from npmCache; no package's install script runs on the host),
+ * then verifyInstall. Without them the session's `npx vitest`, `npx tsc` and `npx eslint`, and the post-edit hook's
+ * runs of the same commands, ran whatever npx downloaded (in run 45235559138: vitest 5.1.1 for a project that declares
+ * ^2.0.0, and the unrelated `tsc` package), so the red and green runs the scorer reads were not the project's tools.
+ * A directory with no package-lock.json (the python fixture) installs nothing. Returns the direct dependencies'
+ * installed versions, or null; an install that fails or does not match the lockfile stops the setup.
+ */
+export function installDeps(dir, env = process.env) {
+  if (!fs.existsSync(path.join(dir, 'package-lock.json'))) return null;
+  const r = spawnSync('npm', ['ci', '--include=dev', '--prefer-offline', '--ignore-scripts', '--no-audit', '--no-fund'], { cwd: dir, env: { ...env, npm_config_cache: npmCache(env) }, encoding: 'utf8', timeout: 10 * 60 * 1000 });
+  if (r.status !== 0) throw new Error(`eval setup: npm ci in ${dir} exited ${r.status ?? r.signal ?? r.error?.code}: ${`${r.stderr ?? ''}${r.stdout ?? ''}`.slice(-2000)}`);
+  const problems = verifyInstall(dir);
+  if (problems.length) throw new Error(`eval setup: the install in ${dir} is not what package-lock.json pins: ${problems.slice(0, 5).join('; ')}`);
+  const lock = JSON.parse(fs.readFileSync(path.join(dir, 'package-lock.json'), 'utf8'));
+  const top = lock.packages[''];
+  return Object.fromEntries(Object.keys({ ...top.dependencies, ...top.devDependencies }).sort().map((n) => [n, lock.packages[`node_modules/${n}`]?.version ?? null]));
+}
+
+/**
+ * The project's typecheck and whole-project lint (kit.json `typecheck`, and `lint_all` or a `lint` with no `{file}`),
+ * run on the state the setup left, where the session will run: each must pass. The post-edit hook runs them after
+ * every edit the session makes; a failure it reports is fed back to the agent and, for typecheck, counted as a failed
+ * attempt, so a fixture or install that is already red would charge the agent with failures that are not its own. A
+ * command set to `none: <reason>` is skipped. Tests are not run here: a setup may leave a red test on purpose. Throws
+ * when one fails; returns the commands it ran.
+ */
+export function setupGates(cwd, env = process.env) {
+  const c = K.loadKitJson(cwd).commands ?? {};
+  const lint = [c.lint_all, c.lint].find((x) => typeof x === 'string' && x.trim() && !x.includes('{file}'));
+  const ran = [];
+  for (const [name, cmd] of [['typecheck', c.typecheck], ['lint', lint]]) {
+    if (typeof cmd !== 'string' || !cmd.trim() || /^none\b/i.test(cmd.trim())) continue;
+    const r = spawnSync('bash', ['-c', cmd], { cwd, env, encoding: 'utf8', timeout: 5 * 60 * 1000, maxBuffer: 64 * 1024 * 1024 });
+    if (r.status !== 0) throw new Error(`eval setup: the project's ${name} (${cmd}) exits ${r.status ?? r.signal} on the state the setup left, before the session: ${`${r.stdout ?? ''}${r.stderr ?? ''}`.trim().split('\n').slice(-10).join('\n')}`);
+    ran.push(cmd);
+  }
+  return ran;
+}
+
+/**
  * The lane a task's goal names, made the way the kit makes one: `lane.js start` (precheck, worktree on wt/<slug> from
  * origin's base, lane.json, progress skeleton), then the task's steps, each a kit operation: `stage` (lane.js stage),
  * `write` (files in the worktree), `check` (lane.js check runs the command host-side and logs it; its log ref goes into
  * the progress row, and a run whose exit contradicts `record` stops the setup), `commit`, `template` (lane.js template),
  * `hook` (one of the kit's hook scripts run on a tool call's input, as Claude Code runs it, so the event it records is
  * the hook's own; an exit other than `exit` stops the setup), `evidence` (lane.js evidence: the committed copy of the
- * check log). Returns the worktree.
+ * check log). The project's dependencies are installed in the worktree (`install`, installDeps) before any step.
+ * Returns the worktree.
  */
-function startLane(root, dir, lane, env, head) {
+function startLane(root, dir, lane, env, head, install = installDeps) {
   const laneJs = (args) => {
     const r = spawnSync(process.execPath, [path.join(K.KIT_DIR, 'scripts', 'lane.js'), ...args], { cwd: root, env, encoding: 'utf8', timeout: 10 * 60 * 1000 });
     if (r.status !== 0) throw new Error(`eval setup: lane.js ${args.join(' ')} exited ${r.status}: ${r.stderr || r.stdout}`);
@@ -92,6 +179,9 @@ function startLane(root, dir, lane, env, head) {
   F.git(['clone', '-q', '--bare', root, path.join(dir, 'origin.git')], dir);
   F.git(['remote', 'add', 'origin', path.join(dir, 'origin.git')], root);
   const wt = last(laneJs(['start', lane.slug, '--repo', root])).worktree;
+  // node_modules is gitignored, so the worktree has none: installed before any step, so the setup's own `check` runs
+  // and the session use the project's tools
+  install(wt, env);
   const short = () => F.git(['rev-parse', '--short', 'HEAD'], wt).trim();
   const base = short();
   for (const step of lane.steps ?? []) {
@@ -119,17 +209,19 @@ function startLane(root, dir, lane, env, head) {
 
 /**
  * The fixture repo, bootstrapped, with the task's setup: its `files` and `kit_json` patch committed on main as
- * "eval setup", then its `lane`, if any. Returns the repo, the directory the worker runs in (the lane's worktree when
- * there is one) and the lane's slug.
+ * "eval setup", then its `lane`, if any. The project's dependencies are installed (`install`, installDeps) in the repo
+ * and in the lane's worktree, and its typecheck and lint must pass where the worker runs (`gates`, setupGates); the
+ * kit's unit tests pass stand-ins for both, so they need no registry. Returns the repo, the directory the worker runs
+ * in (the lane's worktree when there is one), the lane's slug and the installed direct dependencies' versions (`deps`).
  */
-export function fixtureRepo(task, dir, claudeHome) {
+export function fixtureRepo(task, dir, claudeHome, { install = installDeps, gates = setupGates } = {}) {
   const builders = { 'node-api': F.nodeApi, 'python-service': F.pythonService };
   const build = builders[task.fixture ?? 'node-api'];
   if (!build) throw new Error(`unknown fixture repo '${task.fixture}'`);
   const root = build(path.join(dir, task.fixture ?? 'node-api'));
-  // the bootstrap registers the repo in the session's own home (CLAUDE_HOME), never the owner's ~/.claude; a setup's
-  // test runs (npx) cache their packages in the eval's scratch space, not the owner's ~/.npm
-  const env = { ...process.env, ...(claudeHome ? { CLAUDE_HOME: claudeHome } : {}), npm_config_cache: path.join(dir, 'npm-cache') };
+  // the bootstrap registers the repo in the session's own home (CLAUDE_HOME), never the owner's ~/.claude; npm caches
+  // in the eval's own cache (npmCache), not the owner's ~/.npm
+  const env = { ...process.env, ...(claudeHome ? { CLAUDE_HOME: claudeHome } : {}), npm_config_cache: npmCache() };
   const r = spawnSync(process.execPath, [path.join(K.KIT_DIR, 'scripts', 'bootstrap.js'), '--repo', root], { encoding: 'utf8', env });
   if (r.status !== 0) throw new Error(`bootstrap failed: ${r.stderr}`);
   const setup = task.setup ?? {};
@@ -140,8 +232,12 @@ export function fixtureRepo(task, dir, claudeHome) {
     fs.writeFileSync(kj, JSON.stringify(deepMerge(JSON.parse(fs.readFileSync(kj, 'utf8')), setup.kit_json), null, 2) + '\n');
   }
   F.commitAll(root, 'eval setup');
-  if (!setup.lane) return { root, cwd: root, lane: null };
-  return { root, cwd: startLane(root, dir, setup.lane, env, head), lane: setup.lane.slug };
+  // in the repo too: a hook that resolves the main repository (a subagent reporting it as its cwd) runs the project's
+  // commands there
+  const deps = install(root, env);
+  const cwd = setup.lane ? startLane(root, dir, setup.lane, env, head, install) : root;
+  gates(cwd, env);
+  return { root, cwd, lane: setup.lane?.slug ?? null, deps };
 }
 
 /**
@@ -739,7 +835,7 @@ export async function run(task, { attempt = 0, timeoutMs = 20 * 60 * 1000, trans
     const srt = SB.detectRuntime(process.env).runtime === 'srt';
     const home = srt ? sessionHome(dir) : null;
     // the worker runs where its goal is: the fixture repo, or the lane's worktree when the task sets one up
-    const { root, cwd, lane: slug } = fixtureRepo(task, dir, home?.config);
+    const { root, cwd, lane: slug, deps } = fixtureRepo(task, dir, home?.config);
     // Claude Code looks up a worktree's trust under its main repository (seen: "Ignoring 16 permissions.allow entries ...
     // projects["<repo>"].hasTrustDialogAccepted" for a session in the lane's worktree), so both are trusted
     if (home) for (const p of new Set([root, cwd])) trustWorkspace(home.config, p);
@@ -824,7 +920,8 @@ export async function run(task, { attempt = 0, timeoutMs = 20 * 60 * 1000, trans
     // `output`: what the worker printed (its final answer with `claude -p`), redacted; a check may read it (lesson_proposed)
     // `session_diff`, `setup_files`: what the judge was told the session and the setup changed
     // `transcript_commands`: the Bash commands from the worker's transcript (redacted), beside the hook's `bash` events
-    return { runner: name, variant: null, files, setup_state: setupState, events, setup_events: setupEvents, transcript_commands: bashCalls.map((c) => c.command), lane_log_lines: laneLogLines, node_modules_lines: nodeModules, not_work: notWork, session_diff: sessionDiff, setup_files: setupFiles, judge_prompt: judgeInput, git, judge, test_commands: testCommands, transcripts: kept, ms: Date.now() - started, worker_command: work.command, worker_status: work.status, worker_signal: work.signal, worker_error: work.error, worker_stderr: work.stderr.slice(-2000), output: redact(work.stdout).slice(-20000), worker_agent: agent, warnings, judge_session: judgeSession };
+    // `setup_deps`: the direct dependencies' versions the setup installed (installDeps), so the report says which tools ran
+    return { runner: name, variant: null, setup_deps: deps, files, setup_state: setupState, events, setup_events: setupEvents, transcript_commands: bashCalls.map((c) => c.command), lane_log_lines: laneLogLines, node_modules_lines: nodeModules, not_work: notWork, session_diff: sessionDiff, setup_files: setupFiles, judge_prompt: judgeInput, git, judge, test_commands: testCommands, transcripts: kept, ms: Date.now() - started, worker_command: work.command, worker_status: work.status, worker_signal: work.signal, worker_error: work.error, worker_stderr: work.stderr.slice(-2000), output: redact(work.stdout).slice(-20000), worker_agent: agent, warnings, judge_session: judgeSession };
   } finally {
     if (!process.env.KIT_EVAL_KEEP) fs.rmSync(dir, { recursive: true, force: true });
   }

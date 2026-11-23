@@ -572,9 +572,12 @@ export function ignoredBySetup(setupState, paths) {
 }
 
 /**
- * Files a session rewrites by running the project's own tools, not by choosing to: `npm install` (which a reviewer or
- * tester runs to get vitest) rewrites `package-lock.json`. No task in kit/eval/benchmarks is about dependencies; a task
- * that is sets `expected.tool_rewrites` (to `[]`, so a lockfile change is a change again).
+ * Files a session rewrites by running the project's own tools, not by choosing to: an `npm install` can rewrite
+ * `package-lock.json` (an npm other than the one that wrote it re-serializes it). The setup installs the lockfile before
+ * the session (runners/claude.js installDeps), so a session needs no install, but one that runs it anyway is not
+ * charged for the lockfile; `package.json` is never excused, so adding or changing a dependency still fails. No task in
+ * kit/eval/benchmarks is about dependencies; a task that is sets `expected.tool_rewrites` (to `[]`, so a lockfile
+ * change is a change again).
  */
 export const TOOL_REWRITES = ['package-lock.json'];
 

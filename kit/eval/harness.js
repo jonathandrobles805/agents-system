@@ -132,6 +132,8 @@ export async function runSet({ set, runner = 'fixture', n = set === 'full' ? 3 :
       const worker = { status: outcome.worker_status ?? null, signal: outcome.worker_signal ?? null, error: outcome.worker_error ?? null, stderr: String(outcome.worker_stderr ?? '').slice(-2000) };
       if (outcome.worker_command) worker.command = outcome.worker_command;
       if ('worker_agent' in outcome) worker.agent = outcome.worker_agent;
+      // the project's tools the setup installed (vitest, typescript, eslint, …), as its lockfile pins them
+      if (outcome.setup_deps) worker.deps = outcome.setup_deps;
       const warnings = outcome.warnings ?? [];
       const rel = (files) => (files ?? []).map((f) => path.relative(outDir, f));
       const kept = outcome.transcripts ? { transcripts: { worker: rel(outcome.transcripts.worker), judge: rel(outcome.transcripts.judge) } } : {};

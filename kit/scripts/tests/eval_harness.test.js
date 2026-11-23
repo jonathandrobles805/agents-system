@@ -1170,6 +1170,54 @@ test('the session diff leaves out a committed events file: workTree starts from 
   assert.ok(!diff.includes('events.jsonl') && !diff.includes('"event"'), diff);
 });
 
+test('the node-api fixture installs what it declares: a lockfile npm wrote for its package.json, an ESLint config for its lint command', (t) => {
+  // finding (eval run 45235559138): the fixture's package-lock.json was `{}` and nothing was installed, so the session's
+  // `npx tsc` ran the unrelated `tsc` package and `npx vitest` a downloaded vitest 5.1.1 for a project declaring ^2.0.0
+  const read = (f) => JSON.parse(fs.readFileSync(path.join(F.NODE_API_DEPS, f), 'utf8'));
+  const [pkg, lock] = [read('package.json'), read('package-lock.json')];
+  assert.equal(lock.lockfileVersion, 3);
+  assert.deepEqual([lock.name, lock.version], [pkg.name, pkg.version]);
+  for (const f of ['dependencies', 'devDependencies']) assert.deepEqual(lock.packages[''][f], pkg[f], `the lockfile's ${f} are package.json's`);
+  for (const [key, meta] of Object.entries(lock.packages)) {
+    if (!key) continue;
+    assert.match(meta.resolved ?? '', /^https:\/\/registry\.npmjs\.org\//, `${key} comes from the registry`);
+    assert.match(meta.integrity ?? '', /^sha512-/, `${key} has an integrity hash npm ci checks`);
+  }
+  // the programs the kit.json commands run come from the project's own dependencies
+  assert.ok(lock.packages['node_modules/vitest'].version.startsWith('2.'), 'vitest as package.json declares it (^2.0.0)');
+  for (const [name, bin] of [['vitest', 'vitest'], ['typescript', 'tsc'], ['eslint', 'eslint']]) assert.ok(lock.packages[`node_modules/${name}`]?.bin?.[bin], `${bin} from ${name}`);
+  const root = F.nodeApi(path.join(tmpPath(t), 'r'));
+  for (const f of F.NODE_API_DEP_FILES) assert.equal(fs.readFileSync(path.join(root, f), 'utf8'), fs.readFileSync(path.join(F.NODE_API_DEPS, f), 'utf8'), f);
+  assert.equal(F.git(['status', '--porcelain'], root), '', 'committed with the project');
+});
+
+test('claude runner setup: an install is checked against the lockfile, and the project\'s typecheck and lint must pass before the session', (t) => {
+  const dir = tmpPath(t);
+  const write = (rel, text) => { fs.mkdirSync(path.dirname(path.join(dir, rel)), { recursive: true }); fs.writeFileSync(path.join(dir, rel), typeof text === 'string' ? text : JSON.stringify(text)); };
+  write('package.json', { name: 'p', version: '1.0.0', devDependencies: { tool: '^1.0.0' } });
+  write('package-lock.json', { name: 'p', version: '1.0.0', lockfileVersion: 3, packages: { '': { name: 'p', version: '1.0.0', devDependencies: { tool: '^1.0.0' } }, 'node_modules/tool': { version: '1.2.3', dev: true, bin: { tool: 'bin/tool.js' } }, 'node_modules/@x/linux-only': { version: '0.1.0', optional: true } } });
+  assert.match(claude.verifyInstall(dir).join('\n'), /node_modules\/tool is not installed/);
+  write('node_modules/tool/package.json', { name: 'tool', version: '1.2.4' });
+  assert.match(claude.verifyInstall(dir).join('\n'), /node_modules\/tool is 1\.2\.4, the lockfile pins 1\.2\.3/);
+  write('node_modules/tool/package.json', { name: 'tool', version: '1.2.3' });
+  assert.deepEqual(claude.verifyInstall(dir), ['node_modules/.bin/tool (from tool) is missing'], 'an optional package of another platform may be absent; a program may not');
+  write('node_modules/.bin/tool', '');
+  assert.deepEqual(claude.verifyInstall(dir), []);
+  write('package.json', { name: 'p', version: '1.0.0', devDependencies: { tool: '^2.0.0' } });
+  assert.match(claude.verifyInstall(dir).join('\n'), /devDependencies differ from package\.json's/);
+  write('package-lock.json', '{}');
+  assert.match(claude.verifyInstall(dir).join('\n'), /no `packages`/);
+  // a project without a lockfile (the python fixture) installs nothing
+  assert.equal(claude.installDeps(path.join(dir, 'node_modules')), null);
+  // the gates: typecheck and the whole-project lint run where the worker runs; `none: <reason>` is skipped
+  write('.claude/kit.json', { commands: { typecheck: 'true', lint: 'npx eslint {file}', lint_all: 'true', test: 'false' } });
+  assert.deepEqual(claude.setupGates(dir), ['true', 'true'], 'a setup may leave a red test: tests are not a gate');
+  write('.claude/kit.json', { commands: { typecheck: 'echo "src/x.ts: TS2322" && false', lint_all: 'true' } });
+  assert.throws(() => claude.setupGates(dir), /the project's typecheck \(.*\) exits 1 on the state the setup left, before the session: src\/x\.ts: TS2322/);
+  write('.claude/kit.json', { commands: { typecheck: 'none: no TypeScript', lint: 'false' } });
+  assert.throws(() => claude.setupGates(dir), /the project's lint \(false\) exits 1/);
+});
+
 test('claude runner setup: a lane step runs a kit hook as Claude Code would (its own event recorded), commits the evidence, and names the lane\'s commits', (t) => {
   const dir = tmpPath(t);
   const red = { check: 'D1', command: 'node -e "process.exit(1)"', record: 'red' };
@@ -1188,7 +1236,18 @@ test('claude runner setup: a lane step runs a kit hook as Claude Code would (its
       ] },
     },
   };
-  const { root, cwd } = claude.fixtureRepo(task, dir, path.join(dir, 'home', '.claude'));
+  // the project's dependencies are installed in the repo, then in the worktree before the setup's first check runs, and the gates run where the worker runs; stand-ins here, so the test needs no registry
+  const calls = [];
+  const install = (d) => {
+    const ev = path.join(d, 'docs', 'specs', 'truncate-text.events.jsonl');
+    const checked = fs.existsSync(ev) && fs.readFileSync(ev, 'utf8').split('\n').filter(Boolean).some((l) => JSON.parse(l).event === 'check');
+    calls.push(['install', d, checked ? 'after a check' : 'before any check']);
+    return { vitest: '2.1.9' };
+  };
+  const gates = (d) => calls.push(['gates', d]);
+  const { root, cwd, deps } = claude.fixtureRepo(task, dir, path.join(dir, 'home', '.claude'), { install, gates });
+  assert.deepEqual(calls, [['install', root, 'before any check'], ['install', cwd, 'before any check'], ['gates', cwd]]);
+  assert.deepEqual(deps, { vitest: '2.1.9' });
   const events = fs.readFileSync(path.join(cwd, 'docs', 'specs', 'truncate-text.events.jsonl'), 'utf8').trim().split('\n').map((l) => JSON.parse(l));
   // the hook's own record, as guard-edit writes it for an edit outside the spec
   assert.deepEqual(events.filter((e) => e.event !== 'sandbox').map((e) => `${e.event}:${e.result}`), ['check:fail', 'blocked:blocked', 'check:ok']);
@@ -1202,6 +1261,7 @@ test('claude runner setup: a lane step runs a kit hook as Claude Code would (its
   const d1 = F.git(['rev-parse', '--short', 'HEAD~1'], cwd).trim();
   assert.equal(fs.readFileSync(path.join(cwd, 'docs', 'specs', 'truncate-text.review.md'), 'utf8'), `- Diff: \`${base}..${d1}\`\n`);
   // a hook that does not exit as the step says stops the setup; only the kit's hook scripts run
-  assert.throws(() => claude.fixtureRepo({ ...task, setup: { ...task.setup, lane: { slug: 'truncate-text', steps: [{ stage: 'build' }, { hook: 'hook_guard_edit.js', tool: 'Write', tool_input: { file_path: 'src/text/format.ts' }, exit: 0 }] } } }, path.join(dir, 'b'), path.join(dir, 'b', 'home', '.claude')), /exited 2, expected 0/);
-  assert.throws(() => claude.fixtureRepo({ ...task, setup: { ...task.setup, lane: { slug: 'truncate-text', steps: [{ hook: '../lane.js', tool: 'Write' }] } } }, path.join(dir, 'c'), path.join(dir, 'c', 'home', '.claude')), /not one of the kit's hook scripts/);
+  const stubs = { install: () => null, gates: () => [] };
+  assert.throws(() => claude.fixtureRepo({ ...task, setup: { ...task.setup, lane: { slug: 'truncate-text', steps: [{ stage: 'build' }, { hook: 'hook_guard_edit.js', tool: 'Write', tool_input: { file_path: 'src/text/format.ts' }, exit: 0 }] } } }, path.join(dir, 'b'), path.join(dir, 'b', 'home', '.claude'), stubs), /exited 2, expected 0/);
+  assert.throws(() => claude.fixtureRepo({ ...task, setup: { ...task.setup, lane: { slug: 'truncate-text', steps: [{ hook: '../lane.js', tool: 'Write' }] } } }, path.join(dir, 'c'), path.join(dir, 'c', 'home', '.claude'), stubs), /not one of the kit's hook scripts/);
 });
