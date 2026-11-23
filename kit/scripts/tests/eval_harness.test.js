@@ -8,7 +8,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { CORE_ROLES, RUNNERS, compare, fmt, loadTasks, runSet, selectTasks, summarize, writeBaseline } from '../../eval/harness.js';
-import { CHECKS, score, testCommandIn, testRuns } from '../../eval/score.js';
+import { CHECKS, ignoredBySetup, score, testCommandIn, testRuns } from '../../eval/score.js';
 import * as fixture from '../../eval/runners/fixture.js';
 import * as claude from '../../eval/runners/claude.js';
 import * as K from '../kitlib.js';
@@ -91,6 +91,22 @@ test('hard checks fail for the right reasons', () => {
   assert.equal(CHECKS.in_scope_edits({ events: [], setup_state: st, files: { ...st, 'src/text/format.ts': 'b\n' } }, task).ok, true, 'a Bash write inside scope');
   assert.equal(CHECKS.in_scope_edits({ events: [], setup_state: st, files: { ...st, 'docs/specs/truncate-text.events.jsonl': '{}\n' }, not_work: ['docs/specs/truncate-text.events.jsonl'] }, task).ok, true, 'the hooks\' events file is not the agent\'s work');
   assert.equal(CHECKS.in_scope_edits({ events: [] }, task).ok, false, 'no setup state: fails closed');
+  // finding: what the session's tools rewrite failed it: `npm install` rewrites package-lock.json, `vitest --coverage`
+  // writes coverage/, tsc writes *.tsbuildinfo. The lockfile, and whatever the setup's .gitignore ignores (asked of git
+  // itself), are not the session's work; the project's controls under .claude/ always are
+  const gi = { ...st, '.gitignore': 'node_modules\n.env\ncoverage/\n*.tsbuildinfo\n\n# agent-kit\n.claude/session/\n.claude/settings.local.json\n', 'package-lock.json': '{}', '.claude/kit.json': '{"commands":{"test":"npx vitest run"}}\n' };
+  const ISE = (files, t = task) => CHECKS.in_scope_edits({ events: [], setup_state: gi, files: { ...gi, ...files } }, t);
+  for (const f of [{ 'package-lock.json': '{"lockfileVersion":3}' }, { 'coverage/index.html': '<html>' }, { 'coverage/lcov-report/format.ts.html': 'x' }, { 'tsconfig.tsbuildinfo': '{}' }])
+    assert.equal(ISE(f).ok, true, `${Object.keys(f)[0]}: ${ISE(f).why}`);
+  assert.match(ISE({ 'coverage/index.html': '<html>', 'package-lock.json': '{"v":3}' }).why, /2 rewritten by tools or ignored/);
+  for (const f of [{ '.claude/kit.json': '{"commands":{"test":"true"}}\n' }, { '.claude/settings.json': '{}' }, { '.claude/settings.local.json': '{"hooks":{}}' }, { 'src/coverage.ts': 'x' }, { 'coverage.ts': 'x' }])
+    assert.equal(ISE(f).ok, false, Object.keys(f)[0]);
+  assert.equal(ISE({ 'package-lock.json': '{"v":3}' }, { expected: { ...task.expected, tool_rewrites: [] } }).ok, false, 'a task about dependencies takes the lockfile back');
+  // the setup's .gitignore, not the session's: widening it excuses nothing (and the .gitignore change is out of scope)
+  assert.match(ISE({ '.gitignore': `${gi['.gitignore']}src/domain/\n`, 'src/domain/payment.ts': 'x\n' }).why, /src\/domain\/payment\.ts/);
+  assert.deepEqual(ignoredBySetup({ 'pkg/.gitignore': 'dist/\n' }, ['pkg/dist/a.js', 'dist/a.js', '../x/dist/a.js']), ['pkg/dist/a.js'], 'a nested .gitignore, as git reads it');
+  // the lockfile stays a tool rewrite only while no benchmark task is about dependencies
+  for (const t of loadTasks()) assert.ok(!/depend|package|lockfile|npm install/i.test(t.goal) || t.expected?.tool_rewrites, `${t.id}: a goal about dependencies must set expected.tool_rewrites`);
   // provenance_tags: the kit's research rules over Findings and What I could not verify; Sources and header fields hold
   // no claims, and every tag the research template allows passes
   const P = { expected: { tagged_docs: ['d.md'] } };

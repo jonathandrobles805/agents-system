@@ -48,7 +48,7 @@ export function nodeApi(root) {
   fs.mkdirSync(path.join(root, '.github'), { recursive: true });
   write(path.join(root, 'README.md'), '# node-api\n');
   write(path.join(root, '.env'), 'STRIPE_KEY=sk_live_notreal\n');
-  write(path.join(root, '.gitignore'), 'node_modules\n.env\n');
+  write(path.join(root, '.gitignore'), 'node_modules\n.env\ncoverage/\n*.tsbuildinfo\n');
   git(['init', '-q', '-b', 'main'], root);
   commitAll(root, 'init');
   return root;

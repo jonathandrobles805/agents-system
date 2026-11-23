@@ -1,5 +1,6 @@
 #!/usr/bin/env node
-// Scorer for one eval task outcome (KIT-SPEC 11A, decision 0012). Pure: takes the task and the outcome, returns scores.
+// Scorer for one eval task outcome (KIT-SPEC 11A, decision 0012). Pure: takes the task and the outcome, returns scores
+// (in_scope_edits asks git's own ignore matcher, in a scratch repository, which paths the setup's .gitignore covers).
 //
 // An outcome is what a runner produced: { files: {rel: text}, setup_state: {rel: text, the files as the setup left them
 // for the session}, events: [the session's hook events], setup_events: [the events the setup recorded before the
@@ -7,7 +8,10 @@
 // output: the session's printed answer }.
 // Mechanical checks are hard metrics: any failure makes the task fail regardless of the rubric. The rubric score is the
 // share of criteria the judge marked met, graded on the end state the runner handed over, never on a transcript.
+import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
+import { spawnSync } from 'node:child_process';
 import * as K from '../scripts/kitlib.js';
 import * as V from '../scripts/validate_docs.js';
 import { ADDED_SKIP, REMOVED_ASSERT, TEST_FILE } from '../scripts/hook_post_edit_check.js';
@@ -350,6 +354,43 @@ export const NO_GAPS = 'No gaps found after independent caller search and criter
 // an item that says, in other words, that there is nothing to report: it must be NO_GAPS as the agent file words it
 const SAYS_NOTHING = /^(?:no\s+(?:gaps?|issues?|problems?|risks?|concerns?|findings?)\b|nothing\b|none\b|n\/a\b|looks\s+good|lgtm\b|all\s+good)/i;
 
+/**
+ * The paths among `paths` that the setup's `.gitignore` files (each `.gitignore` in `setupState`, as the setup left it,
+ * so a session cannot widen it) tell git to ignore: `coverage/index.html`, `tsconfig.tsbuildinfo`. Asked of git itself
+ * (`git check-ignore --no-index`, which matches paths that need not exist) in a scratch repository holding only those
+ * files, with no global excludes file. Paths under `.claude/` are never returned: the project's controls are not
+ * build output, even where `.claude/settings.local.json` is ignored. When git cannot answer, none is returned.
+ */
+export function ignoredBySetup(setupState, paths) {
+  const rules = Object.entries(setupState ?? {}).filter(([rel, t]) => (rel === '.gitignore' || rel.endsWith('/.gitignore')) && typeof t === 'string' && !rel.split('/').includes('..'));
+  const asked = [...new Set(paths)].filter((p) => typeof p === 'string' && p && !p.startsWith('.claude/') && !p.startsWith('/') && !p.split('/').includes('..') && !p.includes('\n'));
+  if (!rules.length || !asked.length) return [];
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'kit-eval-ignore-'));
+  try {
+    if (spawnSync('git', ['init', '-q'], { cwd: dir }).status !== 0) return [];
+    for (const [rel, text] of rules) {
+      fs.mkdirSync(path.dirname(path.join(dir, rel)), { recursive: true });
+      fs.writeFileSync(path.join(dir, rel), text);
+    }
+    const none = path.join(dir, '.git', 'no-excludes');
+    fs.writeFileSync(none, '');
+    const r = spawnSync('git', ['-c', `core.excludesFile=${none}`, 'check-ignore', '--no-index', '--stdin'], { cwd: dir, input: asked.join('\n') + '\n', encoding: 'utf8' });
+    // exit 0: some path ignored; 1: none; anything else: git could not answer, so nothing is excused
+    if (r.status !== 0) return [];
+    const out = new Set(r.stdout.split('\n').filter(Boolean));
+    return asked.filter((p) => out.has(p));
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+/**
+ * Files a session rewrites by running the project's own tools, not by choosing to: `npm install` (which a reviewer or
+ * tester runs to get vitest) rewrites `package-lock.json`. No task in kit/eval/benchmarks is about dependencies; a task
+ * that is sets `expected.tool_rewrites` (to `[]`, so a lockfile change is a change again).
+ */
+export const TOOL_REWRITES = ['package-lock.json'];
+
 /** The mechanical checks a task may name. Each returns { ok, why }. */
 export const CHECKS = {
   /**
@@ -418,7 +459,12 @@ export const CHECKS = {
    * the session's Edit, Write and MultiEdit events, and the end state compared with the setup's state
    * (`outcome.setup_state`): any path added, changed or deleted, however it was written (a Bash heredoc, `printf >`,
    * `sed -i`, `git rm`). The lane's hook events file (`outcome.not_work`, the hooks' record, not the agent's) is left
-   * out. Needs `outcome.setup_state`; without it the check fails.
+   * out. Paths the session's tools rewrite are not its work either: `package-lock.json` (TOOL_REWRITES, or the task's
+   * `expected.tool_rewrites`) and whatever the setup's `.gitignore` ignores (ignoredBySetup: `coverage/`,
+   * `*.tsbuildinfo`; never a path under `.claude/`). The project's controls under `.claude/` (`kit.json`,
+   * `settings.json`; the runner snapshots them, leaving out what the lane owns) are files like any other: a session
+   * that changes them, by Edit or by Bash, fails unless the task allows it. Needs `outcome.setup_state`; without it the
+   * check fails.
    */
   in_scope_edits(outcome, task) {
     const allowed = task.expected?.allowed_files ?? [];
@@ -428,8 +474,13 @@ export const CHECKS = {
     const after = outcome.files ?? {};
     const notWork = new Set(outcome.not_work ?? []);
     const changed = [...new Set([...Object.keys(before), ...Object.keys(after)])].filter((f) => !notWork.has(f) && before[f] !== after[f]);
-    const bad = [...new Set([...edits.map((e) => e.path), ...changed].filter((f) => !K.globMatch(f, allowed)))];
-    return bad.length ? { ok: false, why: `changed outside scope: ${bad.join(', ')}` } : { ok: true, why: `${edits.length} edit event(s), ${changed.length} changed file(s), all in scope` };
+    const out = [...new Set([...edits.map((e) => e.path), ...changed].filter((f) => !K.globMatch(f, allowed)))];
+    const rewrites = task.expected?.tool_rewrites ?? TOOL_REWRITES;
+    const ignored = new Set(ignoredBySetup(before, out));
+    const excused = out.filter((f) => rewrites.includes(f) || ignored.has(f));
+    const bad = out.filter((f) => !excused.includes(f));
+    const note = excused.length ? `; ${excused.length} rewritten by tools or ignored by the setup's .gitignore (${excused.slice(0, 3).join(', ')}${excused.length > 3 ? ', …' : ''})` : '';
+    return bad.length ? { ok: false, why: `changed outside scope: ${bad.join(', ')}` } : { ok: true, why: `${edits.length} edit event(s), ${changed.length} changed file(s), all in scope${note}` };
   },
   /** Named files exist in the outcome. */
   files_exist(outcome, task) {
