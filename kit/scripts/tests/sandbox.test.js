@@ -93,6 +93,14 @@ test('launchCommand per runtime', () => {
   assert.ok(c.includes('--network') && c.includes('kit-lane') && c.includes('/w:/w') && c.includes('KIT_ALLOWED_DOMAIN=a.example'));
   const none = launchCommand({ ...base, runtime: null }, { wt: '/w', settingsPath: '/x', prompt: 'p' });
   assert.equal(none[0], 'claude');
+  // `prompt: null`: the prompt goes on stdin (the eval's judge prompt can pass the 128 KiB argument limit); a container
+  // passes stdin through only with -i
+  for (const runtime of ['srt', 'container', null]) {
+    const cmd = launchCommand({ ...base, runtime }, { wt: '/w', settingsPath: '/x', prompt: null });
+    assert.deepEqual(cmd.slice(cmd.indexOf('claude')), ['claude', '-p', '--permission-mode', 'default'], `${runtime}`);
+    assert.equal(cmd.includes('-i'), runtime === 'container', `${runtime}: ${cmd.join(' ')}`);
+  }
+  assert.ok(!c.includes('-i'), 'a prompt given as an argument needs no stdin');
   // a lane names no agent: its command is exactly what it was before `agent` existed
   for (const runtime of ['srt', 'container', null]) {
     const cfg = { ...base, runtime };

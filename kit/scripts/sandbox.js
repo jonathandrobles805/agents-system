@@ -139,13 +139,19 @@ export function telemetryEnv({ project, slug, stage = 'build', port = Number(pro
  * The command the host side runs to start a headless lane session inside the sandbox. Argument list, not a shell string.
  * `agent` runs the whole session as that agent (`claude --agent`): the eval names the kit agent a task measures; a
  * lane names none, so its session is the orchestrator that spawns the agents.
+ * `prompt: null` leaves the prompt out of the argument list: the caller writes it to the process's stdin. `claude -p`
+ * reads its prompt from stdin when none is given as an argument (the CLI reference's "Process piped content" row,
+ * https://code.claude.com/docs/en/cli-reference; Claude Code 2.1.330 with neither says "Input must be provided either
+ * through stdin or as a prompt argument when using --print"). The eval's judge prompt holds the end state and can pass
+ * Linux's 128 KiB limit on one argument (E2BIG); stdin has no such limit. srt hands its stdin to the command; a
+ * container needs `-i` for it.
  */
 export function launchCommand(cfg, { wt, settingsPath, prompt, agent = null }) {
-  const claude = ['claude', '-p', prompt, '--permission-mode', 'default', ...(agent ? ['--agent', agent] : [])];
+  const claude = ['claude', '-p', ...(prompt === null ? [] : [prompt]), '--permission-mode', 'default', ...(agent ? ['--agent', agent] : [])];
   if (cfg.runtime === 'srt') return ['srt', '--settings', settingsPath, '--', ...claude];
   if (cfg.runtime === 'container') {
     const eng = cfg.engine || 'docker';
-    const args = [eng, 'run', '--rm', '--network', 'kit-lane', '-v', `${wt}:${wt}`, '-w', wt, '-v', `${cfg.allowWrite[1]}:${cfg.allowWrite[1]}`];
+    const args = [eng, 'run', '--rm', ...(prompt === null ? ['-i'] : []), '--network', 'kit-lane', '-v', `${wt}:${wt}`, '-w', wt, '-v', `${cfg.allowWrite[1]}:${cfg.allowWrite[1]}`];
     for (const d of cfg.allowedDomains) args.push('-e', `KIT_ALLOWED_DOMAIN=${d}`);
     return [...args, 'kit-lane:latest', ...claude];
   }
