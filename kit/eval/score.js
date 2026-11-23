@@ -27,23 +27,52 @@ const REVIEW_RULES = new Set(['template-placeholder', 'empty-checklist', 'checkl
  * `||`, or a trailing `&` that backgrounds it: `npx vitest run | tail` exits as tail does), and null when no test
  * command runs.
  */
-export function testCommandIn(command, testCommands = []) {
-  return testCommandMatch(command, testCommands)?.how ?? null;
+export function testCommandIn(command, testCommands = [], pkgTest = null) {
+  return testCommandMatch(command, testCommands, pkgTest)?.how ?? null;
+}
+
+/**
+ * `npm test -- <args>` (or `npm test`, `npm run test -- <args>`) read as the project's test script with those args,
+ * when that script (package.json `scripts.test`, `pkgTest`) is vitest: `npx vitest run <script's args> <args>`. npm
+ * runs the script and exits with its status, and `--` hands the rest to it. Null for any other command or script.
+ */
+export function npmTestAsVitest(seg, pkgTest) {
+  const m = /^npm\s+(?:test|t|run(?:-script)?\s+test)(?:\s+--(?:\s+(.*))?)?$/.exec(seg);
+  const v = /^vitest(?:\s+run)?(?:\s+(.*))?$/.exec(String(pkgTest ?? '').trim());
+  if (!m || !v) return null;
+  return ['npx vitest run', v[1], m[1]].filter((x) => x && x.trim()).map((x) => x.trim()).join(' ');
+}
+
+/** The project's test script (package.json `scripts.test`) as the setup left it, else as the end state has it. */
+export function packageTestScript(outcome) {
+  for (const src of [outcome.setup_state, outcome.files]) {
+    try {
+      const t = JSON.parse(src?.['package.json'] ?? 'null')?.scripts?.test;
+      if (typeof t === 'string') return t;
+    } catch { /* not JSON: no script */ }
+  }
+  return null;
 }
 
 /**
  * testCommandIn's match: `{ how, run }`, where `run` is the matched segment with any leading `VAR=value` assignments
  * dropped (`npx vitest run --reporter=tap tests/truncate.test.ts`), so a caller can tell which test it ran; null when
- * no recorded test command runs.
+ * no recorded test command runs. With the project's test script (`pkgTest`), `npm test -- <args>` is read as that
+ * script (npmTestAsVitest) and `run` is the vitest command it stands for.
  */
-export function testCommandMatch(command, testCommands = []) {
+export function testCommandMatch(command, testCommands = [], pkgTest = null) {
   const known = testCommands.map((c) => String(c).split('{')[0].trim()).filter(Boolean);
   if (!known.length || typeof command !== 'string') return null;
   // a lone `&` (background) separates too; `2>&1`, `&>` and `>&` are redirections, not separators
   const parts = command.split(/(\|\||&&|;|\||\n|(?<![<>&])&(?![&>]))/);
   for (let i = 0; i < parts.length; i += 2) {
-    const seg = parts[i].trim().replace(/^(?:[A-Za-z_][A-Za-z0-9_]*=\S*\s+)+/, '');
-    if (!known.some((k) => seg === k || seg.startsWith(`${k} `))) continue;
+    let seg = parts[i].trim().replace(/^(?:[A-Za-z_][A-Za-z0-9_]*=\S*\s+)+/, '');
+    const isKnown = (x) => known.some((k) => x === k || x.startsWith(`${k} `));
+    if (!isKnown(seg)) {
+      const npm = npmTestAsVitest(seg, pkgTest);
+      if (!npm || !isKnown(npm)) continue;
+      seg = npm;
+    }
     const next = parts[i + 1];
     // nothing but whitespace after a trailing `;` or newline: the test is still the last command
     if (next === undefined || ((next === '\n' || next === ';') && parts.slice(i + 2).every((p) => !p.trim()))) return { how: 'run', run: seg };
@@ -69,23 +98,61 @@ export function testCommandMatch(command, testCommands = []) {
  */
 export function testRuns(outcome) {
   const runs = [];
+  const pkgTest = packageTestScript(outcome);
   for (const e of outcome.events ?? []) {
     if (e.event === 'test') runs.push({ result: e.result, via: 'test', command: e.command ?? null });
     else if (e.event === 'check') {
       // a criterion's check counts only when the command it ran is a recorded test command whose exit is its own:
       // `kit lane check D1 -- true` logs an exit 0 that says nothing about a test
-      const m = testCommandMatch(e.command, outcome.test_commands);
+      const m = testCommandMatch(e.command, outcome.test_commands, pkgTest);
       if (m?.how === 'run') runs.push({ result: e.result, via: 'check', criterion: e.criterion ?? null, command: m.run });
     } else if (e.event === 'bash') {
-      const m = testCommandMatch(e.command, outcome.test_commands);
+      const m = testCommandMatch(e.command, outcome.test_commands, pkgTest);
       if (m?.how === 'run' || (m?.how === 'pass-only' && e.result === 'ok')) runs.push({ result: e.result, via: 'bash', command: m.run });
     }
   }
   return runs.filter((r) => r.result === 'ok' || r.result === 'fail');
 }
 
-/** The file arguments of a test command (`tests/truncate.test.ts` in `npx vitest run --reporter=tap tests/truncate.test.ts`). */
-const testFiles = (cmd) => String(cmd ?? '').split(/\s+/).filter((t) => !t.startsWith('-') && !t.includes('=') && /[^/]\.[A-Za-z0-9]{1,5}$/.test(t));
+/** The file arguments of a test command (`tests/truncate.test.ts` in `npx vitest run --reporter=tap tests/truncate.test.ts`), `./` dropped. */
+const testFiles = (cmd) => String(cmd ?? '').split(/\s+/).filter((t) => !t.startsWith('-') && !t.includes('=') && /[^/]\.[A-Za-z0-9]{1,5}$/.test(t)).map((t) => t.replace(/^\.\//, ''));
+
+// vitest options that take a value as the next word: that word is no file filter
+const VITEST_VALUE_FLAGS = new Set(['-t', '--testNamePattern', '-r', '--root', '--dir', '-c', '--config', '--reporter', '--project', '--changed', '--shard', '--environment', '--pool', '--outputFile', '--mode']);
+
+/**
+ * The file filters of a vitest command: its positional arguments after `vitest run` (`truncate`, `tests/`,
+ * `./tests/truncate.test.ts`), options and their values left out.
+ */
+function vitestFilters(cmd) {
+  const t = String(cmd ?? '').trim().split(/\s+/);
+  const at = t.indexOf('vitest');
+  if (at < 0) return [];
+  const out = [];
+  for (let i = at + 1; i < t.length; i++) {
+    if (i === at + 1 && t[i] === 'run') continue;
+    if (t[i].startsWith('-')) {
+      if (!t[i].includes('=') && VITEST_VALUE_FLAGS.has(t[i]) && t[i + 1] && !t[i + 1].startsWith('-')) i++;
+      continue;
+    }
+    out.push(t[i]);
+  }
+  return out;
+}
+
+/**
+ * Does a vitest command's filter select the test file `rel` (a path from the project root)? Vitest runs the test files
+ * whose path relative to the root contains a filter, case ignored, the filter also tried resolved against the working
+ * directory, which drops a leading `./` ("Will only execute test files that contain `basic`",
+ * https://v2.vitest.dev/guide/filtering; vitest 2.1.9 `filterFiles`: `testFile.includes(f.toLocaleLowerCase()) ||
+ * testFile.includes(relative(dir, f).toLocaleLowerCase())`, or an absolute filter the file's path starts with).
+ */
+export function vitestFilterSelects(filter, rel) {
+  const file = String(rel).replace(/^\.\//, '').toLowerCase();
+  const f = String(filter).toLowerCase();
+  if (f.startsWith('/')) return f === `/${file}` || f.endsWith(`/${file}`);
+  return file.includes(f) || file.includes(f.replace(/^(?:\.\/)+/, ''));
+}
 
 /** The events a retro looks for (kit/agents/retro.md, "Look for"). */
 // retro.md "Look for" lists the four, and "every escalation", which the post-edit hook records as `escalation` after the
@@ -244,7 +311,8 @@ export const CHECKS = {
       const suite = new Set((outcome.test_commands ?? []).filter((c) => !String(c).includes('{')).map((c) => String(c).trim()));
       const runsRedTest = (cmd) => setupRed.some((e) => {
         const want = testFiles(e.command);
-        return want.length > 0 && want.every((f) => testFiles(cmd).includes(f));
+        const filters = vitestFilters(cmd);
+        return want.length > 0 && filters.length > 0 && want.every((f) => filters.some((x) => vitestFilterSelects(x, f)));
       });
       const green = tests.findIndex((r) => r.result === 'ok' && (r.via === 'test'
         || ((r.via === 'check' || r.via === 'bash') && (suite.has(r.command) || runsRedTest(r.command)) && (r.via === 'bash' || setupRed.some((e) => e.criterion === r.criterion)))));

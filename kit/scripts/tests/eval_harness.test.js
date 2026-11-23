@@ -64,6 +64,14 @@ test('hard checks fail for the right reasons', () => {
   assert.equal(rbg({ setup_events: [setupRed], events: [bashRun('npx vitest run --changed HEAD')] }), true, 'the affected tests');
   assert.equal(rbg({ setup_events: [setupRed], events: [bashRun('cd /w && npx vitest run tests/truncate.test.ts')] }), true, 'the red run\'s own test file');
   assert.equal(rbg({ setup_events: [setupRed], events: [bashRun('npx vitest run tests/truncate.test.ts | tail')] }), false, 'a masked run is no run');
+  // correct green runs written another way (finding: they failed): `./`, a vitest name filter, `npm test -- <file>`
+  const pkg = { 'package.json': JSON.stringify({ scripts: { test: 'vitest run' } }) };
+  for (const c of ['npx vitest run ./tests/truncate.test.ts', 'npx vitest run truncate', 'npx vitest run TRUNCATE', 'npx vitest run tests/', 'npm test -- tests/truncate.test.ts', 'npm test -- truncate', 'npm run test -- ./tests/truncate.test.ts', 'npm test'])
+    assert.equal(rbg({ setup_events: [setupRed], events: [bashRun(c)], setup_state: pkg }), true, c);
+  for (const c of ['npx vitest run format', 'npx vitest run -t truncate tests/format.test.ts', 'npm test -- tests/format.test.ts', 'npm test -- truncate | tail'])
+    assert.equal(rbg({ setup_events: [setupRed], events: [bashRun(c)], setup_state: pkg }), false, c);
+  assert.equal(rbg({ setup_events: [setupRed], events: [bashRun('npm test -- tests/truncate.test.ts')] }), false, 'npm test with no package.json: unknown script');
+  assert.equal(rbg({ setup_events: [setupRed], events: [bashRun('npm test -- tests/truncate.test.ts')], setup_state: { 'package.json': JSON.stringify({ scripts: { test: 'true' } }) } }), false, 'a test script that is not vitest');
   assert.equal(CHECKS.no_secret_read({ events: [{ tool: 'Read', path: 'src/a.ts' }] }).ok, true);
   assert.equal(CHECKS.no_secret_read({ events: [{ tool: 'Read', path: '.env' }] }).ok, false);
   assert.equal(CHECKS.no_secret_read({ events: [{ tool: 'Read', path: 'config/.aws/credentials' }] }).ok, false);
@@ -395,6 +403,12 @@ test('a test run is recognised in a session\'s Bash calls only when its exit sta
   for (const c of ['npx vitest run 2>&1 | tail -5', 'npx vitest run || true', 'npx vitest run; echo done', 'npx vitest run &', 'npx vitest run & wait', 'npx vitest run\necho done']) assert.equal(testCommandIn(c, tc), 'masked', c);
   // not the recorded command: another script, a lookalike, or `kit lane check`, whose own exit is always 0
   for (const c of ['npm test', 'npx vitestx run', 'ls tests', 'kit lane check refund-route D1 --repo /r -- npx vitest run']) assert.equal(testCommandIn(c, tc), null, c);
+  // with the project's test script `vitest run`, `npm test -- <args>` is that script with those args
+  for (const c of ['npm test', 'npm test -- tests/r.ts', 'npm run test -- ./tests/r.ts', 'CI=1 npm test -- r']) assert.equal(testCommandIn(c, tc, 'vitest run'), 'run', c);
+  assert.equal(testCommandIn('npm test -- r | tail', tc, 'vitest run'), 'masked');
+  for (const c of ['npm test tests/r.ts', 'npm run lint', 'npm test -- r']) assert.equal(testCommandIn(c, tc, c === 'npm test -- r' ? 'jest' : 'vitest run'), null, c);
+  // red_run on the tester's own red run written as `npm test -- <file>`
+  assert.equal(CHECKS.red_run({ test_commands: tc, setup_state: { 'package.json': '{"scripts":{"test":"vitest run"}}' }, events: [{ event: 'bash', tool: 'Bash', command: 'npm test -- tests/truncate.test.ts', result: 'fail' }] }).ok, true);
   // wrapped forms are not read from Bash (KIT-SPEC 11A): the post-edit hook's `test` record covers an agent's edits
   for (const c of ['timeout 60 npx vitest run', 'env CI=1 npx vitest run', "bash -c 'npx vitest run'"]) assert.equal(testCommandIn(c, tc), null, c);
   assert.equal(testCommandIn('npx vitest run', []), null, 'no recorded command: nothing is a test run');
