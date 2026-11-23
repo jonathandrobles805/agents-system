@@ -2,6 +2,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 import { jsonDumps } from '../kitlib.js';
 
 // Hermetic git: the developer's global config (commit signing, hooks) must not affect test repositories.
@@ -26,15 +27,18 @@ const write = (p, text) => {
   fs.writeFileSync(p, text);
 };
 
+/**
+ * The node-api project's dependency files (kit/scripts/tests/data/node-api): its package.json, the package-lock.json
+ * npm generated from it (`npm install --package-lock-only`), so `npm ci` installs exactly the versions the project
+ * declares (the eval installs them before a session: kit/eval/runners/claude.js installDeps), and the ESLint config
+ * its `eslint` lint command needs (ESLint 9 exits 2 without one). The three are copied as they are.
+ */
+export const NODE_API_DEPS = path.join(path.dirname(fileURLToPath(import.meta.url)), 'data', 'node-api');
+export const NODE_API_DEP_FILES = ['package.json', 'package-lock.json', 'eslint.config.js'];
+
 export function nodeApi(root) {
   fs.mkdirSync(root, { recursive: true });
-  write(path.join(root, 'package.json'), jsonDumps({
-    name: 'node-api', version: '1.0.0', type: 'module',
-    scripts: { test: 'vitest run', lint: 'eslint .', typecheck: 'tsc --noEmit' },
-    dependencies: { express: '^4.19.0' },
-    devDependencies: { vitest: '^2.0.0', typescript: '^5.5.0', eslint: '^9.0.0', '@types/express': '^4.17.0' },
-  }, { indent: 2 }));
-  write(path.join(root, 'package-lock.json'), '{}');
+  for (const f of NODE_API_DEP_FILES) fs.copyFileSync(path.join(NODE_API_DEPS, f), path.join(root, f));
   write(path.join(root, 'tsconfig.json'), jsonDumps({ compilerOptions: { strict: true, module: 'esnext', target: 'es2022', moduleResolution: 'bundler', noEmit: true }, include: ['src'] }));
   write(path.join(root, 'src', 'domain', 'payment.ts'),
     'export class PaymentService {\n  constructor(private readonly db: { charge(id: string): Promise<number>; refund(id: string): Promise<number> }) {}\n' +
