@@ -572,7 +572,7 @@ export async function run(task, { attempt = 0, timeoutMs = 20 * 60 * 1000, trans
     }
     // `output`: what the worker printed (its final answer with `claude -p`), redacted; a check may read it (lesson_proposed)
     // `session_diff`, `setup_files`: what the judge was told the session and the setup changed
-    return { runner: name, variant: null, files, setup_state: setupState, events, setup_events: setupEvents, lane_log_lines: laneLogLines, session_diff: sessionDiff, setup_files: setupFiles, judge_prompt: judgeInput, git, judge, test_commands: testCommands, transcripts: kept, ms: Date.now() - started, worker_command: work.command, worker_status: work.status, worker_signal: work.signal, worker_error: work.error, worker_stderr: work.stderr.slice(-2000), output: redact(work.stdout).slice(-20000), worker_agent: agent, warnings, judge_session: judgeSession };
+    return { runner: name, variant: null, files, setup_state: setupState, events, setup_events: setupEvents, lane_log_lines: laneLogLines, not_work: notWork, session_diff: sessionDiff, setup_files: setupFiles, judge_prompt: judgeInput, git, judge, test_commands: testCommands, transcripts: kept, ms: Date.now() - started, worker_command: work.command, worker_status: work.status, worker_signal: work.signal, worker_error: work.error, worker_stderr: work.stderr.slice(-2000), output: redact(work.stdout).slice(-20000), worker_agent: agent, warnings, judge_session: judgeSession };
   } finally {
     if (!process.env.KIT_EVAL_KEEP) fs.rmSync(dir, { recursive: true, force: true });
   }
