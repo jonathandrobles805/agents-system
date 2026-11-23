@@ -379,6 +379,17 @@ export function workTree(cwd, scratch, exclude = []) {
 }
 
 /**
+ * The diff between two workTree trees, `.claude/` and the `exclude` paths left out. workTree starts from HEAD, so a
+ * path it excluded from `git add` is still in both trees as committed (the lane's events file once `kit lane evidence`
+ * or a session's own commit put it there): the diff itself must leave it out too.
+ */
+export function treeDiff(cwd, from, to, exclude = []) {
+  const r = spawnSync('git', ['diff', from, to, '--', '.', ':(exclude).claude', ...exclude.map((x) => `:(exclude)${x}`)], { cwd, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 });
+  if (r.status !== 0) throw new Error(`git diff ${from} ${to}: ${r.stderr}`);
+  return r.stdout;
+}
+
+/**
  * What the judge reads. It grades the session, so it is told which files were there before the session (written by
  * the fixture's bootstrap and the task's setup, e.g. the spec, or the test the tester wrote for an implementer) and
  * gets the session's own changes as a diff against the state the setup left, beside the end state and what the
@@ -439,7 +450,7 @@ export async function run(task, { attempt = 0, timeoutMs = 20 * 60 * 1000, trans
     const work = headless(task.goal, cwd, env, settings, timeoutMs, agent);
     const kept = { worker: home && transcripts ? keepTranscripts(home.config, path.join(transcripts, 'worker')) : [], judge: [] };
     const files = snapshot(cwd);
-    const sessionDiff = gitIn(['diff', setupTree, workTree(cwd, path.join(dir, 'index.end'), notWork), '--', '.', ':(exclude).claude']);
+    const sessionDiff = treeDiff(cwd, setupTree, workTree(cwd, path.join(dir, 'index.end'), notWork), notWork);
     const events = eventsSince(evFiles, before);
     // what the setup recorded before the session (the tester's red run in an implementer's lane): never the session's work
     const setupEvents = eventsBefore(evFiles, before);

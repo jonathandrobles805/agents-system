@@ -557,3 +557,21 @@ test('workTree records a directory\'s working state, untracked files included, w
   assert.ok(!fs.existsSync(path.join(tmpPath(t), 'idx')), 'the scratch index is removed');
   assert.deepEqual(F.git(['diff', '--name-status', 'HEAD', tree], root).trim().split('\n'), ['M\tREADME.md', 'A\tnew.ts'], '.claude/ and .gitignored files are left out');
 });
+
+test('the session diff leaves out a committed events file: workTree starts from HEAD, so the diff excludes it too', (t) => {
+  const root = F.nodeApi(path.join(tmpPath(t), 'r'));
+  const ev = 'docs/specs/x.events.jsonl';
+  fs.mkdirSync(path.join(root, 'docs', 'specs'), { recursive: true });
+  fs.writeFileSync(path.join(root, ev), '{"event":"check","result":"fail"}\n');
+  F.commitAll(root, 'evidence: the setup committed the events file');
+  const from = claude.workTree(root, path.join(tmpPath(t), 'i1'), [ev]);
+  // the session's hooks append to it and the session commits everything, its own change included
+  fs.appendFileSync(path.join(root, ev), '{"event":"bash","command":"npx vitest run","result":"ok"}\n');
+  fs.writeFileSync(path.join(root, 'README.md'), '# changed by the session\n');
+  F.commitAll(root, 'session work');
+  const to = claude.workTree(root, path.join(tmpPath(t), 'i2'), [ev]);
+  assert.match(F.git(['diff', '--name-only', from, to], root), /x\.events\.jsonl/, 'both trees carry the committed events file');
+  const diff = claude.treeDiff(root, from, to, [ev]);
+  assert.match(diff, /changed by the session/);
+  assert.ok(!diff.includes('events.jsonl') && !diff.includes('"event"'), diff);
+});
