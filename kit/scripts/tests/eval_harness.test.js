@@ -135,10 +135,15 @@ test('hard checks fail for the right reasons', () => {
   assert.equal(CHECKS.review_has_evidence(rv(''), R).ok, false, 'no rows');
   assert.equal(CHECKS.review_has_evidence({ files: {} }, R).ok, false, 'no report');
   // lesson_proposed: the retro's printed entries, by the kit's lesson rules; LESSONS.md as bootstrap wrote it is no work
-  const lesson = (eb, pc) => `## 2026-11-22 — x — y\n\n- What went wrong: a\n- Root cause: b\n- Rule: c\n- Enforced by: ${eb}\n- Proposed change: ${pc}\n  \`\`\`\n  # a sketched check, not a heading\n  \`\`\`\n- Status: proposed\n`;
+  const lesson = (eb, pc, [w, r, ru] = ['the boundary went untested', 'no rule asks for it', 'a limit names a boundary test']) => `## 2026-11-22 — x — y\n\n- What went wrong: ${w}\n- Root cause: ${r}\n- Rule: ${ru}\n- Enforced by: ${eb}\n- Proposed change: ${pc}\n  \`\`\`\n  # a sketched check, not a heading\n  \`\`\`\n- Status: proposed\n`;
   assert.equal(CHECKS.lesson_proposed({ output: `Proposed:\n\n${lesson('test', 'tests/x.test.ts asserts it')}` }).ok, true);
   assert.equal(CHECKS.lesson_proposed({ output: `\`\`\`markdown\n${lesson('hook', 'kit/scripts/hook_x.js blocks it')}\`\`\`\n` }).ok, true, 'entries printed inside a fence');
   assert.equal(CHECKS.lesson_proposed({ output: lesson('a reminder', 'none') }).ok, false, 'an unknown Enforced by');
+  // every free-text field holds content (finding: blank fields, or `.` in each, passed)
+  assert.equal(CHECKS.lesson_proposed({ output: lesson('test', 'tests/x.test.ts asserts it', ['.', '.', '.']) }).ok, false, '`.` in every field');
+  assert.equal(CHECKS.lesson_proposed({ output: lesson('test', '.') }).ok, false, '`.` as the proposed change');
+  assert.equal(CHECKS.lesson_proposed({ output: lesson('test', 'tests/x.test.ts asserts it', ['a', 'b', 'c']) }).ok, false, 'one letter per field');
+  assert.equal(CHECKS.lesson_proposed({ output: lesson('test', 'tests/x.test.ts asserts it', ['', '', '']) }).ok, false, 'blank fields');
   assert.equal(CHECKS.lesson_proposed({ output: lesson('text-only', 'none') }).ok, false, 'text-only with no reason');
   assert.equal(CHECKS.lesson_proposed({ output: '## {{date}} — {{feature}} — {{short title}}\n' }).ok, false, 'the template, even on a lane with no finding');
   // an entry is required when the lane recorded a finding (a finding event the setup recorded, a review FAIL row); a

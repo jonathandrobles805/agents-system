@@ -305,7 +305,8 @@ export const CHECKS = {
    * finding is a `blocked`, `stop_refused`, `test_weakened`, `budget_exceeded` or `escalation` event the setup recorded
    * (retro.md, "Look for") or a FAIL row in a review report (`*.review.md`) in the end state. A lane with a finding needs at least
    * one entry; a lane with none passes with no entry (the honest "no findings" answer), and any entry it does propose
-   * must still be valid. Whether the entries answer the lane's findings, and invent none, is the judge's.
+   * must still be valid, and each of its free-text fields (What went wrong, Root cause, Rule, Proposed change) holds
+   * at least three words of letters. Whether the entries answer the lane's findings, and invent none, is the judge's.
    */
   lesson_proposed(outcome) {
     const lines = K.splitlines(String(outcome.output ?? ''));
@@ -328,7 +329,18 @@ export const CHECKS = {
     }
     const v = new V.Validator(path.sep, null, {});
     v.lesson('output', entry);
-    return v.v.length ? { ok: false, why: `${v.v.length} problem(s): ${v.v.slice(0, 3).map((x) => `${x.rule}: ${x.message}`).join('; ')}` } : { ok: true, why: `${n} lesson entr${n === 1 ? 'y' : 'ies'}, each valid` };
+    if (v.v.length) return { ok: false, why: `${v.v.length} problem(s): ${v.v.slice(0, 3).map((x) => `${x.rule}: ${x.message}`).join('; ')}` };
+    // the lesson rules ask for every field, not for content in it: each free-text field holds at least three words of
+    // letters (letterWords), so blank fields or `.` in each are no lesson. `Enforced by` and `Status` are one word by
+    // the template's own choices
+    const thin = [];
+    let title = '';
+    for (const l of entry) {
+      if (l.startsWith('## ')) title = l.slice(3).trim();
+      const m = /^\s*-\s*(What went wrong|Root cause|Rule|Proposed change)\s*:(.*)$/i.exec(l);
+      if (m && letterWords(m[2]) < 3) thin.push(`'${title.slice(0, 40)}' ${m[1]}: "${m[2].trim().slice(0, 20)}"`);
+    }
+    return thin.length ? { ok: false, why: `${thin.length} lesson field(s) with fewer than three words: ${thin.slice(0, 3).join('; ')}` } : { ok: true, why: `${n} lesson entr${n === 1 ? 'y' : 'ies'}, each valid` };
   },
   /**
    * Every claim in the named research documents carries a tag the research template allows, by the kit's own research
