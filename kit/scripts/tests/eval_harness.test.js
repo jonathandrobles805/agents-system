@@ -110,6 +110,10 @@ test('hard checks fail for the right reasons', () => {
   assert.equal(CHECKS.lesson_proposed({ output: lesson('a reminder', 'none') }).ok, false, 'an entry on a lane with no finding must still be valid');
   assert.equal(CHECKS.first_tool({ events: [{ tool: 'Read' }, { tool: 'Edit' }] }, { expected: { first_tool: 'Read' } }).ok, true);
   assert.equal(CHECKS.first_tool({ events: [{ tool: 'Edit' }] }, { expected: { first_tool: 'Read' } }).ok, false);
+  // the spec critic may start with its own caller search (spec-critic.md "Check"): any read-only tool, never an Edit
+  const critic = loadTasks().find((x) => x.id === 'spec-critic-reads-before-judging');
+  for (const tool of ['Read', 'Grep', 'Glob']) assert.equal(CHECKS.first_tool({ events: [{ tool }, { tool: 'Edit' }] }, critic).ok, true, tool);
+  for (const events of [[{ tool: 'Edit' }, { tool: 'Read' }], [{ tool: 'Bash' }], []]) assert.equal(CHECKS.first_tool({ events }, critic).ok, false, JSON.stringify(events));
   // a hard violation zeroes the score even with a perfect rubric
   const s = score(task, { events: [T('ok')], judge: { r1: 1, r2: 1, r3: 1 } });
   assert.equal(s.hard_ok, false);

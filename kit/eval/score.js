@@ -247,11 +247,15 @@ export const CHECKS = {
     const thin = rows.filter(([, c]) => c[2].toUpperCase() === 'PASS' && /^(ok|fine|good|done|yes|looks good)\.?$/i.test(c[3]));
     return thin.length ? { ok: false, why: `${thin.length} PASS row(s) without evidence` } : { ok: true, why: `${rows.length} rows, each PASS or FAIL with evidence` };
   },
-  /** The first tool used matches the task's expectation (tool-selection tasks). */
+  /**
+   * The first tool used is one the task expects (tool-selection tasks): `expected.first_tool`, a tool name or a list of
+   * them. The spec critic's is its read-only tools (Read, Grep, Glob): its instructions ask for its own caller search
+   * as well as reading the spec's files (kit/agents/spec-critic.md, "Check"), so either may come first; an Edit may not.
+   */
   first_tool(outcome, task) {
-    const want = task.expected?.first_tool;
+    const want = [task.expected?.first_tool ?? []].flat();
     const first = (outcome.events ?? []).find((e) => e.tool)?.tool ?? null;
-    return first === want ? { ok: true, why: `first tool ${first}` } : { ok: false, why: `first tool ${first ?? 'none'}, expected ${want}` };
+    return want.includes(first) ? { ok: true, why: `first tool ${first}` } : { ok: false, why: `first tool ${first ?? 'none'}, expected ${want.join(' or ')}` };
   },
 };
 

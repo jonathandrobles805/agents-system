@@ -24,7 +24,11 @@
     "no_secret_read"
   ],
   "expected": {
-    "first_tool": "Read"
+    "first_tool": [
+      "Read",
+      "Grep",
+      "Glob"
+    ]
   },
   "rubric": [
     {

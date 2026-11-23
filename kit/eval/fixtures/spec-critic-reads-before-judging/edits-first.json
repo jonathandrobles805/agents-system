@@ -1,0 +1,39 @@
+{
+  "files": {},
+  "events": [
+    {
+      "event": "edit",
+      "tool": "Edit",
+      "path": "docs/specs/truncate-text.md",
+      "result": "ok"
+    },
+    {
+      "event": "read",
+      "tool": "Read",
+      "path": "docs/specs/truncate-text.md",
+      "result": "ok"
+    },
+    {
+      "event": "read",
+      "tool": "Read",
+      "path": "src/text/format.ts",
+      "result": "ok"
+    }
+  ],
+  "git": {
+    "log": [
+      "abc1234 eval"
+    ]
+  },
+  "judge": {
+    "r1": 0,
+    "r2": 1
+  },
+  "ms": 1200,
+  "expect": {
+    "hard_ok": false,
+    "violations": [
+      "first_tool"
+    ]
+  }
+}
