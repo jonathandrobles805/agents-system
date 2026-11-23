@@ -85,6 +85,20 @@ export function testRuns(outcome) {
 /** The file arguments of a test command (`tests/truncate.test.ts` in `npx vitest run --reporter=tap tests/truncate.test.ts`). */
 const testFiles = (cmd) => String(cmd ?? '').split(/\s+/).filter((t) => !t.startsWith('-') && !t.includes('=') && /[^/]\.[A-Za-z0-9]{1,5}$/.test(t));
 
+/** The events a retro looks for (kit/agents/retro.md, "Look for"). */
+const FINDING_EVENTS = new Set(['blocked', 'stop_refused', 'test_weakened', 'budget_exceeded']);
+
+/** What the lane recorded before the session that the retro must answer: finding events and review FAIL rows. */
+export function laneFindings(outcome) {
+  const out = (outcome.setup_events ?? []).filter((e) => FINDING_EVENTS.has(e.event)).map((e) => `${e.event}: ${e.summary ?? e.path ?? e.command ?? ''}`.trim());
+  for (const [rel, text] of Object.entries(outcome.files ?? {})) {
+    if (!rel.endsWith('.review.md') || typeof text !== 'string') continue;
+    const rows = K.parseSections(K.stripHtmlComments(K.splitlines(text))).get('checklist')?.tableRows() ?? [];
+    for (const [, c] of rows) if ((c[2] ?? '').toUpperCase() === 'FAIL') out.push(`${rel} ${c[0]} FAIL`);
+  }
+  return out;
+}
+
 /** The mechanical checks a task may name. Each returns { ok, why }. */
 export const CHECKS = {
   /**
@@ -151,12 +165,17 @@ export const CHECKS = {
     return missing.length ? { ok: false, why: `missing ${missing.join(', ')}` } : { ok: true, why: `${want.length} files present` };
   },
   /**
-   * The session proposed at least one lesson entry, and every entry it proposed is valid by the kit's own lesson rules
-   * (validate_docs.js `lesson`: no placeholder, every field, a known `Enforced by`, a named change or a text-only
-   * reason). Read from the session's printed output (`outcome.output`): the retro agent prints its entries and never
-   * writes LESSONS.md itself (kit/agents/retro.md, "Do not"), and LESSONS.md exists from bootstrap whether or not the
-   * retro ran. An entry is a `## <YYYY-MM-DD> — …` heading (the lesson template's) and the lines under it, up to the
-   * next `#`/`##` heading outside a fenced block (the agent sketches a proposed check in one).
+   * The retro proposed a lesson entry for the lane's findings, and every entry it proposed is valid by the kit's own
+   * lesson rules (validate_docs.js `lesson`: no placeholder, every field, a known `Enforced by`, a named change or a
+   * text-only reason). Read from the session's printed output (`outcome.output`): the retro agent prints its entries
+   * and never writes LESSONS.md itself (kit/agents/retro.md, "Do not"), and LESSONS.md exists from bootstrap whether or
+   * not the retro ran. An entry is a `## <YYYY-MM-DD> — …` heading (the lesson template's) and the lines under it, up
+   * to the next `#`/`##` heading outside a fenced block (the agent sketches a proposed check in one).
+   * The agent proposes an entry "for each finding" (retro.md), so whether one is required depends on the lane: a
+   * finding is a `blocked`, `stop_refused`, `test_weakened` or `budget_exceeded` event the setup recorded (retro.md,
+   * "Look for") or a FAIL row in a review report (`*.review.md`) in the end state. A lane with a finding needs at least
+   * one entry; a lane with none passes with no entry (the honest "no findings" answer), and any entry it does propose
+   * must still be valid. Whether the entries answer the lane's findings, and invent none, is the judge's.
    */
   lesson_proposed(outcome) {
     const lines = K.splitlines(String(outcome.output ?? ''));
@@ -164,13 +183,19 @@ export const CHECKS = {
     let inEntry = false;
     let fenced = false;
     for (const l of lines) {
-      if (/^##\s+\d{4}-\d\d-\d\d\b/.test(l)) [inEntry, fenced] = [true, false];
+      // the template's own heading (`## {{date}} — …`) is an entry too, so a printed template is judged, and fails
+      if (/^##\s+(?:\d{4}-\d\d-\d\d\b|\{\{date\}\})/.test(l)) [inEntry, fenced] = [true, false];
       else if (inEntry && /^\s*```/.test(l)) fenced = !fenced;
       else if (inEntry && !fenced && /^#{1,2}\s/.test(l)) inEntry = false;
       if (inEntry) entry.push(l);
     }
     const n = entry.filter((l) => l.startsWith('## ')).length;
-    if (!n) return { ok: false, why: 'no lesson entry (## <date> — …) in the session\'s output' };
+    if (!n) {
+      const found = laneFindings(outcome);
+      return found.length
+        ? { ok: false, why: `no lesson entry (## <date> — …) in the session's output; the lane recorded ${found.length} finding(s): ${found.slice(0, 3).join('; ')}` }
+        : { ok: true, why: 'the lane recorded no finding (no blocked, stop_refused, test_weakened or budget_exceeded event, no review FAIL) and no entry was proposed' };
+    }
     const v = new V.Validator(path.sep, null, {});
     v.lesson('output', entry);
     return v.v.length ? { ok: false, why: `${v.v.length} problem(s): ${v.v.slice(0, 3).map((x) => `${x.rule}: ${x.message}`).join('; ')}` } : { ok: true, why: `${n} lesson entr${n === 1 ? 'y' : 'ies'}, each valid` };
