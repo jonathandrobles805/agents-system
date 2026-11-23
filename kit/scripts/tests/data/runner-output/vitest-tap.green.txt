@@ -1,0 +1,20 @@
+TAP version 13
+1..2
+ok 1 - tests/nested.test.ts # time=1.52ms {
+    1..1
+    ok 1 - outer # time=1.28ms {
+        1..1
+        ok 1 - inner # time=1.13ms {
+            1..2
+            ok 1 - adds two numbers # time=0.77ms
+            ok 2 - is skipped # SKIP
+        }
+    }
+}
+ok 2 - tests/truncate.test.ts # time=1.53ms {
+    1..1
+    ok 1 - truncate # time=1.18ms {
+        1..1
+        ok 1 - shortens text longer than max to max characters ending in an ellipsis # time=0.74ms
+    }
+}

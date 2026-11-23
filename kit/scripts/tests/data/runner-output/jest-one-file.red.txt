@@ -1,0 +1,26 @@
+FAIL tests/truncate.test.js
+  truncate
+    ✕ shortens text longer than max to max characters ending in an ellipsis (3 ms)
+
+  ● truncate › shortens text longer than max to max characters ending in an ellipsis
+
+    expect(received).toBe(expected) // Object.is equality
+
+    Expected: "hell…"
+    Received: undefined
+
+      2 | describe('truncate', () => {
+      3 |   it('shortens text longer than max to max characters ending in an ellipsis', () => {
+    > 4 |     expect(truncate('hello world', 5)).toBe('hell…');
+        |                                        ^
+      5 |   });
+      6 | });
+      7 |
+
+      at Object.toBe (tests/truncate.test.js:4:40)
+
+Test Suites: 1 failed, 1 total
+Tests:       1 failed, 1 total
+Snapshots:   0 total
+Time:        0.145 s, estimated 1 s
+Ran all test suites matching /tests\/truncate.test.js/i.

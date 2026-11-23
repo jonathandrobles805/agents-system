@@ -708,11 +708,119 @@ export function resultPatterns(root) {
   return out;
 }
 
-/** A test name from a progress-row cell or a result line, comparable across the two. */
-export function testKey(s) {
-  const t = String(s ?? '').trim().replace(/^[`'"]+|[`'"]+$/g, '').trim();
-  const quoted = /["']([^"']{3,})["']\s*$/.exec(t);
-  return (quoted ? quoted[1] : t).toLowerCase().replace(/\s+/g, ' ').trim();
+const TEST_SEP = /\s+[>›]\s+|::/;
+const TEST_FILE = /^\S+\.(?:[cm]?[jt]sx?|py|go|rs|rb|java|kt|php)$/i;
+const normTest = (s) => s.trim().replace(/^[`'"]+|[`'"]+$/g, '').trim().toLowerCase().replace(/\s+/g, ' ');
+
+/**
+ * A test name as a progress cell or a runner writes it, split into its file (when it shows one) and its path of
+ * names: `tests/a.test.ts::adds`, `tests/a.test.ts > outer > adds` (vitest), `outer › adds` (jest),
+ * `tests/test_a.py::TestA::test_adds` (pytest) all split the same way.
+ */
+export function splitTestName(s) {
+  const segs = String(s ?? '').trim().replace(/^[`'"]+|[`'"]+$/g, '').split(TEST_SEP).map(normTest).filter(Boolean);
+  const file = segs.length && TEST_FILE.test(segs[0]) ? segs.shift() : null;
+  return { file, segs };
+}
+
+/** Two paths name the same file: equal, or one ends with the other (a runner may print it relative to another root). */
+export function samePath(a, b) {
+  if (!a || !b) return false;
+  const [x, y] = [a, b].map((p) => normTest(p).replace(/\\/g, '/').replace(/^\.\//, ''));
+  return x === y || x.endsWith(`/${y}`) || y.endsWith(`/${x}`);
+}
+
+/**
+ * A runner's result is the criterion's test: the test name matches, the describe blocks (or classes) either side shows
+ * agree with the trailing names of the other's, and the files agree when both show one.
+ */
+export function sameTest(want, result) {
+  const [a, b] = want.segs.length <= result.segs.length ? [want.segs, result.segs] : [result.segs, want.segs];
+  if (!a.length || !a.every((seg, i) => seg === b[b.length - a.length + i])) return false;
+  return !(want.file && result.file && !samePath(want.file, result.file));
+}
+
+/**
+ * The results a test run printed, each as `{ok, name, file, segs}`, read the way the runners print them. The
+ * stacks' patterns (and a project's kit.json `results`) find the result lines; this adds what those lines leave to
+ * their context, so a result is tied to its own test and file:
+ * - vitest's default reporter prints a failed test as `× describe > name` under its file's `❯ file (N tests | M
+ *   failed)` line, and a passing file as one `✓ file (N tests)` line without its tests; `verbose` prints every test
+ *   as `✓|× file > describe > name`; `tap` nests describes as indented subtests inside `{ … }`; `tap-flat` prints
+ *   `ok N - file > describe > name` (https://vitest.dev/guide/reporters).
+ * - jest prints `PASS|FAIL file`, then for one file each test indented under its describes (`✓ name (2 ms)`), and
+ *   for a failure `● describe › name`.
+ * A file-level pass (`fileLevel`) is recorded only when the runner says every test in that file passed with none
+ * skipped (vitest's count, jest's run summary); a skipped or todo test is never a result.
+ */
+export function testResults(lines, patterns) {
+  const out = [];
+  const stack = []; // enclosing TAP subtests and jest describes: {indent, name}
+  let file = null;
+  let jestDescribes = false;
+  let skipsInRun = false;
+  const pop = (indent) => {
+    while (stack.length && stack[stack.length - 1].indent >= indent) stack.pop();
+  };
+  const result = (ok, name, indent) => {
+    const own = splitTestName(name.replace(/\s+\(\d+(?:\.\d+)?\s*m?s\)$/, ''));
+    const outer = stack.filter((g) => g.indent < indent);
+    const outerFile = outer.find((g) => TEST_FILE.test(g.name))?.name ?? null;
+    const segs = [...outer.filter((g) => !TEST_FILE.test(g.name)).map((g) => normTest(g.name)), ...own.segs];
+    out.push({ ok, name: name.trim(), file: own.file ?? outerFile ?? file, segs });
+  };
+  for (const raw of lines) {
+    const line = raw.replace(/\s+$/, '');
+    const t = line.trimStart();
+    const indent = line.length - t.length;
+    if (!t || t === '}') continue;
+    if (/^Tests:\s/.test(t) && /\b(?:skipped|todo)\b/.test(t)) skipsInRun = true;
+    // vitest's per-file line: ✓ passed, ❯ failed, ↓ skipped
+    let m = /^([✓❯×↓])\s+(\S+)\s+\((\d+) tests?(?:\s*\|\s*([^)]*))?\)/u.exec(t);
+    if (m && TEST_FILE.test(m[2])) {
+      file = m[2];
+      stack.length = 0;
+      if (m[1] === '✓' && !/failed|skipped|todo/.test(m[4] ?? '')) out.push({ ok: true, name: t, file, segs: [], fileLevel: true });
+      continue;
+    }
+    // jest's per-file line
+    m = /^(PASS|FAIL)\s(\S+)/.exec(t);
+    if (m && indent === 0 && TEST_FILE.test(m[2])) {
+      file = m[2];
+      stack.length = 0;
+      jestDescribes = true;
+      if (m[1] === 'PASS') out.push({ ok: true, name: t, file, segs: [], fileLevel: true, jest: true });
+      continue;
+    }
+    // jest's failure heading names the whole path
+    m = /^●\s+(.+)$/u.exec(t);
+    if (m && file) {
+      jestDescribes = false;
+      if (!/^test suite failed to run$/i.test(m[1].trim())) { stack.length = 0; result(false, m[1], 0); }
+      continue;
+    }
+    if (/#\s*(?:SKIP|TODO)\b/i.test(t)) continue;
+    let matched = false;
+    for (const p of patterns) {
+      const fail = new RegExp(p.fail).exec(t);
+      const pass = fail ? null : new RegExp(p.pass).exec(t);
+      const hit = fail ?? pass;
+      if (!hit) continue;
+      matched = true;
+      pop(indent);
+      // a TAP subtest that holds others (vitest's tap reporter: a file or a describe) is context, not a result
+      if (/\{$/.test(t)) stack.push({ indent, name: (hit[1] ?? '').replace(/\s*\{$/, '').trim() });
+      else result(Boolean(pass), hit[1] ?? '', indent);
+      break;
+    }
+    // a jest describe: an indented plain line between a file line and the results under it
+    if (!matched && jestDescribes && indent > 0 && !/^[✓✕○√×↓]/u.test(t)) {
+      pop(indent);
+      stack.push({ indent, name: t });
+    }
+  }
+  // jest gives a file's skips only in the run's summary
+  return skipsInRun ? out.filter((r) => !(r.fileLevel && r.jest)) : out;
 }
 
 /** The body of the log entry whose `=== … -> exit N` header is at 1-based line `at`: up to the next entry. */
@@ -747,12 +855,15 @@ export function runRefProblem(lane, logLines, cells, label) {
   // ...and the run must have actually tested THIS row's test. An exit code says only that a process ended: in
   // the field run 33 of 36 red runs crashed on a missing module before any assertion, and one was npm unable to
   // find package.json, yet every one of them satisfied this gate.
-  const want = testKey(cells[2]);
-  const results = resultLines(logEntry(logLines, at), resultPatterns(lane.root));
+  const results = testResults(logEntry(logLines, at), resultPatterns(lane.root));
   if (!results.length) {
     return `${rid}: ${label} run ref ${ref} logged no test result at all (exit ${ex[1]}), so nothing in it says whether '${cells[2].trim()}' ran; a runner that fails to start is not a ${label} run. If this project's runner reports results in a form the kit does not know, add a {"fail": "...", "pass": "..."} pair to "results" in .claude/kit.json`;
   }
-  const hit = results.find((x) => want && (testKey(x.name).includes(want) || want.includes(testKey(x.name))));
+  const want = splitTestName(cells[2]);
+  // a named result for the row's test decides; a red run must always name it. A green run may instead show the row's
+  // file passing whole (see testResults): every test in it ran and passed, and the red run named this one in it.
+  const hit = results.find((x) => !x.fileLevel && sameTest(want, x)) ??
+    (label === 'green' && want.file ? results.find((x) => x.fileLevel && samePath(want.file, x.file)) : undefined);
   if (!hit) return `${rid}: ${label} run ref ${ref} has no result for '${cells[2].trim()}'; it reported ${results.map((x) => `${x.ok ? 'ok' : 'not ok'} ${x.name}`).slice(0, 3).join(', ')}`;
   if (hit.ok !== (label === 'green')) return `${rid}: ${label} run ref ${ref} reports '${hit.name}' as ${hit.ok ? 'passing' : 'failing'}; a ${label} run must have it ${label === 'green' ? 'pass' : 'fail'}`;
   return null;

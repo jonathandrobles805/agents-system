@@ -2,7 +2,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
-import { git, commitAll } from './fixtures.js';
+import { spawnSync } from 'node:child_process';
+import { git, commitAll, nodeApi } from './fixtures.js';
 import { runScript, setEnv, tmpPath } from './helpers.js';
 import { project, spec, review } from './testdata.js';
 import * as P from '../permission_probe.js';
@@ -502,4 +503,64 @@ test('the permission probe has a case for every allow rule the kit ships, plus c
   // the "$HOME" form Claude Code did not approve (2026-11-22) is a control, and no shipped rule uses it again
   assert.ok(P.CASES.some((c) => c.id === 'home-form' && c.expect === 'denied'));
   assert.ok(shipped.every((r) => !/\$|"/.test(r)), `a shipped rule relies on a $variable or quotes: ${shipped.join(', ')}`);
+});
+
+// The whole lane, as the agents run it, with the fixture's real vitest and no --reporter flag: the tester runs the
+// test file, the implementer's hook runs the affected tests, then the suite. Nothing may be refused (hardening plan
+// Step 2: a correct lane is never blocked by advance).
+test('end to end: a fix lane goes start → scope → test → build → review → merged → retro with the agents\' own commands', (t) => {
+  setEnv(t, 'KIT_STATUS_NO_GH', '1');
+  const SETUP = path.join(path.dirname(new URL(import.meta.url).pathname), '..', '..', 'eval', 'setups', 'truncate-text');
+  const root = nodeApi(path.join(tmpPath(t), 'node-api'));
+  runScript('bootstrap.js', ['--repo', root]);
+  const kj = path.join(root, '.claude', 'kit.json');
+  write(kj, JSON.stringify({ ...JSON.parse(read(kj)), local_only: true }, null, 2));
+  fs.mkdirSync(path.join(root, 'src', 'text'), { recursive: true });
+  fs.copyFileSync(path.join(SETUP, 'format.ts'), path.join(root, 'src', 'text', 'format.ts'));
+  fs.copyFileSync(path.join(SETUP, 'format.test.ts'), path.join(root, 'tests', 'format.test.ts'));
+  const rm = path.join(root, 'ROADMAP.md');
+  write(rm, read(rm).replaceAll('| TODO(bootstrap: ROADMAP.md — feature) | TODO(bootstrap: ROADMAP.md — slug) | M1 | queued | — | — | — |', '| Truncate text | truncate-text | M1 | queued | — | — | — |'));
+  fs.mkdirSync(path.join(root, 'docs', 'goals'), { recursive: true });
+  write(path.join(root, 'docs', 'goals', 'truncate-text.md'), GOAL.replaceAll('refund-route', 'truncate-text').replace('- Status: agreed', '- Status: agreed\n- Work type: fix\n- Risk: normal\n- Size: S'));
+  const head = commitAll(root, 'truncate-text goal');
+  const ci = spawnSync('npm', ['ci', '--no-audit', '--no-fund', '--prefer-offline'], { cwd: root, encoding: 'utf8' });
+  if (ci.status !== 0) return t.skip(`npm ci could not install the fixture's dependencies: ${(ci.stderr || '').trim().split('\n').pop()}`);
+  const ok = (r, what) => assert.equal(r.returncode, 0, `${what}: ${r.stderr}`);
+  const next = () => JSON.parse(lane('next-step', 'truncate-text', '--repo', root).stdout);
+  const start = lane('start', 'truncate-text', '--repo', root);
+  ok(start, 'start');
+  const wt = JSON.parse(start.stdout).worktree;
+  fs.symlinkSync(path.join(root, 'node_modules'), path.join(wt, 'node_modules'));
+  assert.equal(next().stage, 'reproduce');
+  // the debugger's cause, then the planner's spec, approved by the human
+  const prog = path.join(wt, 'docs/specs/truncate-text.progress.md');
+  write(prog, read(prog).replace('## Current step', 'cause: truncate does not exist yet\n\n## Current step'));
+  write(path.join(wt, 'docs/specs/truncate-text.md'), read(path.join(SETUP, 'spec.approved.md')).replaceAll('{{eval:head}}', head.slice(0, 7)));
+  assert.equal(next().stage, 'scope');
+  ok(lane('scope', 'truncate-text', '--repo', root), 'scope');
+  // tester: writes the test and runs the test file
+  assert.equal(next().stage, 'test');
+  ok(lane('advance', 'truncate-text', 'test', '--repo', root), 'advance test');
+  fs.copyFileSync(path.join(SETUP, 'truncate.test.ts'), path.join(wt, 'tests', 'truncate.test.ts'));
+  const red = JSON.parse(lane('check', 'truncate-text', 'D1', '--repo', root, '--', 'npx vitest run tests/truncate.test.ts').stdout);
+  assert.notEqual(red.exit, 0, 'the red run fails');
+  write(prog, read(prog).replace(/(\| D1 \|[^\n]*\|) — \| — \|/, `$1 ${red.ref} | — |`));
+  // implementer: the post-edit hook runs the affected tests, then the suite once more
+  assert.equal(next().stage, 'build');
+  ok(lane('advance', 'truncate-text', 'build', '--repo', root), 'advance build');
+  fs.copyFileSync(path.join(SETUP, 'format.done.ts'), path.join(wt, 'src', 'text', 'format.ts'));
+  const green = JSON.parse(lane('check', 'truncate-text', 'D1', '--repo', root, '--', 'npx vitest run --changed HEAD').stdout);
+  assert.equal(green.exit, 0, 'the green run passes');
+  write(prog, read(prog).replace(/\| — \|\s*$/m, `| ${green.ref} |`));
+  commitAll(wt, 'truncate-text: D1');
+  assert.equal(JSON.parse(lane('check', 'truncate-text', 'suite', '--repo', root, '--', 'npx vitest run').stdout).exit, 0);
+  // reviewer
+  assert.equal(next().stage, 'review');
+  ok(lane('advance', 'truncate-text', 'review', '--repo', root), 'advance review');
+  ok(lane('evidence', 'truncate-text', '--repo', root), 'evidence');
+  commitAll(wt, 'truncate-text: evidence');
+  // the human merges; the retro starts
+  git(['merge', '-q', '--no-ff', 'wt/truncate-text', '-m', 'merge'], root);
+  ok(lane('merged', 'truncate-text', '--repo', root), 'merged');
+  assert.deepEqual(JSON.parse(read(root, '.claude', 'session', 'lanes', 'truncate-text.json')).moves.map((m) => m.to), ['reproduce', 'test', 'test', 'build', 'review', 'retro']);
 });

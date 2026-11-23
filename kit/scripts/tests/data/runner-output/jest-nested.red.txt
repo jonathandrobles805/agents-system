@@ -1,0 +1,28 @@
+FAIL tests/nested.test.js
+  outer
+    inner
+      ✕ adds two numbers (2 ms)
+      ○ skipped is skipped
+
+  ● outer › inner › adds two numbers
+
+    expect(received).toBe(expected) // Object.is equality
+
+    Expected: 3
+    Received: 2
+
+      1 | describe('outer', () => {
+      2 |   describe('inner', () => {
+    > 3 |     it('adds two numbers', () => { expect(1 + 1).toBe(process.env.RED ? 3 : 2); });
+        |                                                  ^
+      4 |     it.skip('is skipped', () => {});
+      5 |   });
+      6 | });
+
+      at Object.toBe (tests/nested.test.js:3:50)
+
+Test Suites: 1 failed, 1 total
+Tests:       1 failed, 1 skipped, 2 total
+Snapshots:   0 total
+Time:        0.134 s, estimated 1 s
+Ran all test suites matching /tests\/nested/i.

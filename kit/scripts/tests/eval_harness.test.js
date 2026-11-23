@@ -1347,7 +1347,7 @@ test('claude runner setup: an install is checked against the lockfile, and the p
 
 test('claude runner setup: a lane step runs a kit hook as Claude Code would (its own event recorded), commits the evidence, and names the lane\'s commits', (t) => {
   const dir = tmpPath(t);
-  const red = { check: 'D1', command: 'node -e "console.log(\'not ok 1 - shortens text longer than max\'); process.exit(1)"', record: 'red' };
+  const red = { check: 'D1', command: 'node -e "console.log(\'not ok 1 - tests/truncate.test.ts > truncate > shortens text longer than max to max characters ending in an ellipsis\'); process.exit(1)"', record: 'red' };
   const task = {
     id: 'setup-steps', fixture: 'node-api',
     setup: {

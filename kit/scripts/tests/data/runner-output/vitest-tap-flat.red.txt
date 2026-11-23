@@ -1,0 +1,21 @@
+TAP version 13
+1..3
+not ok 1 - tests/nested.test.ts > outer > inner > adds two numbers # time=4.21ms
+    ---
+    error:
+        name: "AssertionError"
+        message: "expected 2 to be 3 // Object.is equality"
+    at: "/tmp/vcap/tests/nested.test.ts:4:50"
+    actual: "2"
+    expected: "3"
+    ...
+ok 2 - tests/nested.test.ts > outer > inner > is skipped # SKIP
+not ok 3 - tests/truncate.test.ts > truncate > shortens text longer than max to max characters ending in an ellipsis # time=3.82ms
+    ---
+    error:
+        name: "AssertionError"
+        message: "expected undefined to be 'hell…' // Object.is equality"
+    at: "/tmp/vcap/tests/truncate.test.ts:6:42"
+    actual: "undefined"
+    expected: "hell…"
+    ...
