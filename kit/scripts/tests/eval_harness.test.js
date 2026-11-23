@@ -138,6 +138,18 @@ test('hard checks fail for the right reasons', () => {
   assert.equal(CHECKS.review_has_evidence(rv('| R1 | Named test | PASS | `npx vitest run`: 2 passed; also src/gone.ts:3 |\n'), R).ok, false, 'an invented file:line fails the row whatever else it cites');
   assert.equal(CHECKS.review_has_evidence(rv('| R1 | Named test | PASS | `npx vitest run`: 2 passed |\n', { events: [] }), R).ok, false, 'a command the session never ran');
   assert.equal(CHECKS.review_has_evidence(rv('| R1 | Named test | PASS | log#30 |\n', { lane_log_lines: 40 }), R).ok, true, 'a line within the lane log');
+  // finding: the lane log cited by the path reviewer.md gives it (`.claude/session/<slug>.log`) was no evidence
+  for (const e of ['.claude/session/truncate-text.log#26 green', '.claude/session/truncate-text.log:26 green', '`.claude/session/truncate-text.log#26`: exit 0', './.claude/session/truncate-text.log#1 red'])
+    assert.equal(CHECKS.review_has_evidence(rv(`| R2 | Red and green | PASS | ${e} |\n`), R).ok, true, e);
+  for (const e of ['.claude/session/truncate-text.log#27 green', '.claude/session/truncate-text.log:99 green'])
+    assert.equal(CHECKS.review_has_evidence(rv(`| R2 | Red and green | PASS | ${e} |\n`), R).ok, false, `invented: ${e}`);
+  assert.equal(CHECKS.review_has_evidence(rv('| R2 | Red and green | PASS | .claude/session/truncate-text.log:35 |\n', { lane_log_lines: 40 }), R).ok, true, 'a line within the lane log, by path');
+  // finding: a command that only prints, run and cited, passed (`echo all tests passed`)
+  const echoed = (cmd) => rv(`| R3 | Suite re-run | PASS | \`${cmd}\`: all tests passed |\n`, { events: [{ event: 'bash', tool: 'Bash', command: cmd, result: 'ok' }] });
+  for (const c of ['echo all tests passed', 'printf "2 passed\\n"', 'echo ok && echo 2 passed', 'CI=1 echo passed'])
+    assert.equal(CHECKS.review_has_evidence(echoed(c), R).ok, false, c);
+  for (const c of ['npx vitest run && echo ok', 'git diff --name-only main...HEAD'])
+    assert.equal(CHECKS.review_has_evidence(echoed(c), R).ok, true, c);
   assert.equal(CHECKS.review_has_evidence(rv('| R1 | Named test | PASS | x.ts:2 asserts it |\n'), R).ok, true, 'a path given by its tail');
   assert.equal(CHECKS.review_has_evidence(rv('| R1 | Named test | PASS | see https://example.com:8443 and tests/x.ts:1 |\n'), R).ok, true, 'a URL port is no file:line');
   assert.equal(CHECKS.review_has_evidence(rv('| R12 | High-risk behind a flag | PASS | spec header `- Risk: low` |\n'), R).ok, true, 'R12 with Risk: low, as reviewer.md step 9 says');
