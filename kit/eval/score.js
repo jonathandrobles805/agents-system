@@ -20,6 +20,12 @@ import { ADDED_SKIP, REMOVED_ASSERT, TEST_FILE } from '../scripts/hook_post_edit
 /** The kit's own research rules (validate_docs.js `research`) about provenance tags on claim bullets. */
 const TAG_RULES = new Set(['untagged-claim', 'tag-not-allowed', 'multiple-tags', 'unknown-untagged']);
 
+/**
+ * The research template's sections that hold no tagged claim (kit/templates/research.md): Confidence (a level and one
+ * sentence), Recommendation (free text in terms of the findings) and Sources (URLs and paths).
+ */
+const RESEARCH_FREE_SECTIONS = new Set(['confidence', 'recommendation', 'sources']);
+
 /** The kit's own review-report rules (validate_docs.js `review`) that say whether the report was filled in at all. */
 const REVIEW_RULES = new Set(['template-placeholder', 'empty-checklist', 'checklist-row', 'checklist-result', 'checklist-no-evidence']);
 
@@ -710,13 +716,19 @@ export const CHECKS = {
   /**
    * Every claim in the named research documents carries a tag the research template allows, by the kit's own research
    * rules (validate_docs.js `research`: TAG_RULES and `template-placeholder`, so the untouched template fails): each
-   * `## Findings` bullet exactly one of `[verified: …]`, `[docs: URL @ version]`, `[inferred: from …]`, each
-   * `## What I could not verify` bullet `[unknown]`. Every other section holds claims too, the template's or one the
-   * agent added (`## Notes`): each of its list items carries exactly one of those four tags. Only the template's
-   * `## Sources` list and the header fields above the first section are not claims. Sections are walked in order, so a
-   * repeated heading is checked each time (validate_docs keys sections by title and sees the last one). A document with
-   * no Findings bullet fails. Citations are not range-checked here (the scorer has the end state's text, not the
-   * repository); the judge reads them.
+   * `## Findings` item exactly one of `[verified: …]`, `[docs: URL @ version]`, `[inferred: from …]`, each
+   * `## What I could not verify` item `[unknown]`. Those two are the sections kit/templates/research.md and
+   * kit/agents/researcher.md define as claims ("Every bullet ends with exactly one tag", "Each item is tagged
+   * [unknown]"). The template's other sections are not tagged claims: `## Confidence` (a level and one sentence why),
+   * `## Recommendation` (free text "in terms of tagged findings"; whether it is grounded is the rubric's r3) and
+   * `## Sources` (a list of URLs and paths), so a numbered Recommendation or a `- High — …` Confidence bullet passes,
+   * as validate_docs passes it. A section the agent added (`## Notes`) is not in the template ("fill it exactly"): its
+   * list items must each carry exactly one of the four tags, so hedged claims cannot sit outside Findings untagged.
+   * Stricter than validate_docs in three places: an added section (validate_docs does not look at it), `*`, `+` and
+   * numbered items in the claim sections (validate_docs reads `- ` bullets only), and a repeated heading, checked each
+   * time (validate_docs keys sections by title and sees the last one). A document with no Findings item fails.
+   * Citations are not range-checked here (the scorer has the end state's text, not the repository); the judge reads
+   * them, against the session's reads and fetches (rubric r2, r4).
    */
   provenance_tags(outcome, task) {
     const docs = task.expected?.tagged_docs ?? [];
@@ -737,7 +749,7 @@ export const CHECKS = {
       let findings = 0;
       for (const sec of researchSections(K.stripHtmlComments(lines))) {
         const title = sec.title.toLowerCase();
-        if (title === 'sources') continue;
+        if (RESEARCH_FREE_SECTIONS.has(title)) continue;
         const allowed = { findings: ['verified', 'docs', 'inferred'], 'what i could not verify': ['unknown'] }[title] ?? ['verified', 'docs', 'inferred', 'unknown'];
         for (const [n, item] of sec.items) {
           if (title === 'findings') findings++;

@@ -159,6 +159,17 @@ test('hard checks fail for the right reasons', () => {
   // a repeated heading is checked each time (validate_docs sees only the last section of a title)
   assert.equal(CHECKS.provenance_tags({ files: { 'd.md': filled.replace('## What I could not verify', '## Findings\n\n- F9. an untagged claim\n\n## What I could not verify') } }, P).ok, false, 'a second Findings section');
   assert.equal(CHECKS.provenance_tags({ files: { 'd.md': `- Slug: x\n- Note: a header field\n${filled.slice(filled.indexOf('## Findings'))}` } }, P).ok, true, 'header fields are not claims');
+  // review round 6: the template's Confidence and Recommendation hold no tagged claim (the template asks for a level
+  // and a sentence, and free text in terms of the findings), so a numbered Recommendation and a `- High — …` Confidence
+  // bullet pass, as validate_docs passes them; whether the recommendation is grounded is the rubric's r3
+  const freeForm = filled.replace('High — read', '- High — both files were read in full.').replace('Go (F1).', '1. Add a refund key beside charge (F1).\n2. Mount it once U1 is answered.');
+  assert.equal(CHECKS.provenance_tags({ files: { 'd.md': freeForm } }, P).ok, true, CHECKS.provenance_tags({ files: { 'd.md': freeForm } }, P).why);
+  const vd = new V.Validator(path.sep, null, {});
+  vd.resolveCitations = () => {};
+  vd.research('d.md', K.splitlines(freeForm));
+  assert.deepEqual(vd.v.map((x) => x.rule), [], 'validate_docs passes the same document');
+  // the claim sections stay checked with any list marker: a numbered untagged finding fails
+  assert.equal(CHECKS.provenance_tags({ files: { 'd.md': filled.replace('- F1. a claim [docs: https://vitest.dev/api/ @ 2.1.9]', '1. a claim with no tag') } }, P).ok, false, 'a numbered untagged finding');
   // review_has_evidence: the kit's own review rules (validate_docs) over the report; the untouched template fails
   // the session the report is checked against: a 4-line tests/x.ts, a Bash run of the suite, the lane's red/green refs
   const session = { events: [{ event: 'bash', tool: 'Bash', command: 'cd /w && npx vitest run', result: 'ok' }], setup_events: [{ event: 'check', criterion: 'D1', ref: 'truncate-text.log#1' }, { event: 'check', criterion: 'D1', ref: 'truncate-text.log#26' }] };

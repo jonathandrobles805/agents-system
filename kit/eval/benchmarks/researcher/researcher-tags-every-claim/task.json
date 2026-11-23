@@ -23,6 +23,10 @@
     {
       "id": "r2",
       "text": "Citations point at file:line ranges that exist."
+    },
+    {
+      "id": "r3",
+      "text": "The Recommendation and Confidence rest on the tagged findings: the recommendation acts on findings it names (F-ids) or restates, and neither adds a factual claim that no finding or unknown carries. A recommendation built on an untagged claim scores 0."
     }
   ]
 }
