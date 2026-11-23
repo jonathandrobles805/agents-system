@@ -695,7 +695,7 @@ test('records_untouched: a Bash command that writes the hooks\' records fails; o
   // finding: `echo '{"event":"test","tool":"hook",…}' >> docs/specs/<slug>.events.jsonl` forged the post-edit hook's
   // green run, which red_before_green prefers
   const forged = `echo '${JSON.stringify({ event: 'test', tool: 'hook', command: 'npx vitest run', result: 'ok' })}' >> docs/specs/truncate-text.events.jsonl`;
-  for (const c of [forged, "node -e \"require('fs').appendFileSync('.claude/session/events.jsonl', 'x')\"", 'printf x | tee -a docs/specs/truncate-text.events.jsonl', 'cd .claude && echo x >> session/events.jsonl', 'sed -i s/fail/ok/ .claude/session/truncate-text.log', 'cat $(echo .claude/session/x.log)', 'git checkout -- docs/specs/truncate-text.events.jsonl', 'cp /tmp/x .claude/session/truncate-text.log'])
+  for (const c of [forged, "node -e \"require('fs').appendFileSync('.claude/session/events.jsonl', 'x')\"", 'printf x | tee -a docs/specs/truncate-text.events.jsonl', 'cd .claude && echo x >> session/events.jsonl', 'sed -i s/fail/ok/ .claude/session/truncate-text.log', 'cp /tmp/x $(echo .claude/session/x.log)', 'git checkout -- docs/specs/truncate-text.events.jsonl', 'cp /tmp/x .claude/session/truncate-text.log'])
     assert.equal(touchesRecords(c), true, c);
   for (const c of ['cat .claude/session/truncate-text.log', 'grep -n "-> exit" .claude/session/truncate-text.log | head -5', 'tail -n 20 docs/specs/truncate-text.events.jsonl 2>&1', 'git log -- docs/specs/truncate-text.events.jsonl', 'npx vitest run', 'cd .claude/session && cat truncate-text.log', 'echo "> not a write"'])
     assert.equal(touchesRecords(c), false, c);
@@ -730,7 +730,7 @@ test('records_untouched reads what a command writes, not what it names: the real
     "node -e \"fs.appendFileSync('docs/specs/s.events.jsonl', 'x')\"", 'cd .claude/session && rm s.log', 'find .claude/session -delete', 'find . -name "*.jsonl" -exec rm {} +',
     'cp x docs/specs/s.events.jsonl', 'cp /tmp/x .claude/session/', "python3 -c \"open('docs/specs/s.events.jsonl','a').write('x')\"", "awk '{print > \"docs/specs/s.events.jsonl\"}' x",
     "awk '{print >> FILENAME}' docs/specs/s.events.jsonl", "awk -i inplace '{print}' docs/specs/s.events.jsonl", "sed 'w docs/specs/s.events.jsonl' x", "sed -n 's/a/b/w .claude/session/s.log' x",
-    'cat $(echo docs/specs/s.events.jsonl)', 'rm `ls .claude/session/*`', 'echo docs/specs/s.events.jsonl | xargs rm', 'xargs rm docs/specs/s.events.jsonl < /dev/null',
+    'cp x $(echo docs/specs/s.events.jsonl)', 'rm `ls .claude/session/*`', 'echo docs/specs/s.events.jsonl | xargs rm', 'xargs rm docs/specs/s.events.jsonl < /dev/null',
     'git checkout -- docs/specs/s.events.jsonl', 'git checkout -- .', 'git restore docs/specs', 'rm -rf .claude', 'rm -r docs', 'rm docs/specs/*.jsonl', 'rm .claude/sess*/x.log',
     'rm .claude/{session,x}/s.log', 'cd docs/specs && rm t*', 'mv docs/specs/truncate-text.events.jsonl /tmp/', 'ln -sf /dev/null .claude/session/events.jsonl', 'ln docs/specs/s.events.jsonl /tmp/alias',
     'truncate -s 0 .claude/session/events.jsonl', ': > docs/specs/s.events.jsonl', 'dd if=/dev/zero of=docs/specs/s.events.jsonl count=0', 'chmod a-w .claude/session', 'mkdir .claude/session/events.jsonl',
@@ -741,9 +741,11 @@ test('records_untouched reads what a command writes, not what it names: the real
     'cd docs/specs && rm *.jsonl', 'echo x >> docs/specs/../specs/s.events.jsonl', 'echo "unterminated >> docs/specs/s.events.jsonl',
   ];
   for (const c of writes) assert.notDeepEqual(recordWrites(c, { records }), [], c);
-  // the lane's events file is known by its path, so a directory above it is too; without it only `.claude/` and `.`
-  assert.notDeepEqual(recordWrites('git restore docs/specs', { records }), []);
-  assert.deepEqual(recordWrites('git restore docs/specs'), []);
+  // the lane's events file is known by its path, so a directory above it is too (a work root other than the kit's
+  // default `docs/specs`); without it only `.`, `.claude/`, `docs/` and `docs/specs/`
+  assert.notDeepEqual(recordWrites('git restore work', { records: ['work/x.events.jsonl'] }), []);
+  assert.deepEqual(recordWrites('git restore work'), []);
+  assert.notDeepEqual(recordWrites('git restore docs/specs'), []);
   // the check names the command and why
   const r = CHECKS.records_untouched({ not_work: records, transcript_commands: [...realReads, 'cd .claude/session && rm truncate-text.log'] });
   assert.equal(r.ok, false);
@@ -781,6 +783,35 @@ test('records_untouched follows exported and computed variables and the paths fi
     ["find .claude/session -exec python3 -c 'import sys' {} \;", true],
     ["ls .claude/session/* | xargs sh -c 'echo x >> \"$1\"' _", true], ["sh -c 'echo x >> \"$1\"' _ docs/specs/s.events.jsonl", true],
   ];
+  for (const [c, w] of cases) assert.equal(recordWrites(c, { records }).length > 0, w, c);
+});
+
+test('records_untouched: xargs options as GNU and BSD xargs read them, substitutions read by the same rules, and writers handed listed paths that can be records', () => {
+  // findings (final check of #111): `xargs -I{}` (attached) was not read as a replace string; `diff <(git show …)` failed
+  // closed; `make -C docs/specs`, `ls | xargs sed -i` and `find . -type f | xargs sed -i` wrote records unseen
+  const records = ['docs/specs/truncate-text.events.jsonl'];
+  const cases = [
+ // 1 xargs replace forms (GNU and BSD)
+ ["ls docs/specs/x.events.jsonl | xargs -I{} sh -c 'echo x >> {}'", true], ["ls docs/specs/x.events.jsonl | xargs -I{} sh -c ': > {}'", true], ["ls docs/specs/x.events.jsonl | xargs -I{} sh -c 'echo x >> \"$1\"' _ {}", true],
+ ["ls docs/specs/x.events.jsonl | xargs -I {} cp /tmp/x {}", true], ["ls docs/specs/x.events.jsonl | xargs -IREPL cp /tmp/x REPL", true], ["ls docs/specs/x.events.jsonl | xargs -i cp /tmp/x {}", true], ["ls docs/specs/x.events.jsonl | xargs -iF cp /tmp/x F", true],
+ ["ls docs/specs/x.events.jsonl | xargs --replace cp /tmp/x {}", true], ["ls docs/specs/x.events.jsonl | xargs --replace=R cp /tmp/x R", true], ["ls docs/specs/x.events.jsonl | xargs -0rI{} cp /tmp/x {}", true],
+ ["ls docs/specs/x.events.jsonl | xargs -J % cp % /tmp/y", false], ["ls docs/specs/x.events.jsonl | xargs -J % mv % /tmp/y", true], ["ls docs/specs/x.events.jsonl | xargs -n1 rm", true], ["ls docs/specs/x.events.jsonl | xargs -P4 -n 1 rm", true],
+ ["ls docs/specs/x.events.jsonl | xargs -d'\\n' rm", true], ["ls docs/specs/x.events.jsonl | xargs -L1 rm", true], ["ls docs/specs/x.events.jsonl | xargs -s 100 -E EOF rm", true], ["xargs -a .claude/session/list rm", true],
+ ["ls docs/specs/x.events.jsonl | xargs -I{} cat {}", false], ["ls docs/specs/x.events.jsonl | xargs -n1 wc -l", false], ["ls docs/specs/x.events.jsonl | xargs -I{} sh -c 'cat {}'", false],
+ // 2 substitutions
+ ['diff <(git show HEAD:docs/specs/t.events.jsonl) docs/specs/t.events.jsonl', false], ['cmp <(cat .claude/session/x.log) /tmp/x', false], ['echo x > >(tee -a docs/specs/t.events.jsonl)', true], ['echo $(echo x >> docs/specs/t.events.jsonl)', true],
+ ['cp x $(echo docs/specs/t.events.jsonl)', true], ['cat $(echo .claude/session/x.log)', false], ['cd $(dirname docs/specs/t.events.jsonl) && ls', false], ['cd $(dirname docs/specs/t.events.jsonl) && rm t.events.jsonl', true],
+ ['cd "$(dirname docs/specs/t.events.jsonl)" && rm notes.md', false], ['cd "$(git rev-parse --show-toplevel)" && cat docs/specs/t.events.jsonl', false], ['cd "$(git rev-parse --show-toplevel)/docs/specs" && rm t.events.jsonl', true],
+ ['cd $(mktemp -d) && ls', false], ['wc -l $(ls .claude/session/*.log)', false], ['rm `ls .claude/session/*`', true], ["echo \"$(sed -i s/a/b/ docs/specs/t.events.jsonl)\"", true],
+ // 3 listing writers
+ ['make -C docs/specs', true], ['make -C .claude/session', true], ['make --directory=docs/specs all', true], ['cd docs/specs && make', true], ['make -C src', false], ['make test', false],
+ ["cd docs/specs && ls | xargs sed -i s/a/b/", true], ["find . -type f | xargs sed -i s/a/b/", true], ["find . -type f -print0 | xargs -0 perl -pi -e s/a/b/", true], ["ls docs/specs | xargs -I{} truncate -s0 docs/specs/{}", true],
+ ["find src -name '*.ts' | xargs sed -i s/a/b/", false], ["find . -name '*.ts' -not -path './node_modules/*' | xargs sed -i s/a/b/", false], ["find . -name '*.ts' -exec sed -i s/a/b/ {} +", false], ["find . -name '*.orig' -delete", false],
+ ["find . -name '*.jsonl' | xargs sed -i s/a/b/", true], ["find . -name '*.log' -exec rm {} +", true], ["find . -maxdepth 1 -type f | xargs sed -i s/a/b/", false], ["find . -type d | xargs rm -rf", true],
+ ["git ls-files | xargs sed -i s/a/b/", true], ["git ls-files src | xargs sed -i s/a/b/", false], ["grep -rl foo . | xargs sed -i s/foo/bar/", true], ["grep -rl foo src | xargs sed -i s/foo/bar/", false], ["rg -l foo | xargs sed -i s/foo/bar/", true],
+ ["ls | xargs echo", false], ["find . -type f | xargs wc -l", false], ["find . -type f | xargs grep -l foo", false], ["cd /tmp/elsewhere && find . -type f | xargs sed -i s/a/b/", true], ["ls src | xargs -I{} sed -i s/a/b/ src/{}", false],
+ ["find . -type f | while read f; do sed -i s/a/b/ \"$f\"; done", true], ["find src -type f | while read f; do sed -i s/a/b/ \"$f\"; done", false], ["find . -type f -exec sh -c 'tee -a \"$1\" < /dev/null' _ {} \;", true],
+];
   for (const [c, w] of cases) assert.equal(recordWrites(c, { records }).length > 0, w, c);
 });
 

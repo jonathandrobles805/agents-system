@@ -767,7 +767,13 @@ export function lexShell(src) {
       while (s[i] === ' ' || s[i] === '\t') i++;
       const op = redir[2];
       const tok = { t: 'redir', op, fd: redir[1] || null, target: null, body: null };
-      const target = readWord();
+      // `< <(cmd)`: the redirection reads a process substitution
+      let target;
+      if ((s[i] === '<' || s[i] === '>') && s[i + 1] === '(') {
+        const k = skipParen(i + 2);
+        target = { ...newWord(), text: s.slice(i, k), pat: escGlob(s.slice(i, k)), subs: [s.slice(i + 2, k - 1)] };
+        i = k;
+      } else target = readWord();
       if (op === '<<' || op === '<<-') heredocs.push({ tok, delim: target.text, strip: op === '<<-' });
       else if (op === '<<<') { tok.body = target.text; tok.target = target; }
       // `2>&1`, `>&-`: a descriptor, no file
@@ -923,7 +929,7 @@ function pathKind(placed, records) {
   if (/events\.jsonl$/.test(comps.at(-1) ?? '')) return 'record';
   const j = comps.join('/');
   if (records.some((r) => r === j)) return 'record';
-  if (!comps.length || ['.claude', '.claude/session'].includes(j) || records.some((r) => r.startsWith(`${j}/`))) return 'ancestor';
+  if (!comps.length || ['.claude', '.claude/session', 'docs', 'docs/specs'].includes(j) || records.some((r) => r.startsWith(`${j}/`))) return 'ancestor';
   return null;
 }
 
@@ -953,7 +959,7 @@ function globKind(pat, cwd, records, roots = []) {
     return at >= 0 ? 'ancestor' : null;
   }
   if (compCanEndWith(comps.at(-1) ?? '', 'events.jsonl') || records.some((r) => matches(r.split('/')))) return 'record';
-  const dirs = [['.claude'], ['.claude', 'session'], ...records.flatMap((r) => r.split('/').slice(0, -1).map((_, k, a) => a.slice(0, k + 1)))];
+  const dirs = [['.claude'], ['.claude', 'session'], ['docs'], ['docs', 'specs'], ...records.flatMap((r) => r.split('/').slice(0, -1).map((_, k, a) => a.slice(0, k + 1)))];
   return dirs.some(matches) ? 'ancestor' : null;
 }
 
@@ -1097,6 +1103,100 @@ export function awkEffects(program) {
   return out;
 }
 
+// the files the hooks and `kit lane` keep under .claude/session/ (kitlib.js, hook_post_edit_check.js, sandbox.js,
+// lane.js, bootstrap.js); `{slug}` is the lane's, `s` a session id
+const SESSION_FILES = ['events.jsonl', 'STOP', 'install.sum', 'sandbox.json', 'checks.log', '{slug}.log', 's.attempts.json', 's.reads'];
+
+/** Paths of records a listing could print (`{ path, type }` from the session's directory): what `find .` is tested on. */
+function recordProbes(records) {
+  const slugs = records.map((r) => /([^/]+)\.events\.jsonl$/.exec(r)?.[1]).filter(Boolean);
+  if (!slugs.length) slugs.push('x');
+  const files = new Set(records);
+  for (const n of SESSION_FILES) for (const slug of slugs) files.add(`.claude/session/${n.replace('{slug}', slug)}`);
+  if (!records.length) for (const slug of slugs) files.add(`docs/specs/${slug}.events.jsonl`);
+  return [...[...files].map((path) => ({ path, type: 'f' })), { path: '.claude/session', type: 'd' }];
+}
+
+/** A find pattern as a RegExp (find's fnmatch: a leading `.` needs no literal dot; in -path `*` and `?` match `/`). */
+function findPattern(pat, wholePath, ci) {
+  const toks = globComp(pat).map((t) => (wholePath && t === '[^/]*' ? '.*' : wholePath && t === '[^/]' ? '.' : t));
+  try {
+    return new RegExp(`^${toks.join('')}$`, ci ? 'i' : '');
+  } catch {
+    return /^/;
+  }
+}
+
+// find primaries that take one argument (tests, options and actions); -fprintf takes two, -exec… run to `;` or `+`
+const FIND_ONE_ARG = /^-(name|iname|path|ipath|wholename|iwholename|regex|iregex|regextype|type|xtype|maxdepth|mindepth|newer\w*|anewer|cnewer|size|mtime|mmin|atime|amin|ctime|cmin|user|group|uid|gid|perm|links|inum|samefile|fstype|used|printf|fprint|fprint0|fls|context|lname|ilname)$/;
+
+/**
+ * Would a find expression accept a file `f` ({ out: the path find prints, name, type, depth })? Only a plain
+ * conjunction is followed (tests, `!`/`-not`); one with `-o`, `,` or parentheses accepts everything. -name, -iname,
+ * -path, -ipath, -wholename, -type, -maxdepth and -mindepth are evaluated; any other test is taken as true.
+ */
+function findAccepts(expr, f) {
+  if (expr.some((x) => ['-o', '-or', ',', '(', ')'].includes(x.text))) return true;
+  let neg = false;
+  for (let i = 0; i < expr.length; i++) {
+    const t = expr[i].text;
+    if (t === '!' || t === '-not') { neg = !neg; continue; }
+    let ok = true;
+    if (/^-(exec|execdir|ok|okdir)$/.test(t)) { while (i + 1 < expr.length && expr[i + 1].text !== ';' && expr[i + 1].text !== '+') i++; i++; }
+    else if (t === '-fprintf') i += 2;
+    else if (FIND_ONE_ARG.test(t)) {
+      const v = expr[++i]?.text ?? '';
+      if (t === '-name' || t === '-iname') ok = findPattern(v, false, t === '-iname').test(f.name);
+      else if (/^-i?(path|wholename)$/.test(t)) ok = findPattern(v, true, t.startsWith('-i')).test(f.out);
+      else if (t === '-type') ok = v.split(',').includes(f.type);
+      else if (t === '-maxdepth') ok = f.depth <= Number(v);
+      else if (t === '-mindepth') ok = f.depth >= Number(v);
+    }
+    if (neg) ok = !ok;
+    neg = false;
+    if (!ok) return false;
+  }
+  return true;
+}
+
+/**
+ * Can a `find` reach a record: its starting points (`.` when none) are a record or hold one, and its expression accepts
+ * one of the record paths found there (recordProbes): `find . -type f` can, `find src -name '*.ts'` and
+ * `find . -name '*.ts'` cannot. A start whose place is unknown reaches records when it is the directory after a `cd`
+ * the scorer cannot follow (`.`), or names one. Returns { reaches, prints } (prints: it lists what it finds).
+ */
+function findScan(args, ctx, kind) {
+  let k = 0;
+  while (k < args.length && /^-[HLP]$|^-D$|^-O\d$/.test(args[k].text)) k += args[k].text === '-D' ? 2 : 1;
+  const starts = [];
+  while (k < args.length && !/^[-(!),]/.test(args[k].text)) starts.push(args[k++]);
+  const expr = args.slice(k);
+  const actions = expr.filter((x) => /^-(exec|execdir|ok|okdir|delete|fprint0?|fprintf|fls|print0?|printf|ls|quit)$/.test(x.text)).map((x) => x.text);
+  const prints = !actions.length || actions.some((a) => /^-(print0?|printf|ls)$/.test(a));
+  const probes = recordProbes(ctx.records);
+  let reaches = false;
+  for (const s of starts.length ? starts : [{ text: '.', pat: '.', globby: false, subs: [], vars: [] }]) {
+    if (s.record || s.tainted || s.subs.length || s.vars.length) { reaches = reaches || kind(s) === 'record'; continue; }
+    const t = s.text;
+    const placed = placePath(t, ctx.cwd, ctx.roots);
+    let base = null;
+    if (placed.rel) base = placed.rel.join('/');
+    else if (placed.above || (placed.loose && !placed.loose.length)) base = '';
+    if (base === null || pathKind(placed, ctx.records) === 'record') { reaches = reaches || kind(s) === 'record'; if (base === null) continue; }
+    const head = t.replace(/\/+$/, '') || '/';
+    for (const p of probes) {
+      if (base && p.path !== base && !p.path.startsWith(`${base}/`)) continue;
+      const rest = base ? p.path.slice(base.length).replace(/^\//, '') : p.path;
+      const out = rest ? `${head}/${rest}` : head;
+      if (findAccepts(expr, { out, name: out.split('/').pop(), type: p.type, depth: rest ? rest.split('/').length : 0 })) reaches = true;
+    }
+  }
+  return { reaches, prints };
+}
+
+// what an xargs or find command line gets in place of the paths it is handed, when those can be records
+const RECORD_INPUT = '.claude/session/xargs-input';
+
 /** A word standing for a record (what `find … -exec rm {}` or `ls .claude/session | xargs rm` hands its command). */
 const RECORD_WORD = { text: '.claude/session/*', pat: '.claude/session/*', globby: true, subs: [], vars: [], record: true };
 
@@ -1116,15 +1216,18 @@ const RECORD_WORD = { text: '.claude/session/*', pat: '.claude/session/*', globb
  * - `sed -i`/`--in-place` on a record, a sed `w`/`W` (or `s///w`) into one, or a sed `e` command, or a `-f` script,
  *   while it names one; `awk -i inplace` on a record, an awk `print`/`printf` redirected into one (or to an expression,
  *   such as FILENAME, while it names one), `system()` or a pipe while it names one, or a `-f` program;
- * - `find` from a record or a directory above one with `-delete`, `-exec`/`-execdir`/`-ok`/`-okdir` running a command
+ * - `find` that can reach a record (findScan: a start holding one and an expression that can accept one) with `-delete`, `-exec`/`-execdir`/`-ok`/`-okdir` running a command
  *   that writes (`{}` read as a record), or `-fprint`/`-fprint0`/`-fprintf`/`-fls` into a record;
- * - `xargs` running a command that writes, its arguments read as records when the command before it in the pipe
- *   names one;
+ * - `xargs` (options read as GNU and BSD xargs read them) or `find -exec`/`-execdir` running a command that writes
+ *   where it puts the paths it is handed (`{}` or the `-I` string anywhere in a word), when those can be records:
+ *   from a command before it in the pipe that names one or lists a directory holding one (listsPaths), or a find
+ *   that can reach one (findScan); `make -C` a directory holding records, or `make` run in one;
  * - a `git` subcommand that rewrites the working tree (`checkout`, `restore`, `rm`, `mv`, `stash`, `reset --hard`,
  *   `clean`, `apply`, …) given a record or a directory above one (`git checkout -- .`);
  * - `sh`/`bash`/`zsh -c '…'`, `eval '…'` and a shell reading a heredoc: their code read by these same rules; a shell
  *   reading commands from a pipe after a command that names a record, or a script file, while it names one;
- * - a command substitution (`$(…)`, backticks, `<(…)`) names one: what it prints becomes words the scorer cannot see;
+ * - a command inside a substitution (`$(…)`, backticks, `<(…)`, `>(…)`) writes one, by these same rules; what a
+ *   substitution prints is a word of unknown value, a record when it says so (`cp x $(echo <record>)`);
  * - any other program (node, python, perl, ruby, `kit`, an editor …) that names one, in its arguments, its code
  *   (`node -e "…appendFileSync('docs/specs/x.events.jsonl')"`), a heredoc it reads or after a `cd` into
  *   `.claude/session/`: what it does with the file is unknown, so it fails closed.
@@ -1163,13 +1266,15 @@ function analyzeShell(src, ctx, depth) {
     if (cmds[k].op === ')' && !cmds[k].words.length && !cmds[k].redirs.length) { Object.assign(ctx, stack.pop() ?? {}); k++; continue; }
     let e = k;
     while (e < cmds.length - 1 && (cmds[e].op === '|' || cmds[e].op === '|&')) e++;
+    // what flows down the pipe: a command before it names a record, or lists paths that can include one (`ls`,
+    // `find .`, `git ls-files`, `grep -rl`)
     let upstream = false;
     for (let m = k; m <= e; m++) {
       // each command of a pipeline but the last runs in a subshell: its cd and assignments do not persist
       const c = m < e ? { ...ctx, vars: new Map(ctx.vars) } : ctx;
       const r = simpleCommand(cmds[m], c, { upstream, depth });
       reasons.push(...r.reasons);
-      upstream = upstream || r.names;
+      upstream = upstream || r.names || Boolean(r.lists);
     }
     if (cmds[e].op === ')') Object.assign(ctx, stack.pop() ?? {});
     k = e + 1;
@@ -1203,6 +1308,8 @@ function simpleCommand(cmd, ctx, { upstream, depth }) {
   const redirs = cmd.redirs.map((r) => ({ ...r, target: r.target ? expandVars(r.target, ctx) : null }));
   const kind = (w) => {
     if (w.record || w.tainted) return 'record';
+    // what a command substitution prints is not known: only what the word says outright
+    if (w.subs.length) return RECORD_TEXT.test(w.text) ? 'record' : null;
     // a variable whose value is not known: only what the word says outright
     if (w.vars.some((v) => typeof ctx.vars.get(v)?.value !== 'string')) return RECORD_TEXT.test(w.text) ? 'record' : null;
     // after a `cd` into `.claude/session/` by a path the scorer cannot place, any relative path is under it
@@ -1220,9 +1327,10 @@ function simpleCommand(cmd, ctx, { upstream, depth }) {
   const inRecordDir = () => (ctx.cwd !== null ? pathKind(placePath('.', ctx.cwd), ctx.records) === 'record' || ctx.cwd === '.claude/session' || ctx.cwd.startsWith('.claude/session/') : ctx.cwdRecord);
   const show = (w) => w.text.slice(0, 60);
 
-  // what a command substitution prints becomes words the scorer cannot see: one naming a record fails closed
+  // a command substitution (`$(…)`, backticks, `<(…)`, `>(…)`) runs commands of its own: read by the same rules (a
+  // `git show` inside is a read, a `tee -a <record>` a write); what it prints is a word whose value is not known (kind)
   for (const w of [...words, ...redirs.map((r) => r.target).filter(Boolean)]) {
-    if (w.subs.some((x) => RECORD_TEXT.test(x))) say(`a command substitution names the records: ${show(w)}`);
+    for (const sub of w.subs) for (const why of analyzeShell(sub, { ...ctx, vars: new Map(ctx.vars) }, depth + 1)) say(`in ${show(w)}: ${why}`);
   }
   let readsRecords = false;
   for (const r of redirs) {
@@ -1275,6 +1383,9 @@ function simpleCommand(cmd, ctx, { upstream, depth }) {
     else break;
   }
   if (!w.length) return { reasons, names: readsRecords };
+  // a directory that holds records, or the directory after a `cd` the scorer cannot follow (`.`): what lists it can
+  // print a record's path
+  const mayHold = (x) => ['record', 'ancestor'].includes(kind(x)) || (ctx.cwd === null && /^\.\/?$/.test(x.text));
   const prog = w[0].text.split('/').pop();
   const args = w.slice(1);
   // `P=<record> node …` and an exported variable set from a record hand the path to the program in its environment
@@ -1282,11 +1393,16 @@ function simpleCommand(cmd, ctx, { upstream, depth }) {
   const names = mentions(w[0]) || args.some(mentions) || redirs.some((r) => r.target && mentions(r.target)) || readsRecords;
   // what the command reads on stdin names a record: the command before it in a pipe, a `<` from one, a heredoc
   const stdinNames = upstream || readsRecords || bodyNames;
-  const result = (extra) => ({ reasons: [...reasons, ...(extra ? [extra] : [])], names });
+  const lists = listsPaths(prog, args, { ctx, kind, mayHold });
+  const result = (extra) => ({ reasons: [...reasons, ...(extra ? [extra] : [])], names, lists });
 
   if (prog === 'cd' || prog === 'pushd') {
     const t = args.find((a) => !/^-[LPe@]$/.test(a.text));
-    if (!t || t.text === '-' || t.subs.length || t.vars.some((v) => typeof ctx.vars.get(v)?.value !== 'string')) { ctx.cwd = null; ctx.cwdRecord = Boolean(t && mentions(t)); }
+    const known = t && cdTarget(t, ctx);
+    if (known) {
+      ctx.cwdRecord = pathKind(known, ctx.records) === 'record';
+      ctx.cwd = known.rel ? known.rel.join('/') : null;
+    } else if (!t || t.text === '-' || t.subs.length || t.vars.some((v) => typeof ctx.vars.get(v)?.value !== 'string')) { ctx.cwd = null; ctx.cwdRecord = Boolean(t && mentions(t)); }
     else {
       const placed = placePath(t.text, ctx.cwd, ctx.roots);
       ctx.cwdRecord = pathKind(placed, ctx.records) === 'record' || /(^|\/)\.claude\/session(\/|$)/.test(t.text);
@@ -1317,6 +1433,67 @@ function simpleCommand(cmd, ctx, { upstream, depth }) {
   }
   const writes = recordWrite(prog, args, { kind, isRecord, mentions, names: names || envNames || inRecordDir(), upstream: stdinNames, bodies, bodyNames, ctx, depth });
   return result(writes);
+}
+
+/**
+ * A `cd` target the scorer can place although it is computed: `$(dirname <path>)`, `$(git rev-parse --show-toplevel)`
+ * (the session's directory: the worktree's top), `$(pwd)`, each optionally followed by `/<path>`. Returns the placed
+ * directory (placePath), or null.
+ */
+function cdTarget(t, ctx) {
+  if (t.subs.length !== 1 || t.vars.length) return null;
+  const m = /^(?:\$\(([^()`]*)\)|`([^`]*)`)(\/.*)?$/.exec(t.text);
+  if (!m) return null;
+  let inner;
+  try {
+    inner = lexShell(m[1] ?? m[2]);
+  } catch {
+    return null;
+  }
+  if (inner.some((x) => x.t !== 'word' || x.w.subs.length || x.w.vars.length || x.w.globby)) return null;
+  const ws = inner.map((x) => x.w.text);
+  let base = null;
+  if (ws[0] === 'dirname' && ws.length === 2) base = placePath(ws[1].replace(/\/+$/, '').split('/').slice(0, -1).join('/') || (ws[1].startsWith('/') ? '/' : '.'), ctx.cwd, ctx.roots);
+  else if (ws.join(' ') === 'git rev-parse --show-toplevel') base = { rel: [] };
+  else if (ws.join(' ') === 'pwd' && ctx.cwd !== null) base = { rel: splitPath(ctx.cwd) };
+  if (!base?.rel) return base?.abs ? base : null;
+  return m[3] ? placePath(m[3].replace(/^\/+/, ''), base.rel.join('/'), ctx.roots) : base;
+}
+
+/**
+ * Does a command print paths that can include a record, so a writer it pipes into (`| xargs sed -i`) can be handed
+ * one: `ls` of a directory that holds records (`.`, `docs`, `docs/specs`, `.claude`, `.claude/session`, or `.` after a
+ * `cd` the scorer cannot follow), `find` that can reach one (findScan), `git ls-files` over such a directory, and
+ * `grep -l`/`rg -l`/`rg --files` searching one.
+ */
+function listsPaths(prog, args, { ctx, kind, mayHold }) {
+  const operands = args.filter((x) => !x.text.startsWith('-'));
+  if (prog === 'ls' || prog === 'tree') return (operands.length ? operands : [{ text: '.', pat: '.', globby: false, subs: [], vars: [] }]).some(mayHold);
+  if (prog === 'find') { const f = findScan(args, ctx, kind); return f.reaches && f.prints; }
+  if (prog === 'git' && operands[0]?.text === 'ls-files') { const ps = operands.slice(1); return (ps.length ? ps : [{ text: '.', pat: '.', globby: false, subs: [], vars: [] }]).some(mayHold); }
+  if (prog === 'grep' || prog === 'egrep' || prog === 'fgrep' || prog === 'rg') {
+    const flags = args.filter((x) => /^-[^-]/.test(x.text)).map((x) => x.text.slice(1)).join('');
+    const filesOut = /[lL]/.test(flags) || args.some((x) => /^--(files-with(out)?-matches?|files)$/.test(x.text));
+    if (!filesOut) return false;
+    const dirs = args.some((x) => x.text === '--files') ? operands : operands.slice(args.some((x) => x.text === '-e' || x.text.startsWith('--regexp')) ? 0 : 1);
+    const recursive = prog === 'rg' || /[rR]/.test(flags) || args.some((x) => /^--(recursive|dereference-recursive)$/.test(x.text));
+    return recursive && (dirs.length ? dirs : [{ text: '.', pat: '.', globby: false, subs: [], vars: [] }]).some(mayHold);
+  }
+  return false;
+}
+
+/**
+ * A command line with a record put where the replace string `r` stands (find's `{}`, xargs's `-I` string): a word that
+ * is `r` becomes a record; a word holding it (`sh -c 'echo x >> {}'`) has it replaced by a record path and is read as
+ * naming one.
+ */
+function handIn(words, r) {
+  return words.map((x) => {
+    if (x.text === r) return RECORD_WORD;
+    if (!r || !x.text.includes(r)) return x;
+    const text = x.text.split(r).join(RECORD_INPUT);
+    return { ...x, text, pat: escGlob(text), globby: false, vars: [], subs: [], tainted: true };
+  });
 }
 
 /** The reason one program, with its arguments, writes a record (recordWrites), or null. */
@@ -1444,45 +1621,93 @@ function recordWrite(prog, args, env) {
       return programFile && names ? 'awk runs a -f program and names the records' : null;
     }
     case 'find': {
+      // `find` reaches a record when a start holds one and its expression can accept one (findScan), or it names one
+      const scan = findScan(args, ctx, kind);
+      const reaches = scan.reaches || env.names;
       let k = 0;
-      while (k < args.length && /^-[HLP]$|^-D$|^-O\d$/.test(args[k].text)) k += args[k].text === '-D' ? 2 : 1;
-      const starts = [];
-      while (k < args.length && !/^[-(!),]/.test(args[k].text)) starts.push(args[k++]);
-      const reaches = (starts.length ? starts : [plain('.')]).some((x) => isRecord(x) || above(x)) || env.names;
+      while (k < args.length && args[k].text !== '!' && !/^[-(),]/.test(args[k].text)) k++;
       for (; k < args.length; k++) {
         const t = args[k].text;
         if (t === '-delete' && reaches) return 'find -delete over the records';
         if (/^-(fprint0?|fls|fprintf)$/.test(t) && isRecord(args[k + 1] ?? plain(''))) return `find ${t} ${show(args[k + 1])}`;
         if (/^-(exec|execdir|ok|okdir)$/.test(t)) {
-          const inner = [];
-          for (k++; k < args.length && args[k].text !== ';' && args[k].text !== '+'; k++) inner.push(args[k].text.includes('{}') && reaches ? RECORD_WORD : args[k]);
-          if (!inner.length) continue;
-          const p = inner[0].text.split('/').pop();
-          const why = recordWrite(p, inner.slice(1), { ...env, names: env.names || (reaches && inner.includes(RECORD_WORD)) });
+          const raw = [];
+          for (k++; k < args.length && args[k].text !== ';' && args[k].text !== '+'; k++) raw.push(args[k]);
+          if (!raw.length) continue;
+          // find puts each path it reaches where `{}` stands, alone or inside a word (`sh -c 'echo x >> {}'`)
+          const inner = reaches ? handIn(raw, '{}') : raw;
+          const why = recordWrite(inner[0].text.split('/').pop(), inner.slice(1), { ...env, names: env.names || (reaches && inner.some((x) => x.record || x.tainted)) });
           if (why) return `find ${t} ${why}`;
         }
       }
       return null;
     }
     case 'xargs': {
+      // options as GNU xargs (getopt_long "+0a:d:E:e::I:i::L:l::n:oP:prs:tx") and BSD/macOS xargs (getopt
+      // "0E:I:J:L:n:oP:pR:rS:s:tx") read them: a value attached (`-I{}`, `-n1`, `-d'\n'`) or in the next word; GNU's
+      // -e, -i and -l take theirs attached only (-i alone is `-I {}`); a cluster (`-0rI{}`) is read letter by letter
+      const required = new Set(['a', 'd', 'E', 'I', 'J', 'L', 'n', 'P', 'R', 'S', 's']);
+      const optional = new Set(['e', 'i', 'l']);
       let k = 0;
       let fromFile = null;
       let replace = null;
-      for (; k < args.length && args[k].text.startsWith('-'); k++) {
+      let whole = null;
+      for (; k < args.length && args[k].text.startsWith('-') && args[k].text !== '-'; k++) {
         const t = args[k].text;
         if (t === '--') { k++; break; }
-        if (/^(-a|--arg-file)$/.test(t)) fromFile = args[++k];
-        else if (/^--arg-file=/.test(t)) fromFile = plain(t.slice(11));
-        else if (t === '-I') replace = args[++k]?.text ?? null;
-        else if (/^-i/.test(t) || /^--replace/.test(t)) replace = t.replace(/^(-i|--replace=?)/, '') || '{}';
-        else if (/^(-d|-E|-L|-n|-P|-s|--delimiter|--max-args|--max-procs|--max-chars|--max-lines|--process-slot-var)$/.test(t)) k++;
+        if (t.startsWith('--')) {
+          const eq = t.indexOf('=');
+          const name = eq > 0 ? t.slice(0, eq) : t;
+          const takes = ['--arg-file', '--delimiter', '--max-args', '--max-procs', '--max-chars', '--process-slot-var'].includes(name);
+          const value = eq > 0 ? t.slice(eq + 1) : takes ? args[++k]?.text ?? '' : null;
+          if (name === '--replace') replace = value || '{}';
+          if (name === '--arg-file') fromFile = plain(value);
+          continue;
+        }
+        for (let c = 1; c < t.length; c++) {
+          const o = t[c];
+          if (required.has(o)) {
+            const value = t.slice(c + 1) || (args[++k]?.text ?? '');
+            if (o === 'I') { replace = value; whole = null; }
+            if (o === 'J') { whole = value; replace = null; }
+            if (o === 'a') fromFile = plain(value);
+            break;
+          }
+          if (optional.has(o)) {
+            if (o === 'i') { replace = t.slice(c + 1) || '{}'; whole = null; }
+            break;
+          }
+        }
       }
-      const from = upstream || (fromFile && mentions(fromFile));
-      const inner = args.slice(k).map((x) => (replace && from && x.text.includes(replace) ? RECORD_WORD : x));
-      if (!inner.length) inner.push(plain('echo'));
-      if (from && !replace) inner.push(RECORD_WORD);
+      const from = upstream || Boolean(fromFile && (mentions(fromFile) || kind(fromFile) === 'ancestor'));
+      let inner = args.slice(k);
+      if (!inner.length) inner = [plain('echo')];
+      if (from) {
+        // the paths read from stdin go where the replace string stands (-I/-i: anywhere in a word; -J: a whole word),
+        // else after the command's arguments
+        if (replace) inner = handIn(inner, replace);
+        else if (whole) inner = inner.map((x) => (x.text === whole ? RECORD_WORD : x));
+        else inner = [...inner, RECORD_WORD];
+      }
       const why = recordWrite(inner[0].text.split('/').pop(), inner.slice(1), { ...env, names: env.names || from });
       return why ? `xargs ${why}` : null;
+    }
+    case 'make': case 'gmake': case 'bmake': {
+      // make runs recipes the command does not show: in a directory that holds records (`-C docs/specs`, or run from
+      // one), it fails closed
+      let dir = null;
+      for (let k = 0; k < args.length; k++) {
+        const t = args[k].text;
+        if (t === '-C' || t === '--directory') dir = args[++k] ?? null;
+        else if (/^-C./.test(t)) dir = plain(t.slice(2));
+        else if (t.startsWith('--directory=')) dir = plain(t.slice(12));
+      }
+      const holds = (rel) => rel === '.claude/session' || rel.startsWith('.claude/session/') || (ctx.records.length ? ctx.records.some((r) => r.slice(0, r.lastIndexOf('/')) === rel) : rel === 'docs/specs');
+      if (dir) {
+        const placed = dir.subs.length || dir.vars.length ? null : placePath(dir.text, ctx.cwd, ctx.roots);
+        if (placed?.rel ? holds(placed.rel.join('/')) : isRecord(dir) || /(^|\/)(\.claude\/session|docs\/specs)\/?$/.test(dir.text)) return `make -C ${show(dir)}: a directory that holds records`;
+      } else if (ctx.cwd !== null ? holds(ctx.cwd) : ctx.cwdRecord) return 'make runs in a directory that holds records';
+      return unknown();
     }
     case 'git': {
       let k = 0;
