@@ -43,7 +43,7 @@
     },
     {
       "id": "r3",
-      "text": "If the critique says it found nothing, its only item is spec-critic.md's statement \"- C1. No gaps found after independent caller search and criterion review.\" followed by the commands the critic ran (git grep for each changed symbol), and the spec truly has no gap those commands or a criterion review would show; a critique with gaps lists them instead."
+      "text": "If the critique says it found nothing, its only item is spec-critic.md's statement \"- C1. No gaps found after independent caller search and criterion review.\" followed by the commands the critic ran (a search for each changed symbol: `git grep`, or the Grep tool, which is the one the critic has), and the spec truly has no gap those commands or a criterion review would show; a critique with gaps lists them instead."
     }
   ]
 }

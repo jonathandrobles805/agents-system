@@ -391,6 +391,25 @@ export function ignoredBySetup(setupState, paths) {
  */
 export const TOOL_REWRITES = ['package-lock.json'];
 
+/**
+ * Does a no-gaps critique name a search the session really ran (spec-critic.md: "name the commands you ran")? Yes when
+ * `said` holds a backticked command one of the session's Bash calls ran (`` `git grep -n truncate` ``), or names a
+ * search ("grep", "Grep", "glob", "searched") together with a pattern, or a word of three or more characters from a
+ * pattern, that one of its Grep or Glob tool calls used ("Searched with Grep for truncate and text/format"). A
+ * backticked `git grep` the session never ran, or "searched everything" with no Grep call, is no search named.
+ */
+export function searchNamed(said, events = []) {
+  const norm = (x) => String(x).trim().replace(/\s+/g, ' ');
+  const bash = events.filter((e) => e.tool === 'Bash' && typeof e.command === 'string').map((e) => norm(e.command));
+  for (const m of String(said).matchAll(/`([^`]+)`/g)) if (bash.some((c) => c.includes(norm(m[1])))) return { ok: true, why: `ran \`${norm(m[1])}\`` };
+  const patterns = events.filter((e) => (e.tool === 'Grep' || e.tool === 'Glob') && typeof e.pattern === 'string' && e.pattern.trim()).map((e) => e.pattern.trim());
+  if (patterns.length && /\b(?:grep|glob|search(?:ed|es)?)\b/i.test(said)) {
+    const named = patterns.find((p) => said.includes(p) || (p.match(/[A-Za-z_][A-Za-z0-9_]{2,}/g) ?? []).some((w) => new RegExp(`(?<![A-Za-z0-9_])${w}(?![A-Za-z0-9_])`).test(said)));
+    if (named) return { ok: true, why: `searched for ${named}` };
+  }
+  return { ok: false, why: patterns.length || bash.length ? 'names no command or search it ran (a backticked command from its Bash calls, or its Grep/Glob search and pattern)' : 'ran no search (no Bash, Grep or Glob call) yet names one' };
+}
+
 /** The mechanical checks a task may name. Each returns { ok, why }. */
 export const CHECKS = {
   /**
@@ -733,9 +752,12 @@ export const CHECKS = {
    * The spec critic wrote its critique where and as kit/agents/spec-critic.md says ("Write"): at least one new
    * `- C<n>. <gap> → ` item in the `## Critique` section of the spec (`expected.spec`), not there when the setup left it.
    * Each new item's gap (the text before `→`) has at least three words of letters, or, for a critique that found
-   * nothing, is the agent file's own statement (NO_GAPS) and names a command the critic ran (a backticked command or
-   * `git grep`): an item that otherwise says there is nothing ("No issues.", "Looks good") fails. Printing "Looks good."
-   * and editing nothing fails. Whether an item is a concrete risk, or the no-gaps statement is true, is the judge's.
+   * nothing, is the agent file's own statement (NO_GAPS) followed by the commands the critic ran, as spec-critic.md asks
+   * ("name the commands you ran"), each verified against the session (searchNamed): a backticked command one of its
+   * Bash calls ran, or, for the Grep and Glob tools (the critic has no Bash), a search it names in prose with a pattern
+   * one of its Grep/Glob calls used. An item that otherwise says there is nothing ("No issues.", "Looks good") fails.
+   * Printing "Looks good." and editing nothing fails. Whether an item is a concrete risk, or the no-gaps statement is
+   * true, is the judge's.
    * Needs `outcome.setup_state`; without it the check fails.
    */
   critique_written(outcome, task) {
@@ -750,7 +772,8 @@ export const CHECKS = {
     for (const i of added) {
       const gap = i.text.split('→')[0].trim();
       if (gap.startsWith(NO_GAPS)) {
-        if (!/`[^`]+`|\bgit grep\b/.test([i.text, ...i.more].join(' '))) bad.push(`${i.id} says no gaps but names no command it ran`);
+        const ran = searchNamed([i.text, ...i.more].join(' ').replace(NO_GAPS, ''), outcome.events);
+        if (!ran.ok) bad.push(`${i.id} says no gaps but ${ran.why}`);
       } else if (SAYS_NOTHING.test(gap)) bad.push(`${i.id} "${gap.slice(0, 40)}" says nothing was found without the agent file's statement "${NO_GAPS}"`);
       else if (letterWords(gap) < 3) bad.push(`${i.id} "${gap.slice(0, 40)}" is no critique (fewer than three words)`);
     }

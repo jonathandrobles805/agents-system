@@ -275,7 +275,23 @@ test('hard checks fail for the right reasons', () => {
   const withItems = (items) => waitingSpec.replace('## Approval', `${items}\n\n## Approval`);
   const CW = (items, extra = {}) => CHECKS.critique_written({ files: { 'docs/specs/truncate-text.md': items === null ? waitingSpec : withItems(items) }, setup_state: { 'docs/specs/truncate-text.md': waitingSpec }, ...extra }, critic);
   assert.equal(CW('- C1. D1 has no negative case for a max below one (line 68). → ').ok, true, 'a real gap');
-  assert.equal(CW(`- C1. ${'No gaps found after independent caller search and criterion review.'} Ran \`git grep -n slugify\`. → `).ok, true, 'the agent file\'s no-gaps statement, with the command run');
+  // the no-gaps statement names the commands the critic ran (spec-critic.md), verified against the session (finding:
+  // any backticked text passed, run or not); the critic has no Bash, so its Grep/Glob search named in prose counts
+  const NG = 'No gaps found after independent caller search and criterion review.';
+  const grep = (pattern) => ({ event: 'search', tool: 'Grep', pattern, result: 'ok' });
+  assert.equal(CW(`- C1. ${NG} Ran \`git grep -n slugify\`. → `, { events: [{ event: 'bash', tool: 'Bash', command: 'git grep -n slugify', result: 'ok' }] }).ok, true, 'a backticked command the session ran');
+  for (const [said, events] of [
+    ['Searched with Grep for `truncate` and `text/format` in src and tests: no caller.', [grep('truncate'), grep('text/format')]],
+    ['Grep for truncate( found only the spec.', [grep('truncate\\(')]],
+    ['Callers: searched with Glob `src/**/*.ts`, then Grep slugify.', [{ event: 'search', tool: 'Glob', pattern: 'src/**/*.ts' }, grep('slugify')]],
+  ]) assert.equal(CW(`- C1. ${NG} ${said} → `, { events }).ok, true, said);
+  for (const [said, events] of [
+    ['Ran `git grep -n slugify`.', []],
+    ['Ran `git grep -n slugify`.', [grep('truncate')]],
+    ['Searched everything.', [grep('truncate')]],
+    ['Grep for slugify.', [{ event: 'read', tool: 'Read', path: 'src/text/format.ts' }]],
+    ['', [grep('truncate')]],
+  ]) assert.equal(CW(`- C1. ${NG} ${said} → `, { events }).ok, false, `${said} ${JSON.stringify(events)}`);
   assert.equal(CW(null, { output: 'Looks good.', events: [{ tool: 'Read', path: 'docs/specs/truncate-text.md' }] }).ok, false, 'a do-nothing critic: one Read and "Looks good."');
   for (const items of ['- C1. Looks good. → ', '- C1. No issues found. → ', '- C1. LGTM → ', '- C1. ok → ', '- C1. . → ', '- C1. No gaps found after independent caller search and criterion review. → '])
     assert.equal(CW(items).ok, false, items);
