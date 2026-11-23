@@ -397,7 +397,8 @@ export async function run(task, { attempt = 0, timeoutMs = 20 * 60 * 1000, trans
         }
       }
     }
-    return { runner: name, variant: null, files, events, git, judge, test_commands: testCommands, transcripts: kept, ms: Date.now() - started, worker_command: work.command, worker_status: work.status, worker_signal: work.signal, worker_error: work.error, worker_stderr: work.stderr.slice(-2000), worker_agent: agent, warnings, judge_session: judgeSession };
+    // `output`: what the worker printed (its final answer with `claude -p`), redacted; a check may read it (lesson_proposed)
+    return { runner: name, variant: null, files, events, git, judge, test_commands: testCommands, transcripts: kept, ms: Date.now() - started, worker_command: work.command, worker_status: work.status, worker_signal: work.signal, worker_error: work.error, worker_stderr: work.stderr.slice(-2000), output: redact(work.stdout).slice(-20000), worker_agent: agent, warnings, judge_session: judgeSession };
   } finally {
     if (!process.env.KIT_EVAL_KEEP) fs.rmSync(dir, { recursive: true, force: true });
   }

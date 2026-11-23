@@ -53,6 +53,14 @@ test('hard checks fail for the right reasons', () => {
   assert.equal(CHECKS.review_has_evidence({ files: { 'r.md': rv('| R1 | Named test | PASS | tests/x.ts:2 asserts it |\n').files['r.md'].replace('# Review: x', '# Review: {{feature}}') } }, R).ok, false, 'a placeholder left anywhere');
   assert.equal(CHECKS.review_has_evidence(rv(''), R).ok, false, 'no rows');
   assert.equal(CHECKS.review_has_evidence({ files: {} }, R).ok, false, 'no report');
+  // lesson_proposed: the retro's printed entries, by the kit's lesson rules; LESSONS.md as bootstrap wrote it is no work
+  const lesson = (eb, pc) => `## 2026-11-22 — x — y\n\n- What went wrong: a\n- Root cause: b\n- Rule: c\n- Enforced by: ${eb}\n- Proposed change: ${pc}\n  \`\`\`\n  # a sketched check, not a heading\n  \`\`\`\n- Status: proposed\n`;
+  assert.equal(CHECKS.lesson_proposed({ output: `Proposed:\n\n${lesson('test', 'tests/x.test.ts asserts it')}` }).ok, true);
+  assert.equal(CHECKS.lesson_proposed({ output: `\`\`\`markdown\n${lesson('hook', 'kit/scripts/hook_x.js blocks it')}\`\`\`\n` }).ok, true, 'entries printed inside a fence');
+  assert.equal(CHECKS.lesson_proposed({ output: lesson('a reminder', 'none') }).ok, false, 'an unknown Enforced by');
+  assert.equal(CHECKS.lesson_proposed({ output: lesson('text-only', 'none') }).ok, false, 'text-only with no reason');
+  assert.equal(CHECKS.lesson_proposed({ output: '## {{date}} — {{feature}} — {{short title}}\n' }).ok, false, 'the template');
+  assert.equal(CHECKS.lesson_proposed({ output: '', files: { 'LESSONS.md': '# Lessons\n\n## Debt\n\n- none\n' } }).ok, false, 'nothing proposed');
   assert.equal(CHECKS.first_tool({ events: [{ tool: 'Read' }, { tool: 'Edit' }] }, { expected: { first_tool: 'Read' } }).ok, true);
   assert.equal(CHECKS.first_tool({ events: [{ tool: 'Edit' }] }, { expected: { first_tool: 'Read' } }).ok, false);
   // a hard violation zeroes the score even with a perfect rubric
@@ -255,7 +263,7 @@ test('every recorded outcome scores as its fixture says: each check has a passin
       for (const [name, r] of Object.entries(s.hard)) seen.set(`${name}:${r.ok}`, true);
     }
   }
-  for (const name of ['red_before_green', 'red_run', 'in_scope_edits', 'review_has_evidence']) for (const ok of [true, false]) assert.ok(seen.has(`${name}:${ok}`), `a fixture where ${name} is ${ok}`);
+  for (const name of ['red_before_green', 'red_run', 'in_scope_edits', 'review_has_evidence', 'lesson_proposed']) for (const ok of [true, false]) assert.ok(seen.has(`${name}:${ok}`), `a fixture where ${name} is ${ok}`);
 });
 
 test('claude runner setup: shared files come from kit/eval, carry the fixture commit, and a run is recorded in its progress row', (t) => {

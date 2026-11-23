@@ -1,0 +1,20 @@
+{
+  "files": {
+    "LESSONS.md": "# Lessons\n\nRules the system learned. The Debt section lists rules not yet enforced by a check; keep it short.\n\n## Debt\n\n- none\n"
+  },
+  "events": [],
+  "git": {
+    "log": [
+      "abc1234 eval"
+    ]
+  },
+  "judge": {},
+  "output": "Invalid API key · Please run /login\n",
+  "ms": 900,
+  "expect": {
+    "hard_ok": false,
+    "violations": [
+      "lesson_proposed"
+    ]
+  }
+}

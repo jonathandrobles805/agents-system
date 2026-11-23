@@ -100,6 +100,31 @@ export const CHECKS = {
     const missing = want.filter((f) => !(f in (outcome.files ?? {})));
     return missing.length ? { ok: false, why: `missing ${missing.join(', ')}` } : { ok: true, why: `${want.length} files present` };
   },
+  /**
+   * The session proposed at least one lesson entry, and every entry it proposed is valid by the kit's own lesson rules
+   * (validate_docs.js `lesson`: no placeholder, every field, a known `Enforced by`, a named change or a text-only
+   * reason). Read from the session's printed output (`outcome.output`): the retro agent prints its entries and never
+   * writes LESSONS.md itself (kit/agents/retro.md, "Do not"), and LESSONS.md exists from bootstrap whether or not the
+   * retro ran. An entry is a `## <YYYY-MM-DD> — …` heading (the lesson template's) and the lines under it, up to the
+   * next `#`/`##` heading outside a fenced block (the agent sketches a proposed check in one).
+   */
+  lesson_proposed(outcome) {
+    const lines = K.splitlines(String(outcome.output ?? ''));
+    const entry = [];
+    let inEntry = false;
+    let fenced = false;
+    for (const l of lines) {
+      if (/^##\s+\d{4}-\d\d-\d\d\b/.test(l)) [inEntry, fenced] = [true, false];
+      else if (inEntry && /^\s*```/.test(l)) fenced = !fenced;
+      else if (inEntry && !fenced && /^#{1,2}\s/.test(l)) inEntry = false;
+      if (inEntry) entry.push(l);
+    }
+    const n = entry.filter((l) => l.startsWith('## ')).length;
+    if (!n) return { ok: false, why: 'no lesson entry (## <date> — …) in the session\'s output' };
+    const v = new V.Validator(path.sep, null, {});
+    v.lesson('output', entry);
+    return v.v.length ? { ok: false, why: `${v.v.length} problem(s): ${v.v.slice(0, 3).map((x) => `${x.rule}: ${x.message}`).join('; ')}` } : { ok: true, why: `${n} lesson entr${n === 1 ? 'y' : 'ies'}, each valid` };
+  },
   /** Every claim line in the named documents carries a provenance tag. */
   provenance_tags(outcome, task) {
     const docs = task.expected?.tagged_docs ?? [];

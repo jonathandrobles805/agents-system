@@ -1,6 +1,6 @@
 {
   "files": {
-    "LESSONS.md": "# Lessons\n\n## Debt (text-only)\n\n- none\n\n## Enforced\n\n- refund routes must delegate to the service \u2192 boundaries lint rule (added)\n"
+    "LESSONS.md": "# Lessons\n\nRules the system learned. The Debt section lists rules not yet enforced by a check; keep it short.\n\n## Debt\n\n- none\n"
   },
   "events": [
     {
@@ -13,12 +13,6 @@
       "event": "read",
       "tool": "Read",
       "path": "docs/specs/refund-route.progress.md",
-      "result": "ok"
-    },
-    {
-      "event": "edit",
-      "tool": "Edit",
-      "path": "LESSONS.md",
       "result": "ok"
     }
   ],
@@ -35,5 +29,6 @@
   "expect": {
     "hard_ok": true,
     "violations": []
-  }
+  },
+  "output": "Proposed lesson for a human to approve:\n\n## 2026-11-22 — refund-route — a route reimplemented service logic\n\n- What went wrong: the first refund route recomputed the amount instead of calling the service.\n- Root cause: nothing checks that src/api only delegates to src/domain.\n- Rule: a file under src/api calls no arithmetic on amounts; it delegates to a src/domain service.\n- Enforced by: lint\n- Proposed change: .eslintrc boundaries rule `src/api` may import only `src/domain` services\n  ```js\n  // eslint-plugin-boundaries: { from: 'api', allow: ['domain'] }\n  ```\n- Status: proposed\n"
 }
