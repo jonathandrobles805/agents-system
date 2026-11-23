@@ -281,6 +281,26 @@ test('smoke on good fixtures passes; a prompt edit that skips the red run fails 
   assert.ok(bad.violations[0].why[0].includes('green run recorded without a red run'));
 });
 
+test('the smoke verdict fails when the judge clearly fails a rubric item, and any set fails when the judge did not grade one', async (t) => {
+  const dir = tmpPath(t);
+  // quality-drop: hard checks pass, the judge scores the implementer's r1 0 (finding: rubric scores gated nothing)
+  const drop = await runSet({ set: 'smoke', runner: 'fixture', out: path.join(dir, 'drop'), variant: 'quality-drop' });
+  assert.equal(drop.violations.length, 0);
+  assert.deepEqual(drop.rubric_fails, [{ task: 'implementer-red-then-green', attempt: 0, items: ['r1'] }]);
+  assert.equal(drop.ok, false);
+  assert.match(fmt(drop), /RUBRIC implementer-red-then-green attempt 0: the judge failed r1\n[\s\S]*eval: FAIL/);
+  // the judge gave nothing: never a pass, and said so
+  const none = await runSet({ set: 'smoke', runner: 'fixture', out: path.join(dir, 'none'), variant: 'judge-missing' });
+  assert.equal(none.violations.length, 0);
+  assert.deepEqual(none.ungraded.map((u) => [u.task, u.items]), [['implementer-red-then-green', ['r1', 'r2']]]);
+  assert.equal(none.ok, false);
+  assert.match(fmt(none), /NOT GRADED implementer-red-then-green attempt 0: the judge gave no 0\/1 for r1, r2/);
+  assert.match(fmt({ ...none, ungraded: [{ task: 'x', attempt: 0, items: ['r1'], judge_ran: false }] }), /NOT GRADED x attempt 0: the judge did not run; ungraded: r1/);
+  const full = await runSet({ set: 'full', runner: 'fixture', n: 1, out: path.join(dir, 'full-none'), variant: 'judge-missing' });
+  assert.equal(full.ok, false, 'an ungraded rubric fails the full set too');
+  assert.equal(score({ rubric: [{ id: 'r1', text: 'x' }, { id: 'r2', text: 'y' }] }, { judge: { r1: 0 } }).rubric.ungraded[0], 'r2');
+});
+
 test('full run against a baseline: a seeded quality drop is a regression; a baseline is never written from fixtures (fault 33)', async (t) => {
   const dir = tmpPath(t);
   // a baseline built by hand from the good fixtures' statistics (what a real claude run would have committed)

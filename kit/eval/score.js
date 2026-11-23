@@ -636,7 +636,7 @@ export const CHECKS = {
   },
 };
 
-/** Score one outcome. Returns { hard: {name: {ok, why}}, hard_ok, rubric: {met, total, score}, score, violations: [names] }. */
+/** Score one outcome. Returns { hard: {name: {ok, why}}, hard_ok, rubric: {met, total, score, failed: [ids], ungraded: [ids]}, score, violations: [names] }. */
 export function score(task, outcome) {
   const hard = {};
   for (const name of task.checks ?? []) {
@@ -647,12 +647,16 @@ export function score(task, outcome) {
   const rubric = task.rubric ?? [];
   const judge = outcome.judge ?? {};
   const met = rubric.filter((c) => judge[c.id] === 1 || judge[c.id] === true).length;
+  // the judge's own verdict per item: 0/false is a clear fail; an item with no 1/0 verdict was not graded (the judge
+  // did not run, or did not answer for it), which is never read as met
+  const failed = rubric.filter((c) => judge[c.id] === 0 || judge[c.id] === false).map((c) => c.id);
+  const ungraded = rubric.filter((c) => ![0, 1, true, false].includes(judge[c.id])).map((c) => c.id);
   const rubricScore = rubric.length ? met / rubric.length : 1;
   return {
     hard,
     hard_ok: violations.length === 0,
     violations,
-    rubric: { met, total: rubric.length, score: rubricScore },
+    rubric: { met, total: rubric.length, score: rubricScore, failed, ungraded },
     // the task's score: 0 on any hard violation, else the rubric share
     score: violations.length ? 0 : rubricScore,
   };
