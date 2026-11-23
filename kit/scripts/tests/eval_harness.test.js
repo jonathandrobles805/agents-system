@@ -99,7 +99,9 @@ test('hard checks fail for the right reasons', () => {
   assert.equal(CHECKS.provenance_tags({ files: { 'd.md': filled.replace('## What I could not verify', '## Findings\n\n- F9. an untagged claim\n\n## What I could not verify') } }, P).ok, false, 'a second Findings section');
   assert.equal(CHECKS.provenance_tags({ files: { 'd.md': `- Slug: x\n- Note: a header field\n${filled.slice(filled.indexOf('## Findings'))}` } }, P).ok, true, 'header fields are not claims');
   // review_has_evidence: the kit's own review rules (validate_docs) over the report; the untouched template fails
-  const rv = (rows) => ({ files: { 'r.md': `# Review: x\n\n## Checklist\n\n| # | Check | Result | Evidence |\n|---|---|---|---|\n${rows}` } });
+  // the session the report is checked against: a 4-line tests/x.ts, a Bash run of the suite, the lane's red/green refs
+  const session = { events: [{ event: 'bash', tool: 'Bash', command: 'cd /w && npx vitest run', result: 'ok' }], setup_events: [{ event: 'check', criterion: 'D1', ref: 'truncate-text.log#1' }, { event: 'check', criterion: 'D1', ref: 'truncate-text.log#26' }] };
+  const rv = (rows, extra = session) => ({ ...extra, files: { 'tests/x.ts': 'a\nb\nc\nd\n', 'r.md': `# Review: x\n\n## Checklist\n\n| # | Check | Result | Evidence |\n|---|---|---|---|\n${rows}` } });
   const R = { expected: { review: 'r.md' } };
   assert.equal(CHECKS.review_has_evidence(rv('| R1 | Named test | PASS | tests/x.ts:2 asserts it |\n| R2 | Red run | FAIL | progress.md D1 has no red run |\n'), R).ok, true);
   assert.equal(CHECKS.review_has_evidence(rv('| R1 | Named test | PASS | ok |\n'), R).ok, false);
@@ -107,6 +109,15 @@ test('hard checks fail for the right reasons', () => {
   // reviewer.md: evidence is `file:line`, `log#line`, or the command and its output; "Looks fine is not evidence"
   for (const e of ['looks fine to me', 'verified', 'Verified by running the tests, all good', '`npx vitest run`', '`tests/truncate.test.ts::name` exists']) assert.equal(CHECKS.review_has_evidence(rv(`| R1 | Named test | PASS | ${e} |\n`), R).ok, false, e);
   for (const e of ['tests/x.ts:2-4 asserts it', 'progress.md D1 green truncate-text.log#26', '`npx vitest run`: 2 passed']) assert.equal(CHECKS.review_has_evidence(rv(`| R1 | Named test | PASS | ${e} |\n`), R).ok, true, e);
+  // the evidence must be real (finding: invented evidence passed): a file:line in the end state within its length, a
+  // log#line the lane recorded, a command the session ran
+  for (const e of ['tests/x.ts:5 asserts it', 'tests/x.ts:2-9 asserts it', 'tests/nope.ts:2 asserts it', 'progress.md D1 green truncate-text.log#27', 'green at log#99', '`make verify`: 2 passed', '`npx vitest run --coverage`: 2 passed', '`ls -la`: ok'])
+    assert.equal(CHECKS.review_has_evidence(rv(`| R1 | Named test | PASS | ${e} |\n`), R).ok, false, `invented: ${e}`);
+  assert.equal(CHECKS.review_has_evidence(rv('| R1 | Named test | PASS | `npx vitest run`: 2 passed; also src/gone.ts:3 |\n'), R).ok, false, 'an invented file:line fails the row whatever else it cites');
+  assert.equal(CHECKS.review_has_evidence(rv('| R1 | Named test | PASS | `npx vitest run`: 2 passed |\n', { events: [] }), R).ok, false, 'a command the session never ran');
+  assert.equal(CHECKS.review_has_evidence(rv('| R1 | Named test | PASS | log#30 |\n', { lane_log_lines: 40 }), R).ok, true, 'a line within the lane log');
+  assert.equal(CHECKS.review_has_evidence(rv('| R1 | Named test | PASS | x.ts:2 asserts it |\n'), R).ok, true, 'a path given by its tail');
+  assert.equal(CHECKS.review_has_evidence(rv('| R1 | Named test | PASS | see https://example.com:8443 and tests/x.ts:1 |\n'), R).ok, true, 'a URL port is no file:line');
   assert.equal(CHECKS.review_has_evidence(rv('| R12 | High-risk behind a flag | PASS | spec header `- Risk: low` |\n'), R).ok, true, 'R12 with Risk: low, as reviewer.md step 9 says');
   assert.equal(CHECKS.review_has_evidence(rv('| R1 | Named test | PASS | Risk: low |\n'), R).ok, false, 'Risk: low is evidence for R12 only');
   assert.equal(CHECKS.review_has_evidence(rv('| R1 | Named test | {{PASS|FAIL}} | {{evidence}} |\n'), R).ok, false, 'the template row');

@@ -124,17 +124,59 @@ function researchSections(lines) {
 }
 
 /**
- * Is a review row's evidence what kit/agents/reviewer.md asks for: a `file:line` (or `file:start-end`), a log line
- * (`truncate-text.log#26`, `log#26`), or a backticked command followed by its output (`` `npx vitest run`: 2 passed ``)?
+ * What a review's evidence is checked against (reviewEvidence): the end state's files, the session's Bash commands, the
+ * log refs the lane's events carry (`ref`, `truncate-text.log#26`, written by `kit lane check`, the setup's and the
+ * session's) and the lane log's line count (`outcome.lane_log_lines`, when the runner read it).
+ */
+export function evidenceContext(outcome) {
+  const events = [...(outcome.setup_events ?? []), ...(outcome.events ?? [])];
+  return {
+    files: outcome.files ?? {},
+    commands: (outcome.events ?? []).filter((e) => e.tool === 'Bash' && typeof e.command === 'string').map((e) => e.command.replace(/\s+/g, ' ')),
+    refs: new Set(events.map((e) => e.ref).filter((r) => typeof r === 'string')),
+    logLines: Number.isInteger(outcome.lane_log_lines) ? outcome.lane_log_lines : null,
+  };
+}
+
+/**
+ * Is a review row's evidence what kit/agents/reviewer.md asks for ("`file:line`, `log#line`, or the command and its
+ * output"), and real? Returns { ok, why }. Each form counts only when it holds in the session (`ctx`, evidenceContext):
+ * - `file:line` (or `file:start-end`): the file is in the end state (its path, or a unique path ending in it) and the
+ *   lines are within its line count. One that is not names an invented place: the row fails, whatever else it cites.
+ * - `log#line` (`truncate-text.log#26`, `log#26`): a ref the lane's events carry, or a line within the lane log's
+ *   length. One that is neither is invented: the row fails.
+ * - a backticked command followed by its output (`` `npx vitest run`: 2 passed ``): the command was run in the session
+ *   (it appears in one of its Bash calls). One that was not run is no evidence (prose in backticks is not failed).
  * R12 may also say `Risk: low` (reviewer.md, step 9). "verified", "looks fine to me" and a bare backticked name are not.
  */
-export function reviewEvidence(row, evidence) {
+export function reviewEvidence(row, evidence, ctx = evidenceContext({})) {
   const e = String(evidence ?? '');
-  if (/[\w.-]+\.[A-Za-z0-9]{1,5}:\d+/.test(e)) return true;
-  if (/[\w.-]#\d+/.test(e)) return true;
+  let real = 0;
+  const invented = [];
+  const lineCount = (rel) => K.splitlines(ctx.files[rel]).length;
+  // a log line, `log#n` or `name.log#n` (a `name.log:n` is read the same way)
+  const logRef = (name, n) => (ctx.refs.has(`${name}#${n}`) || (name === 'log' && [...ctx.refs].some((r) => r.endsWith(`#${n}`))) || (ctx.logLines !== null && n >= 1 && n <= ctx.logLines));
+  for (const m of e.matchAll(/(?<![\w./-])((?:[\w-][\w.-]*\.)?log)[#:](\d+)\b/g)) {
+    if (logRef(m[1], Number(m[2]))) real++;
+    else invented.push(`${m[0]} (no such log line)`);
+  }
+  for (const m of e.matchAll(/(?<![\w./:-])([\w./-]+\.[A-Za-z0-9]{1,5}):(\d+)(?:-(\d+))?\b/g)) {
+    if (/\.log$/.test(m[1])) continue;
+    const rel = m[1].replace(/^\.\//, '');
+    const hits = Object.keys(ctx.files).filter((f) => typeof ctx.files[f] === 'string' && (f === rel || f.endsWith(`/${rel}`)));
+    const [a, b] = [Number(m[2]), Number(m[3] ?? m[2])];
+    if (hits.some((f) => a >= 1 && a <= b && b <= lineCount(f))) real++;
+    else invented.push(hits.length ? `${m[0]} (past the end of ${hits[0]})` : `${m[0]} (no such file in the end state)`);
+  }
   // a command: its first word a program (no `/`, `.` or `(`), an argument after it, then output after the backtick
-  if (/`[a-z][a-z0-9_-]*\s[^`]+`\W*\w/i.test(e)) return true;
-  return String(row).trim().toUpperCase() === 'R12' && /\bRisk:\s*low\b/i.test(e);
+  for (const m of e.matchAll(/`([a-z][a-z0-9_-]*\s[^`]+)`(?=\W*\w)/gi)) {
+    const cmd = m[1].trim().replace(/\s+/g, ' ');
+    if (ctx.commands.some((c) => c.includes(cmd))) real++;
+  }
+  if (invented.length) return { ok: false, why: `cites ${invented.slice(0, 2).join(', ')}` };
+  if (real) return { ok: true, why: `${real} piece(s) of evidence` };
+  if (String(row).trim().toUpperCase() === 'R12' && /\bRisk:\s*low\b/i.test(e)) return { ok: true, why: 'Risk: low' };
+  return { ok: false, why: 'no file:line, log#line, or command the session ran with its output' };
 }
 
 /** How many words of letters (two or more letters each) a text holds: `.`, `-` or `a b` hold none. */
@@ -308,9 +350,10 @@ export const CHECKS = {
    * The review report is filled in: the kit's own review checks (validate_docs.js `review`, REVIEW_RULES) find no
    * `{{…}}` placeholder left and no checklist row without a Result of exactly PASS or FAIL and its evidence, and every
    * PASS row's evidence is evidence as kit/agents/reviewer.md defines it: "`file:line`, `log#line`, or the command and
-   * its output. 'Looks fine' is not evidence" (reviewEvidence). The untouched template `kit lane template review`
-   * writes (`| {{PASS|FAIL}} | {{evidence}} |`) fails. Citations are not range-checked here (the scorer has the end
-   * state's text, not the repository); the judge reads them.
+   * its output. 'Looks fine' is not evidence" (reviewEvidence), and real: a `file:line` within a file of the end state,
+   * a `log#line` the lane recorded, a command the session ran (evidenceContext). The untouched template
+   * `kit lane template review` writes (`| {{PASS|FAIL}} | {{evidence}} |`) fails. Whether the cited line says what the
+   * row claims is the judge's.
    */
   review_has_evidence(outcome, task) {
     const rel = task.expected?.review ?? '';
@@ -323,9 +366,10 @@ export const CHECKS = {
     if (bad.length) return { ok: false, why: `${bad.length} problem(s): ${bad.slice(0, 3).map((x) => `line ${x.line} ${x.rule}: ${x.message}`).join('; ')}` };
     const rows = K.parseSections(K.stripHtmlComments(K.splitlines(text))).get('checklist')?.tableRows() ?? [];
     if (!rows.length) return { ok: false, why: 'no checklist rows' };
-    const thin = rows.filter(([, c]) => c[2].toUpperCase() === 'PASS' && !reviewEvidence(c[0], c[3]));
+    const ctx = evidenceContext(outcome);
+    const thin = rows.map(([, c]) => [c, c[2].toUpperCase() === 'PASS' ? reviewEvidence(c[0], c[3], ctx) : { ok: true }]).filter(([, r]) => !r.ok);
     return thin.length
-      ? { ok: false, why: `${thin.length} PASS row(s) without file:line, log#line or a command and its output: ${thin.slice(0, 3).map(([, c]) => `${c[0]} "${c[3].slice(0, 40)}"`).join('; ')}` }
+      ? { ok: false, why: `${thin.length} PASS row(s) without real evidence (a file:line in the end state, a log#line the lane recorded, or a command the session ran and its output): ${thin.slice(0, 3).map(([c, r]) => `${c[0]} ${r.why}`).join('; ')}` }
       : { ok: true, why: `${rows.length} rows, each PASS or FAIL, every PASS with evidence` };
   },
   /**

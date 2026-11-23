@@ -28,5 +28,5 @@ export async function run(task, { variant = process.env.KIT_EVAL_FIXTURE_VARIANT
   const rec = JSON.parse(fs.readFileSync(p, 'utf8'));
   // a recorded "judge" per attempt lets a fixture model run-to-run variance for the regression statistics
   const judge = Array.isArray(rec.judge_by_attempt) ? rec.judge_by_attempt[attempt % rec.judge_by_attempt.length] : rec.judge ?? {};
-  return { runner: name, variant, files: rec.files ?? {}, ...(rec.setup_state ? { setup_state: rec.setup_state } : {}), events: rec.events ?? [], setup_events: rec.setup_events ?? [], git: rec.git ?? {}, judge, test_commands: rec.test_commands ?? [], output: rec.output ?? '', ms: rec.ms ?? 0 };
+  return { runner: name, variant, files: rec.files ?? {}, ...(rec.setup_state ? { setup_state: rec.setup_state } : {}), events: rec.events ?? [], setup_events: rec.setup_events ?? [], ...(Number.isInteger(rec.lane_log_lines) ? { lane_log_lines: rec.lane_log_lines } : {}), git: rec.git ?? {}, judge, test_commands: rec.test_commands ?? [], output: rec.output ?? '', ms: rec.ms ?? 0 };
 }

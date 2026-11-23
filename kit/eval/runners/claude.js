@@ -536,6 +536,9 @@ export async function run(task, { attempt = 0, timeoutMs = 20 * 60 * 1000, trans
     const events = eventsSince(evFiles, before);
     // what the setup recorded before the session (the tester's red run in an implementer's lane): never the session's work
     const setupEvents = eventsBefore(evFiles, before);
+    // the lane log's length, so a review's `log#line` can be checked (score.js reviewEvidence): the log lives under
+    // .claude/, which the snapshot leaves out
+    const laneLogLines = laneRec && fs.existsSync(laneRec.logPath) ? K.splitlines(fs.readFileSync(laneRec.logPath, 'utf8')).length : null;
     const git = { log: spawnSync('git', ['log', '--oneline', '-20'], { cwd, encoding: 'utf8' }).stdout.trim().split('\n') };
     // the project's recorded test commands, so the scorer can tell a test run among the session's Bash calls
     const cmds = K.loadKitJson(cwd).commands ?? {};
@@ -569,7 +572,7 @@ export async function run(task, { attempt = 0, timeoutMs = 20 * 60 * 1000, trans
     }
     // `output`: what the worker printed (its final answer with `claude -p`), redacted; a check may read it (lesson_proposed)
     // `session_diff`, `setup_files`: what the judge was told the session and the setup changed
-    return { runner: name, variant: null, files, setup_state: setupState, events, setup_events: setupEvents, session_diff: sessionDiff, setup_files: setupFiles, judge_prompt: judgeInput, git, judge, test_commands: testCommands, transcripts: kept, ms: Date.now() - started, worker_command: work.command, worker_status: work.status, worker_signal: work.signal, worker_error: work.error, worker_stderr: work.stderr.slice(-2000), output: redact(work.stdout).slice(-20000), worker_agent: agent, warnings, judge_session: judgeSession };
+    return { runner: name, variant: null, files, setup_state: setupState, events, setup_events: setupEvents, lane_log_lines: laneLogLines, session_diff: sessionDiff, setup_files: setupFiles, judge_prompt: judgeInput, git, judge, test_commands: testCommands, transcripts: kept, ms: Date.now() - started, worker_command: work.command, worker_status: work.status, worker_signal: work.signal, worker_error: work.error, worker_stderr: work.stderr.slice(-2000), output: redact(work.stdout).slice(-20000), worker_agent: agent, warnings, judge_session: judgeSession };
   } finally {
     if (!process.env.KIT_EVAL_KEEP) fs.rmSync(dir, { recursive: true, force: true });
   }
