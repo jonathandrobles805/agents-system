@@ -8,17 +8,19 @@ All notable changes to the kit. Each entry names the decision or lesson that cau
 - **Read-only commands in a sandboxed lane are no longer blocked.** In the first real-agent eval on main (516ffdd) `post-edit-check` blocked `ls … 2>/dev/null` and `npx tsc … 2>&1` twice in the retro, naming `.bashrc`, `.gitconfig`, `.mcp.json` and eight more "files changed via shell", and told the agent to `git checkout --` them. They were srt's masks: for a deny path that does not exist, srt (bubblewrap on Linux) mounts `/dev/null` on it, leaving an empty file on the host as the mount point. Git lists each one as untracked; inside the sandbox it is character device 1,3. The check took every untracked or modified path in `git status` as written by the current command, and the `>` in `2>/dev/null` was enough to run it. Reproduced with srt 0.0.83: the same eleven paths on main, none on this branch.
 - **How it works now** (`kit/scripts/shell_changes.js`). `guard-bash`, once it lets a call through in a lane, records the worktree's changed paths for that `tool_use_id`. `post-edit-check` compares the state after the call with it. Without that record (a call with no `tool_use_id`) it compares with the lane's last known state, which it records after every run. Without either, only files written after the session started count (the transcript's first timestamp, else the lane stage's `started`), and no deletion does. Only regular files and symlinks count, read with `lstat`; devices, FIFOs and sockets never do. Files are compared by a hash of their content, so rewriting the same bytes (a formatter, `git stash pop`) is not a change, and a same-size write in the same timestamp tick still is. A file whose size, mtime, ctime and inode are unchanged is not hashed again, except one written in the 2 s before the previous snapshot (git's "racy" case). The state after the call is taken before the project's checks run, so files the checks write (coverage, build info) are not blamed.
 - **It runs on every Bash call in a lane**, not only on commands `SHELL_WRITES` recognises, so a write through an interpreter (`node -e`, `python -c`, a formatter) is caught. Only the scope check runs on every call; whether typecheck, lint and tests run still depends on `SHELL_WRITES`.
-- **An out-of-scope change stays reported until it is undone, judged against the lane's base commit.**
-  - **What counts.** Each `post-edit-check` run reports the lane's out-of-scope changes, and `done-check` refuses to stop while there are any, unless the Escalation section is written (the other way out the message offers). The source is git, against the base commit `lane.js start` recorded in `lane.json` (`base_commit`, else `start_commit`):
-    - commits since the base (`base..HEAD`);
-    - the working tree against the base;
+- **An out-of-scope change stays reported until it is undone, judged on the lane's own changes.**
+  - **What counts.** Each `post-edit-check` run reports the lane's out-of-scope changes, and `done-check` refuses to stop while there are any, unless the Escalation section is written (the other way out the message offers). The source is git, on every run. The lane's own changes are its diff from the merge-base of HEAD and the branch it targets: `lane.json` `base`, as `origin/<base>` else `<base>`. This is the same `<base>...HEAD` definition `ci_scope_diff` checks, so the hook and CI agree. They are:
+    - commits since the merge-base;
+    - the working tree;
     - untracked regular files and symlinks written after the lane was created and the session started.
-  - **What does not.** An untracked file that was already there, such as a sandbox mask or a setup's or human's file, is excluded, even if rewritten with the same bytes (`origin.json`). So are files the project's own checks wrote (`checks.json`).
+  - **Merges and rebases of main.** `kit sync` (`scripts/sync.sh`) merges `origin/main` into every lane. After a merge or a rebase the merge-base moves up to main's tip, so what main brought in is never the lane's. The lane's own out-of-scope changes still differ from it and stay flagged. A conflict resolved in the merge commit counts as the lane's exactly when the result differs from main's version, as in CI. Taking main's side clears it; keeping the lane's side does not.
+  - **Which base.** `base_commit` (else `start_commit`) is used when it is newer than that merge-base (a stale local ref), or when no ref resolves. With no recorded branch, `main` or `master` is tried. With none of these there is nothing to compare with: `done-check` refuses and asks the lane to record `base_commit`, rather than compare with HEAD, which would let a commit clear a change. `lane.js start` always records the base, so only old or hand-made lane.json files are affected.
+  - **What does not count.** An untracked file that was already there, such as a sandbox mask or a setup's or human's file, is excluded, even if rewritten with the same bytes (`origin.json`). So are files the project's own checks wrote (`checks.json`), and the lane's own artifacts. Those come from `laneOwnedFiles`, the list `ci_scope_diff` now uses too: the progress, review, events and checks files and decision records, plus the lane's own spec when the lane created it. A fix or incident lane opens before its spec exists and the planner writes it in the lane; CI refused that spec before this change. A spec the base already has stays out of scope; guard-edit freezes it once approved.
   - **Committing does not clear a change.** A path is cleared only when its content equals the base again (or it is gone, if the base did not have it), when an untracked file that was already there has its earlier content back, or when the spec allows it. A commit that brings an out-of-scope path in is reported by the next run.
-  - **`flagged.json` is a cache.** It adds which call made each change (for the wording) and an untracked file's earlier content. If it is missing, corrupted or emptied, it is rebuilt from git, and `done-check` always recomputes from git. A lane.json with no base commit falls back to HEAD, which cannot see what was committed.
+  - **`flagged.json` is a cache.** It adds which call made each change (for the wording) and an untracked file's earlier content. Every run recomputes from git, so a missing, corrupted or emptied cache changes nothing.
   - **On main**, a flagged file was reported again by the next shell write only because `git status` still listed it, and never after a commit.
 - **Calls that overlap.** Claude Code runs a message's tool calls in parallel. When another Bash call was in flight during this one, or finished inside its window, a change is reported as having appeared "while other shell commands were running alongside this one", not as this command's. It still blocks. A call that never reached PostToolUse (refused or interrupted) is told apart by its result in the transcript.
-- **The remedy works.** For a path the base has: `git restore --source=<base> --staged --worktree -- <path>`. For a tracked path it does not have: `git rm -f -- <path>`. Either way, add ", then commit" when the change was already committed. For a new untracked file: `rm -- <path>`. For an untracked file that was there before the command, the remedy is to put back the content it had, never to delete it. `git checkout --` cannot remove an untracked file. Every scope block uses the same opening as the hook's other blocks; in build that is "…; do not mark anything done", read-only calls included.
+- **The remedy works.** For a path the base (the merge-base above) has: `git restore --source=<base> --staged --worktree -- <path>`. For a tracked path it does not have: `git rm -f -- <path>`. Either way, add ", then commit" when the change was already committed. For a new untracked file: `rm -- <path>`. For an untracked file that was there before the command, the remedy is to put back the content it had, never to delete it. `git checkout --` cannot remove an untracked file. Every scope block uses the same opening as the hook's other blocks; in build that is "…; do not mark anything done", read-only calls included.
 - **The state stays small.**
   - A call's record is deleted by its PostToolUse.
   - Claude Code runs "the same handler in more than one settings file" once, but its hooks docs do not say how a handler in a project's settings and the same one in an agent's frontmatter combine, and the kit registers `post-edit-check` in both. So the first run claims the record by renaming it and records what it reported. A second run waits for the claim to go, then reports exactly that, including "this shell command" for this call's own file.
@@ -31,17 +33,17 @@ All notable changes to the kit. Each entry names the decision or lesson that cau
 
   | Lane | guard-bash (this change) | post-edit-check (this change) | guard-bash (main) | post-edit-check (main) |
   |---|---|---|---|---|
-  | 20 changed files | 49–51 ms | 45–47 ms | 44–45 ms | 35–37 ms |
-  | 4,500 changed files | 128–136 ms | 143–144 ms | 42–43 ms | 32 ms |
+  | 20 changed files | 56–74 ms | 70–106 ms | 43–58 ms | 33–43 ms |
+  | 4,500 changed files | 138–154 ms | 188–194 ms | 42–44 ms | 31–34 ms |
 
-  - **Independent check.** A reviewer measured 160 ms and 173 ms on the same 4,500-file lane, and single calls here ranged from 117 to 238 ms. On a lane that size, expect roughly 130–175 ms per hook per Bash call.
-  - **Where the time goes.** One `git status` (which also reports HEAD), one `lstat` per changed path, and hashing only what changed. The comparison with the base runs on every `done-check`, but in `post-edit-check` only while something is flagged, after HEAD moves, or when the cache is missing.
+  - **Single calls** on the 4,500-file lane ranged from 120 to 261 ms; a reviewer measured 160 ms and 173 ms on an earlier version. On a lane that size, expect roughly 140–260 ms per hook per Bash call.
+  - **Where the time goes.** One `git status` (which also reports HEAD), one `lstat` per changed path, and hashing only what changed. Then the comparison with the lane's base, which now runs on every call so the cache can never stand in for git: a merge-base, a `base..HEAD` name diff, and the allow-list match (compiled patterns are now cached in `fnmatch`).
   - **Earlier versions.** This PR's first version took 311 ms and 383 ms on the 4,500-file lane. On main, a read-only call exited before running anything.
 - **Not covered, unchanged from main:**
   - files under gitignored paths;
   - writes outside the worktree;
   - a write that the same call reverts before it ends (nothing is left to see).
-- Tests (`shell_changes.test.js`, 22):
+- Tests (`shell_changes.test.js`, 29):
   - the classifier, using a mocked `lstat` for every file type;
   - a real FIFO, a character device (`mknod`, when the machine allows it) and a symlink to `/dev/null`;
   - the srt case reproduced with bubblewrap (`--ro-bind /dev/null` over absent dotfiles, then `ls`), skipped where bubblewrap cannot run;
@@ -53,7 +55,14 @@ All notable changes to the kit. Each entry names the decision or lesson that cau
   - 50 calls without growth, pruning by age, and speed;
   - the final review's repro: `echo hi >> README.md`, then `git commit -qam wip`, then the next call still reports it and `done-check` refuses; it clears only when undone back to the base; a commit that brings in an out-of-scope file is found;
   - `flagged.json` deleted, corrupted and emptied: `done-check` still refuses;
-  - a dead run's claim removed without overlap wording, and a duplicate run that finishes second reporting the same as the first.
+  - a dead run's claim removed without overlap wording, and a duplicate run that finishes second reporting the same as the first;
+  - merging main into the lane (a changed source file, a doc and a new file): nothing flagged, and `ci_scope_diff` agrees;
+  - rebasing onto main: nothing flagged;
+  - an out-of-scope change made before a merge or rebase is still flagged after it, and one made after is caught, with `ci_scope_diff` naming the same file;
+  - a conflict resolved with main's side clears the change, and one resolved with the lane's side keeps it, in both the hook and CI;
+  - a fix lane's own spec is allowed, and a feature lane's spec from main is not;
+  - the cache emptied or deleted by hand is rebuilt by the next Bash call;
+  - with no `base_commit`, a commit still cannot clear a change; with no base at all, `done-check` asks for one.
 - Planted fault 54: MISSED on main, CAUGHT here. The bypass case "exits before its scope check for an interpreter write" inverted as intended and now asserts the catch.
 - Like the read log and the attempt counter, these state files are advisory (KIT-SPEC 10.14): the lane can write them. CI's `ci_scope_diff` remains the enforced scope check.
 

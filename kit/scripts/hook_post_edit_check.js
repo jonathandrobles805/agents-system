@@ -120,8 +120,7 @@ function git(args, cwd) {
  * it; only regular files and symlinks) that are outside the spec's allow-list. Catches sed -i, redirects, heredocs,
  * cp, mv and interpreter writes, new untracked files included. Each entry: { rel, xy, kind, prior }.
  */
-export function shellScopeViolations(lane, changed) {
-  const outside = S.outsideSpec(lane);
+export function shellScopeViolations(lane, changed, outside = S.outsideSpec(lane)) {
   const bad = [];
   for (const c of changed) {
     const rel = c.rel;
@@ -152,7 +151,7 @@ export function undoCommand(c) {
 /**
  * The [scope] finding: what this command changed, what appeared while other calls overlapped it (which cannot be put
  * on this command alone), what earlier commands changed and is still there, and what else the lane has changed
- * outside the spec since its base (a commit, or a change no call recorded). One remedy list for all of them.
+ * outside the spec in its own changes (a commit, or a change no call recorded). One remedy list for all of them.
  */
 export function scopeMessage({ mine = [], overlap = [], earlier = [], found = [] }) {
   const all = [...mine, ...overlap, ...earlier, ...found];
@@ -166,7 +165,7 @@ export function scopeMessage({ mine = [], overlap = [], earlier = [], found = []
       '\nThey are outside the allow-list whichever command wrote them; if one still running meant to write them, let it finish first.');
   }
   if (earlier.length) lines.push("[scope] files outside the spec's allow-list that an earlier shell command changed are still there: " + names(earlier));
-  if (found.length) lines.push("[scope] the lane has changed files outside the spec's allow-list since its base commit: " + names(found));
+  if (found.length) lines.push("[scope] the lane's own changes (its diff from the branch it targets) include files outside the spec's allow-list: " + names(found));
   return lines.join('\n') + '\nUndo each one:\n' + all.map((c) => '  ' + undoCommand(c)).join('\n') +
     '\nor, if the spec is what is wrong, leave them and stop: record under Escalation that the spec needs amending.';
 }
@@ -262,14 +261,14 @@ export function main() {
     try {
       const r = S.assess(lane, d);
       after = r.after;
-      if (r.via !== 'duplicate') {
+      if (r.via !== 'duplicate' && r.changed.length) {
         const bad = shellScopeViolations(lane, r.changed);
         S.flag(lane, d, bad, r.overlap ? 'overlap' : 'this');
         if (bad.length) {
           K.appendEvent(events, { event: 'blocked', tool: 'Bash', result: 'blocked', summary: (r.overlap ? 'shell edit outside spec (overlapping calls): ' : 'shell edit outside spec: ') + bad.slice(0, 5).map((c) => c.rel).join(', ') });
         }
       }
-      const still = S.reconcile(lane, { force: false, head: after ? after.head : undefined, d });
+      const still = S.reconcile(lane, { d, snap: after });
       scope = groupFlags(still, text(d.tool_use_id), r.from, r.report ?? null);
       S.release(lane, d, r, { mine: scope.mine.map((c) => c.rel), overlap: scope.overlap.map((c) => c.rel) });
     } catch (e) {
@@ -351,7 +350,7 @@ function checkCall({ d, lane, root, kit, timeout, rel, events, scope }) {
   // Shell edits outside the spec are invisible to the pre-edit hook; they were measured in main(). An Edit or Write
   // run reports the ones still there, so they are not forgotten while the agent works on through the editor.
   if (lane && !scope && d.tool_name !== 'Bash') {
-    const still = S.reconcile(lane, { force: false, d });
+    const still = S.reconcile(lane, { d });
     if (still.length) scope = groupFlags(still, null, 0);
   }
   const scopeMsg = scope ? scopeMessage(scope) : null;

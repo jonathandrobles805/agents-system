@@ -1056,12 +1056,20 @@ test('the edit guard and CI allow exactly the same lane artifacts [finding 3]', 
   const lane = K.findLane(wt);
   const scopeDiff = read(SCRIPTS, 'ci_scope_diff.js');
   // both sides must come from one derivation, not two hand-kept lists
-  assert.match(scopeDiff, /K\.laneArtifacts\(/, 'ci_scope_diff derives its allowlist');
+  assert.match(scopeDiff, /K\.laneOwnedFiles\(/, 'ci_scope_diff derives its allowlist');
+  assert.match(read(SCRIPTS, 'shell_changes.js'), /K\.laneOwnedFiles\(/, 'so does the shell scope check');
   assert.deepEqual(
     lane.alwaysAllowed(),
     K.laneArtifacts(lane.work, lane.slug, lane.root),
     'the guard derives the same list',
   );
+  // laneOwnedFiles is that list, plus the lane's own spec only when the base does not have it (a fix or incident lane
+  // writes its spec in the lane; guard-edit allows that write until approval through its own spec rule)
+  const base = spawnSync('git', ['-C', wt, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).stdout.trim();
+  assert.deepEqual(K.laneOwnedFiles(lane.work, lane.slug, lane.root, base), lane.alwaysAllowed(), 'spec at the base: not the lane\'s');
+  const empty = spawnSync('git', ['-C', wt, 'hash-object', '-t', 'tree', '/dev/null'], { encoding: 'utf8' }).stdout.trim();
+  const noSpecBase = spawnSync('git', ['-C', wt, 'commit-tree', empty, '-m', 'empty'], { encoding: 'utf8', env: { ...process.env, GIT_AUTHOR_NAME: 't', GIT_AUTHOR_EMAIL: 't@t', GIT_COMMITTER_NAME: 't', GIT_COMMITTER_EMAIL: 't@t' } }).stdout.trim();
+  assert.deepEqual(K.laneOwnedFiles(lane.work, lane.slug, lane.root, noSpecBase), [...lane.alwaysAllowed(), `${lane.work}/${lane.slug}.md`], 'spec the lane created: the lane\'s');
   assert.ok(lane.alwaysAllowed().includes(`${lane.work}/${lane.slug}.review.md`), 'the review report is on it');
   // and the check log is NOT: it lives in .claude/session/, which is gitignored and which the floor denies editing
   assert.ok(!lane.alwaysAllowed().some((p) => p.endsWith('.log')), 'no entry for a log the agent must never write');

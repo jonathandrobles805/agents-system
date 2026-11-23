@@ -43,12 +43,12 @@
 // the transcript has no result for it) or finished inside this one's window, a change is reported as having
 // appeared during overlapping calls, not as written by this command. It still blocks.
 //
-// Out-of-scope changes. post-edit-check reports, and done-check refuses "done" on, every path in which the lane
-// differs from its base commit (lane.json base_commit) outside the spec: commits since the base, the working tree, and
-// untracked files the session wrote. git is the source; flagged.json only caches which call made each change and an
-// untracked file's earlier content, and is rebuilt when missing or unreadable (reconcile). A path clears when its
-// content equals the base again (or it is gone, if the base lacked it), or when the spec allows it; a commit does not
-// clear it. The list is for the lane, not only the session: the worktree is shared, and all of it is the lane's diff.
+// Out-of-scope changes. post-edit-check reports, and done-check refuses "done" on, every path outside the spec in the
+// lane's own changes: its diff from the merge-base with the branch it targets, as ci_scope_diff computes it (laneBase),
+// so what a merge or rebase of main brings in is not the lane's. That is commits since the merge-base, the working
+// tree, and untracked files the session wrote. git is the source on every run; flagged.json only caches which call
+// made each change and an untracked file's earlier content (reconcile). A path clears when its content equals the base
+// again (or it is gone, if the base lacked it), or when the spec allows it; a commit does not clear it. The list is for the lane, not only the session: the worktree is shared, and all of it is the lane's diff.
 //
 // Duplicate runs. Claude Code runs "the same handler in more than one settings file" once; it says nothing of the
 // same command in settings and in an agent's frontmatter [docs: https://code.claude.com/docs/en/hooks @ 2026-11-23],
@@ -539,10 +539,14 @@ export function release(lane, d, r, report = null) {
 
 // ---------------------------------------------------------------------------------------------- flagged paths
 
-/** The spec's allow-list as a predicate: true for a path no Bash call in this lane may change. */
-export function outsideSpec(lane) {
+/**
+ * The spec's allow-list as a predicate: true for a path the lane may not change. Lane-owned files come from
+ * K.laneOwnedFiles, the list ci_scope_diff uses, judged on the same base: the lane's artifacts, and its own spec when
+ * the lane created it (a fix or incident lane).
+ */
+export function outsideSpec(lane, base = laneBase(lane).commit) {
   const [, change, create] = K.specFileLists(lane.specPath);
-  const allowed = [...change, ...create, ...lane.alwaysAllowed(), 'ROADMAP.md'];
+  const allowed = [...change, ...create, ...K.laneOwnedFiles(lane.work, lane.slug, lane.root, base), 'ROADMAP.md'];
   return (rel) => !rel.startsWith('.claude/') && !K.globMatch(rel, allowed);
 }
 
@@ -551,18 +555,51 @@ function gitZ(args, cwd) {
   return p.status === 0 && typeof p.stdout === 'string' ? p.stdout.split('\0').filter(Boolean) : null;
 }
 
+function gitOut(args, cwd) {
+  const p = spawnSync('git', args, { cwd, encoding: 'utf8', timeout: 20000 });
+  return { status: p.status, out: (p.stdout ?? '').trim() };
+}
+
 /**
- * The commit the lane started from: lane.json `base_commit` (what `lane.js start` resolved the base to), else
- * `start_commit`. null for a lane.json that records neither, or names a commit this clone does not have; the lane's
- * changes are then judged against HEAD, which misses what the lane already committed.
+ * Where the lane's own changes start: { commit, how }, or { commit: null, why }.
+ *
+ * The lane's own diff is the one ci_scope_diff checks: `<base branch>...HEAD`, from the merge-base of HEAD and the
+ * branch the lane targets. Not two-dot from the commit the lane started at: `kit sync` (scripts/sync.sh) merges
+ * origin/main into every lane, and a two-dot diff from the old start would count everything main gained as the lane's
+ * work, and tell the agent to revert it. After a merge or a rebase the merge-base moves up to main's tip, so main's
+ * files are not the lane's; the lane's own changes still differ from it. A conflict resolved in the merge commit
+ * counts as the lane's when the result differs from main's version, exactly as in CI.
+ *
+ * The branch is lane.json `base` (origin/<base>, else <base>), or main/master when none is recorded. lane.json
+ * `base_commit` (else `start_commit`) is used when it is newer than that merge-base (a stale local ref) or when no
+ * ref resolves. With neither there is no base, and done-check refuses until the lane records one: comparing with HEAD
+ * would let a commit clear what it should not.
  */
 export function laneBase(lane) {
-  for (const c of [lane?.data?.base_commit, lane?.data?.start_commit]) {
-    if (typeof c !== 'string' || !/^[0-9a-f]{7,64}$/.test(c)) continue;
-    const p = spawnSync('git', ['rev-parse', '--verify', '-q', `${c}^{commit}`], { cwd: lane.root, encoding: 'utf8', timeout: 20000 });
-    if (p.status === 0) return p.stdout.trim();
+  const base = typeof lane?.data?.base === 'string' && lane.data.base ? lane.data.base : null;
+  const refs = base ? [`origin/${base}`, base] : ['origin/main', 'main', 'origin/master', 'master'];
+  let mb = null;
+  let ref = null;
+  for (const r of refs) {
+    const m = gitOut(['merge-base', 'HEAD', r], lane.root);
+    if (m.status === 0 && /^[0-9a-f]{7,64}$/.test(m.out)) {
+      mb = m.out;
+      ref = r;
+      break;
+    }
   }
-  return null;
+  const recorded = [lane?.data?.base_commit, lane?.data?.start_commit].find((c) => typeof c === 'string' && /^[0-9a-f]{7,64}$/.test(c)) ?? null;
+  if (mb && recorded) {
+    if (gitOut(['merge-base', '--is-ancestor', recorded, mb], lane.root).status === 0) return { commit: mb, how: `merge-base with ${ref}` };
+    if (gitOut(['merge-base', '--is-ancestor', mb, recorded], lane.root).status === 0) return { commit: gitOut(['rev-parse', recorded], lane.root).out, how: 'lane.json base_commit (newer than the local ref)' };
+    return { commit: mb, how: `merge-base with ${ref}` };
+  }
+  if (mb) return { commit: mb, how: `merge-base with ${ref}` };
+  if (recorded) {
+    const m = gitOut(['merge-base', 'HEAD', recorded], lane.root);
+    if (m.status === 0 && m.out) return { commit: m.out, how: 'lane.json base_commit' };
+  }
+  return { commit: null, why: `lane.json records no base_commit and no base branch (${refs.join(', ')}) shares history with HEAD` };
 }
 
 const checksWrotePath = (laneRoot) => path.join(stateDir(laneRoot), 'checks.json');
@@ -576,42 +613,42 @@ export function recordChecksWrote(laneRoot, before, end) {
 }
 
 /**
- * Every path in which the lane differs from its base, as git sees it: Map rel -> { untracked }. Committed changes
- * (base..HEAD), the working tree against the base (tracked paths), and untracked regular files or symlinks written
- * since the lane was created and the session started (so a sandbox mask or a file that was already there is not the
- * session's), minus what the project's own checks wrote. null when git cannot answer.
+ * Every path in which the lane's own changes differ from `base` (laneBase), as git sees it: Map rel -> { untracked,
+ * committed, preexisting }. Committed changes (base..HEAD), the working tree's changes to tracked files (git status,
+ * which with the committed ones covers the working tree against the base), and untracked regular files or symlinks;
+ * an untracked one written before the lane was created or the session started, or still holding the content it had
+ * when this session's hooks first looked, is `preexisting`. What the project's own checks wrote is left out. `dirty`
+ * (dirtyPaths) and `entries` (a snapshot's) save a git status when the caller has one. null when git cannot answer.
  */
-export function laneChanges(lane, d = null) {
-  const base = laneBase(lane);
+export function laneChanges(lane, d, base, { dirty = null, entries = null } = {}) {
   const out = new Map();
-  out.base = base;
-  const add = (rels, info) => {
-    for (const rel of rels ?? []) if (!rel.startsWith(SESSION_PREFIX)) out.set(rel, { untracked: false, committed: false, ...out.get(rel), ...info });
-  };
-  const work = gitZ(['diff', '--name-only', '-z', '--no-renames', base ?? 'HEAD'], lane.root);
-  if (!work) return null;
-  add(work, {});
-  if (base) {
-    const committed = gitZ(['diff', '--name-only', '-z', '--no-renames', base, 'HEAD'], lane.root);
-    if (!committed) return null;
-    add(committed, { committed: true });
-  }
+  const committed = gitZ(['diff', '--name-only', '-z', '--no-renames', base, 'HEAD'], lane.root);
+  const status = dirty ?? dirtyPaths(lane.root);
+  if (!committed || !status) return null;
+  for (const rel of committed) if (!rel.startsWith(SESSION_PREFIX)) out.set(rel, { untracked: false, committed: true, preexisting: false });
   // An untracked file is the session's change unless it was already there: written before the lane was created or
   // this session started (a sandbox mask, a setup's or a human's file), or still the content it had when this
   // session's hooks first looked (origin.json; a rewrite with the same bytes moves the ctime, not the content).
   const floor = sessionFloor(lane, d);
   const origin = ensureOrigin(lane, d, null, floor);
   const byChecks = new Set(readJson(checksWrotePath(lane.root))?.paths ?? []);
-  for (const rel of gitZ(['ls-files', '--others', '--exclude-standard', '-z'], lane.root) ?? []) {
-    if (byChecks.has(rel) || rel.startsWith(SESSION_PREFIX)) continue;
-    let st;
-    try {
-      st = fs.lstatSync(path.join(lane.root, rel));
-    } catch {
+  for (const [rel, xy] of status) {
+    if (xy !== '??') {
+      if (!out.has(rel)) out.set(rel, { untracked: false, committed: false, preexisting: false });
       continue;
     }
-    if (!CONTENT_KINDS.has(kindOf(st))) continue;
-    const preexisting = st.ctimeMs < floor || (Object.hasOwn(origin, rel) && sameContent(unpack(origin[rel]), entryFor(path.join(lane.root, rel))));
+    if (byChecks.has(rel)) continue;
+    let e = entries?.[rel];
+    if (!e) {
+      try {
+        const st = fs.lstatSync(path.join(lane.root, rel));
+        e = { k: kindOf(st), c: Math.floor(st.ctimeMs) };
+      } catch {
+        continue;
+      }
+    }
+    if (!CONTENT_KINDS.has(e.k)) continue;
+    const preexisting = e.c < floor || (Object.hasOwn(origin, rel) && sameContent(unpack(origin[rel]), entryFor(path.join(lane.root, rel))));
     out.set(rel, { untracked: true, committed: false, preexisting });
   }
   return out;
@@ -647,39 +684,37 @@ export function ensureOrigin(lane, d, entries = null, floor = sessionFloor(lane,
   return paths;
 }
 
-/** The flag cache: { head, paths } or null when it is missing or unreadable (then it is rebuilt from git). */
+/** The flag cache: { paths } or null when it is missing or unreadable. */
 function readFlagCache(laneRoot) {
   const v = readJson(flaggedPath(laneRoot));
-  return v && v.paths && typeof v.paths === 'object' && !Array.isArray(v.paths) ? { head: v.head ?? null, paths: v.paths } : null;
-}
-
-function headOf(root) {
-  const p = spawnSync('git', ['rev-parse', '-q', '--verify', 'HEAD'], { cwd: root, encoding: 'utf8', timeout: 20000 });
-  return p.status === 0 ? p.stdout.trim() : null;
+  return v && v.paths && typeof v.paths === 'object' && !Array.isArray(v.paths) ? { paths: v.paths } : null;
 }
 
 /**
- * The lane's out-of-scope changes: [{ rel, untracked, committed, inBase, base, prior, call, how, at }], judged against the lane's base
- * commit, not HEAD, so committing a flagged file does not clear it, and a commit that brings one in is found.
+ * The lane's out-of-scope changes: [{ rel, untracked, committed, inBase, base, prior, call, how, at }], judged on the
+ * lane's own diff from laneBase, so committing a flagged file does not clear it, a commit that brings one in is
+ * found, and what a merge or rebase brought from main is not the lane's. The list has `noBase` (laneBase's why) when
+ * there is no base to judge against; it then holds what was flagged, unjudged.
  *
- * flagged.json is a cache of this list with each path's history (which call changed it, and the content an untracked
- * file had before, if it was there already); git is the source. A path stays until its content equals the base (or it
- * is gone, if the base does not have it), or until the spec allows it; an untracked file that was already there
- * before the command clears when its earlier content is back. A missing or unreadable cache is rebuilt from git, so
- * deleting it changes nothing. With `force: false` the git comparison is skipped when the cache is valid, names no
- * path and HEAD has not moved since it was written: then every change since came through a Bash call, which flagged
- * it itself, or through Edit/Write, which guard-edit keeps inside the spec. done-check always forces.
+ * git is the source; flagged.json is a cache that adds each path's history (which call changed it, and the content an
+ * untracked file had before, if it was there already), and is rewritten from git on every run, so a missing,
+ * corrupted or emptied cache changes nothing. A path stays until its content equals the base (or it is gone, if the
+ * base does not have it), until an untracked file that was already there has its earlier content back, or until the
+ * spec allows it. `snap` (the snapshot post-edit-check just took) saves a git status.
  */
-export function reconcile(lane, { force = true, head = undefined, d = null, outside = outsideSpec(lane) } = {}) {
-  const cache = readFlagCache(lane.root);
-  const flags = cache?.paths ?? {};
-  const now = head === undefined ? headOf(lane.root) : head;
-  if (!force && cache && cache.head && cache.head === now && !Object.keys(flags).length) return [];
-  const changes = laneChanges(lane, d);
-  if (!changes) {
-    // git cannot answer: keep what is flagged rather than clear it
-    return Object.entries(flags).map(([rel, f]) => ({ rel, untracked: false, committed: false, inBase: true, base: null, prior: null, call: f.call, how: f.how, at: f.at }));
-  }
+export function reconcile(lane, { d = null, snap = null } = {}) {
+  const flags = readFlagCache(lane.root)?.paths ?? {};
+  const lb = laneBase(lane);
+  const unjudged = (why) => {
+    const list = Object.entries(flags).map(([rel, f]) => ({ rel, untracked: false, committed: false, inBase: true, base: null, prior: null, call: f.call, how: f.how, at: f.at }));
+    if (why) list.noBase = why;
+    return list;
+  };
+  if (!lb.commit) return unjudged(lb.why);
+  const dirty = snap ? new Map(Object.entries(snap.entries).map(([rel, e]) => [rel, e.xy])) : null;
+  const changes = laneChanges(lane, d, lb.commit, { dirty, entries: snap?.entries ?? null });
+  if (!changes) return unjudged(null); // git cannot answer: keep what is flagged rather than clear it
+  const outside = outsideSpec(lane, lb.commit);
   const keep = {};
   const out = [];
   for (const rel of new Set([...Object.keys(flags), ...changes.keys()])) {
@@ -690,13 +725,13 @@ export function reconcile(lane, { force = true, head = undefined, d = null, outs
     const prior = f.prior ? unpack(f.prior) : null;
     if (untracked && prior && CONTENT_KINDS.has(prior.k) && sameContent(prior, entryFor(path.join(lane.root, rel)))) continue;
     keep[rel] = f;
-    out.push({ rel, untracked, committed, base: changes.base, prior: untracked ? prior : null, call: f.call, how: f.how, at: f.at });
+    out.push({ rel, untracked, committed, base: lb.commit, prior: untracked ? prior : null, call: f.call, how: f.how, at: f.at });
   }
   // which of them the base has: those go back to the base's content, the others are removed
   const tracked = out.filter((c) => !c.untracked).map((c) => c.rel);
-  const inBase = new Set(tracked.length ? gitZ(['ls-tree', '-r', '-z', '--name-only', changes.base ?? 'HEAD', '--', ...tracked], lane.root) ?? [] : []);
+  const inBase = new Set(tracked.length ? gitZ(['ls-tree', '-r', '-z', '--name-only', lb.commit, '--', ...tracked], lane.root) ?? [] : []);
   for (const c of out) c.inBase = inBase.has(c.rel);
-  writeJson(flaggedPath(lane.root), { v: SCHEMA, head: now, paths: keep });
+  writeJson(flaggedPath(lane.root), { v: SCHEMA, base: lb.commit, paths: keep });
   return out.sort((x, y) => (x.rel < y.rel ? -1 : x.rel > y.rel ? 1 : 0));
 }
 
@@ -710,5 +745,5 @@ export function flag(lane, d, bad, how) {
     if (Object.hasOwn(flags, c.rel) && flags[c.rel].call) continue; // first write wins: its prior is the content to go back to
     flags[c.rel] = { session: typeof d.session_id === 'string' ? d.session_id : '', call: toolUseId(d), how, at, prior: c.prior ? pack(c.prior) : null };
   }
-  writeJson(flaggedPath(lane.root), { v: SCHEMA, head: cache?.head ?? null, paths: flags });
+  writeJson(flaggedPath(lane.root), { v: SCHEMA, paths: flags });
 }

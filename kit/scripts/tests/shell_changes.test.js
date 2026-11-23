@@ -23,14 +23,21 @@ const write = (repo, rel, text) => {
 const read = (repo, rel) => fs.readFileSync(path.join(repo, rel), 'utf8');
 const sleep = (ms) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
 
+/** What lane.js start does: a wt/<slug> branch off main, and lane.json with the base branch and commit. */
+function startLane(repo, extra = {}) {
+  const baseCommit = git(['rev-parse', 'HEAD'], repo).trim();
+  git(['checkout', '-q', '-b', 'wt/refund-endpoint'], repo);
+  const started = isoSeconds(new Date(Date.now() - 2 * 3.6e6));
+  write(repo, '.claude/lane.json', JSON.stringify({ feature: 'refund-endpoint', spec: 'docs/specs/refund-endpoint.md', stage: 'build', started, created: started, base: 'main', base_commit: baseCommit, start_commit: baseCommit, ...extra }));
+  return baseCommit;
+}
+
 /** A lane on the fixture repo whose spec allows src/routes.ts and src/__tests__/refund.test.ts. */
 function laneRepo(t, kit = { commands: { test: 'true' } }) {
   const repo = makeRepo(t);
   write(repo, 'docs/specs/refund-endpoint.md', GOOD_SPEC);
   commitAll(repo, 'spec');
-  const baseCommit = git(['rev-parse', 'HEAD'], repo).trim();
-  const started = isoSeconds(new Date(Date.now() - 2 * 3.6e6));
-  write(repo, '.claude/lane.json', JSON.stringify({ feature: 'refund-endpoint', spec: 'docs/specs/refund-endpoint.md', stage: 'build', started, created: started, base_commit: baseCommit, start_commit: baseCommit }));
+  startLane(repo);
   write(repo, '.claude/kit.json', JSON.stringify(kit));
   return repo;
 }
@@ -355,8 +362,7 @@ test('committing a flagged file does not clear it; judged against the lane\'s ba
   const repo2 = repo; // laneRepo on an existing repo: spec + lane.json with base_commit
   write(repo2, 'docs/specs/refund-endpoint.md', GOOD_SPEC);
   commitAll(repo2, 'spec');
-  const baseCommit = git(['rev-parse', 'HEAD'], repo2).trim();
-  write(repo2, '.claude/lane.json', JSON.stringify({ feature: 'refund-endpoint', spec: 'docs/specs/refund-endpoint.md', stage: 'build', started: isoSeconds(new Date(Date.now() - 2 * 3.6e6)), created: isoSeconds(new Date(Date.now() - 2 * 3.6e6)), base_commit: baseCommit, start_commit: baseCommit }));
+  const baseCommit = startLane(repo2);
   write(repo2, '.claude/kit.json', JSON.stringify({ commands: { test: 'true' } }));
   write(repo2, 'docs/specs/refund-endpoint.progress.md', PROGRESS);
   let r = call(repo2, 'echo hi >> README.md');
@@ -376,7 +382,7 @@ test('committing a flagged file does not clear it; judged against the lane\'s ba
   git(['add', 'docs/extra.md'], repo2);
   git(['-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-qm', 'sneak'], repo2);
   r = call(repo2, 'ls');
-  assert.ok(r.reason.includes('the lane has changed files outside the spec\'s allow-list since its base commit: docs/extra.md'), r.out);
+  assert.ok(r.reason.includes('include files outside the spec\'s allow-list: docs/extra.md'), r.out);
   assert.ok(r.reason.includes('git rm -f -- docs/extra.md, then commit'), r.reason);
   assert.match(JSON.parse(stopCheck(repo2).stdout).reason, /docs\/extra\.md/);
 });
@@ -436,6 +442,141 @@ test('a duplicate run that finishes after the first reports this call\'s file as
   const second = post();
   assert.equal(second, first);
   assert.ok(second.includes('this shell command changed files outside the spec\'s allow-list: out.txt') && !second.includes('earlier'), second);
+});
+
+// ---------------- the lane's own diff: merges and rebases of main are not the lane's work ----------------
+
+const G = (repo, ...args) => git(['-c', 'user.name=t', '-c', 'user.email=t@t', ...args], repo);
+const commitIn = (repo, msg) => { git(['add', '-A', '--', '.', ':!.claude'], repo); G(repo, 'commit', '-qm', msg); };
+/** main moves on while the lane works: a source file, a doc and a new file the lane's spec does not list. */
+function advanceMain(repo, files = { 'src/payment.ts': '// main changed payment\n', 'docs/main-notes.md': '# notes\n', 'src/main-only.ts': 'export const m = 1;\n' }) {
+  git(['checkout', '-q', 'main'], repo);
+  for (const [rel, text] of Object.entries(files)) write(repo, rel, (fs.existsSync(path.join(repo, rel)) ? read(repo, rel) : '') + text);
+  commitIn(repo, 'main moves on');
+  git(['checkout', '-q', 'wt/refund-endpoint'], repo);
+}
+/** ci_scope_diff on the lane branch against main: the out-of-scope files it names ([] when it passes). */
+function ciScope(repo) {
+  const r = runScript('ci_scope_diff.js', ['--repo', repo, '--base', 'main']);
+  return r.returncode === 0 ? [] : r.stderr.split('\n').filter((l) => l.startsWith('  ')).map((l) => l.trim());
+}
+const scopeNames = (reason) => {
+  const out = new Set();
+  for (const l of reason.split('\n')) if (l.startsWith('[scope]')) for (const n of l.slice(l.lastIndexOf(': ') + 2).split(', ')) out.add(n);
+  return [...out].sort();
+};
+
+test('merging main into the lane (kit sync) does not flag main\'s files; the hook and ci_scope_diff agree', (t) => {
+  const repo = laneRepo(t);
+  write(repo, 'docs/specs/refund-endpoint.progress.md', PROGRESS);
+  assert.equal(call(repo, "echo '// lane' >> src/routes.ts").out, '');
+  commitIn(repo, 'lane work');
+  advanceMain(repo);
+  const r = call(repo, 'git -c user.name=t -c user.email=t@t merge -q --no-ff -m sync main');
+  assert.equal(r.out, '', r.reason);
+  assert.ok(fs.existsSync(path.join(repo, 'src/main-only.ts')), 'the merge happened');
+  assert.equal(call(repo, 'ls').out, '');
+  assert.doesNotMatch(stopCheck(repo).stdout, /main-notes|main-only|payment/);
+  assert.deepEqual(ciScope(repo), []);
+});
+
+test('rebasing the lane onto main does not flag main\'s files', (t) => {
+  const repo = laneRepo(t);
+  assert.equal(call(repo, "echo '// lane' >> src/routes.ts").out, '');
+  commitIn(repo, 'lane work');
+  advanceMain(repo);
+  const r = call(repo, 'git -c user.name=t -c user.email=t@t rebase -q main');
+  assert.equal(r.out, '', r.reason);
+  assert.ok(fs.existsSync(path.join(repo, 'src/main-only.ts')), 'the rebase happened');
+  assert.equal(call(repo, 'ls').out, '');
+  assert.deepEqual(ciScope(repo), []);
+});
+
+test('the lane\'s own out-of-scope change stays flagged across a merge and a rebase of main, and a new one after is caught', (t) => {
+  for (const sync of ['git -c user.name=t -c user.email=t@t merge -q --no-ff -m sync main', 'git -c user.name=t -c user.email=t@t rebase -q main']) {
+    const repo = laneRepo(t);
+    write(repo, 'README.md', '# proj\n');
+    git(['checkout', '-q', 'main'], repo);
+    write(repo, 'README.md', '# proj\n');
+    commitIn(repo, 'readme on main');
+    git(['checkout', '-q', 'wt/refund-endpoint'], repo);
+    G(repo, 'merge', '-q', '--ff-only', 'main'); // the lane starts level with main
+    let r = call(repo, 'echo lane >> README.md');
+    assert.deepEqual(scopeNames(r.reason), ['README.md'], r.out);
+    commitIn(repo, 'out of scope, committed');
+    advanceMain(repo, { 'docs/main-notes.md': '# notes\n', 'src/main-only.ts': 'export const m = 1;\n' });
+    r = call(repo, sync);
+    assert.deepEqual(scopeNames(r.reason), ['README.md'], `${sync}: ${r.out}`);
+    assert.deepEqual(ciScope(repo), ['README.md'], sync);
+    r = call(repo, "echo x > docs/after.md");
+    assert.deepEqual(scopeNames(r.reason), ['README.md', 'docs/after.md'], r.out);
+  }
+});
+
+test('a conflict resolved in the merge commit counts as the lane\'s exactly when the result differs from main\'s version, as in CI', (t) => {
+  for (const [side, flagged] of [['--theirs', false], ['--ours', true]]) {
+    const repo = laneRepo(t);
+    // the lane changed an out-of-scope file, main changed the same lines
+    write(repo, 'src/payment.ts', read(repo, 'src/payment.ts').replace('PaymentService', 'LanePaymentService'));
+    commitIn(repo, 'lane touches payment (out of scope)');
+    git(['checkout', '-q', 'main'], repo);
+    write(repo, 'src/payment.ts', read(repo, 'src/payment.ts').replace('PaymentService', 'MainPaymentService'));
+    commitIn(repo, 'main touches payment');
+    git(['checkout', '-q', 'wt/refund-endpoint'], repo);
+    const cmd = `git -c user.name=t -c user.email=t@t merge -q --no-ff -m sync main; git checkout ${side} -- src/payment.ts && git add src/payment.ts && git -c user.name=t -c user.email=t@t commit -qm resolved`;
+    const r = call(repo, cmd);
+    assert.equal(git(['log', '-1', '--format=%s'], repo).trim(), 'resolved');
+    assert.deepEqual(scopeNames(r.reason), flagged ? ['src/payment.ts'] : [], `${side}: ${r.out}`);
+    assert.deepEqual(ciScope(repo), flagged ? ['src/payment.ts'] : [], `ci ${side}`);
+  }
+});
+
+test('a fix or incident lane may write its own spec; a lane whose spec is at the base may not change it', (t) => {
+  // repro-first: the lane opens before its spec exists, and the planner writes it in the lane
+  const repo = makeRepo(t);
+  startLane(repo, { stage: 'reproduce' });
+  write(repo, '.claude/kit.json', JSON.stringify({ commands: { test: 'true' } }));
+  assert.equal(call(repo, `cat > docs/specs/refund-endpoint.md <<'EOF'\n${GOOD_SPEC}EOF`).out, '');
+  commitIn(repo, 'spec written in the lane');
+  assert.equal(call(repo, 'ls').out, '');
+  assert.deepEqual(ciScope(repo), []);
+  write(repo, 'docs/specs/refund-endpoint.progress.md', PROGRESS);
+  write(repo, '.claude/lane.json', JSON.stringify({ ...JSON.parse(read(repo, '.claude/lane.json')), stage: 'build' }));
+  assert.doesNotMatch(stopCheck(repo).stdout, /refund-endpoint\.md/);
+  // a feature lane: the spec came from main, so changing it is out of scope (as guard-edit freezes it)
+  const repo2 = laneRepo(t);
+  const r = call(repo2, "echo '- extra' >> docs/specs/refund-endpoint.md");
+  assert.deepEqual(scopeNames(r.reason), ['docs/specs/refund-endpoint.md'], r.out);
+  commitIn(repo2, 'spec changed');
+  assert.deepEqual(ciScope(repo2), ['docs/specs/refund-endpoint.md']);
+});
+
+test('an emptied cache is rebuilt by the next Bash call, not only by done-check', (t) => {
+  const repo = laneRepo(t);
+  call(repo, `node -e "require('fs').writeFileSync('out.txt', 'x')"`);
+  fs.writeFileSync(S.flaggedPath(repo), JSON.stringify({ v: 2, paths: {} }));
+  assert.ok(call(repo, 'ls').reason.includes('out.txt'));
+  fs.rmSync(S.flaggedPath(repo));
+  assert.ok(call(repo, 'ls').reason.includes('out.txt'));
+});
+
+test('without base_commit a commit still cannot clear a flag; with no base at all done-check asks for one', (t) => {
+  // lane.json from before base_commit existed: the merge-base with main is the base
+  const repo = makeRepo(t);
+  write(repo, 'README.md', '# proj\n');
+  write(repo, 'docs/specs/refund-endpoint.md', GOOD_SPEC);
+  commitAll(repo, 'spec');
+  startLane(repo, { base: undefined, base_commit: undefined, start_commit: undefined });
+  write(repo, '.claude/kit.json', JSON.stringify({ commands: { test: 'true' } }));
+  write(repo, 'docs/specs/refund-endpoint.progress.md', PROGRESS);
+  assert.ok(call(repo, 'echo hi >> README.md').reason.includes('README.md'));
+  assert.ok(call(repo, 'git -c user.name=t -c user.email=t@t commit -qam wip').reason.includes('README.md'));
+  assert.match(JSON.parse(stopCheck(repo).stdout).reason, /README\.md/);
+  // nothing to compare with: no recorded base and no main/master
+  git(['branch', '-q', '-m', 'main', 'trunk'], repo);
+  const r = JSON.parse(stopCheck(repo).stdout).reason;
+  assert.match(r, /cannot be checked against the spec: lane\.json records no base_commit/);
+  assert.match(r, /Record the commit the lane started from as base_commit/);
 });
 
 test('srt reproduction: /dev/null bind-mounted over absent dotfiles (bubblewrap), then ls; nothing is blamed', (t) => {
