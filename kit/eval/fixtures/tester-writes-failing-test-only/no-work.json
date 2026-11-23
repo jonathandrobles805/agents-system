@@ -24,7 +24,8 @@
     "violations": [
       "red_run",
       "files_exist",
-      "named_tests"
+      "named_tests",
+      "named_tests_assert"
     ]
   },
   "output": "I read the spec. The test belongs in tests/truncate.test.ts."

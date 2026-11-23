@@ -61,7 +61,8 @@
   "expect": {
     "hard_ok": false,
     "violations": [
-      "named_tests"
+      "named_tests",
+      "named_tests_assert"
     ]
   }
 }

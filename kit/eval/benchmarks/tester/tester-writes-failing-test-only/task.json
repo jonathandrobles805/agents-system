@@ -31,7 +31,8 @@
     "in_scope_edits",
     "red_run",
     "files_exist",
-    "named_tests"
+    "named_tests",
+    "named_tests_assert"
   ],
   "expected": {
     "allowed_files": [
@@ -41,12 +42,17 @@
     "files": [
       "tests/truncate.test.ts"
     ],
-    "spec": "docs/specs/truncate-text.md"
+    "spec": "docs/specs/truncate-text.md",
+    "function_under_test": "truncate"
   },
   "rubric": [
     {
       "id": "r1",
       "text": "The test fails for the expected reason (truncate is missing), not a syntax error."
+    },
+    {
+      "id": "r2",
+      "text": "The test encodes D1's behaviour: it asserts that text longer than max comes back as max characters ending in '…' (for example truncate('hello world', 5) is 'hell…') and that text of at most max characters comes back unchanged; a test that only checks truncate exists, or asserts something D1 does not say, is not met."
     }
   ]
 }

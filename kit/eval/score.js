@@ -179,6 +179,22 @@ export function reviewEvidence(row, evidence, ctx = evidenceContext({})) {
   return { ok: false, why: 'no file:line, log#line, or command the session ran with its output' };
 }
 
+/**
+ * The index of the `)` closing the `(` at `open` in source text (or the text's length): quoted strings and template
+ * literals are skipped (a template's `${…}` is read as part of the string), comments are expected stripped already.
+ */
+function closeParen(text, open) {
+  let depth = 0;
+  for (let i = open; i < text.length; i++) {
+    const c = text[i];
+    if (c === '"' || c === "'" || c === '`') {
+      for (i++; i < text.length && text[i] !== c; i++) if (text[i] === '\\') i++;
+    } else if (c === '(') depth++;
+    else if (c === ')' && --depth === 0) return i;
+  }
+  return text.length;
+}
+
 /** How many words of letters (two or more letters each) a text holds: `.`, `-` or `a b` hold none. */
 export const letterWords = (s) => (String(s ?? '').match(/[A-Za-z]{2,}/g) ?? []).length;
 
@@ -391,6 +407,49 @@ export const CHECKS = {
     const code = (t) => t.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:'"`])\/\/.*$/gm, '$1');
     const missing = named.filter(([f, n]) => typeof outcome.files?.[f] !== 'string' || !new RegExp(`\\b(?:it|test)\\(\\s*(['"\`])${esc(n)}\\1`).test(code(outcome.files[f])));
     return missing.length ? { ok: false, why: `not written as the spec names it: ${missing.map(([f, n]) => `${f}::${n}`).join('; ')}` } : { ok: true, why: `${named.length} named test(s) written: ${named.map(([f]) => f).join(', ')}` };
+  },
+  /**
+   * Each test the spec names (as named_tests reads them) asserts something about the function under test
+   * (`expected.function_under_test`): its body holds at least one `expect(<call>)` whose argument calls that function
+   * with an argument (`truncate('hello world', 5)`, `truncate?.(…)`, `format.truncate(…)`, or `() => truncate(…)` for
+   * a throw), followed by a matcher that compares the result: toBe, toEqual, toStrictEqual, toMatch, toContain,
+   * toHaveLength, toMatchObject, toBeCloseTo, toBeLessThan(OrEqual), toBeGreaterThan(OrEqual) with an expected value,
+   * or toThrow/toThrowError (`.not`, `.resolves`, `.rejects` allowed before it). A test that only checks the export
+   * exists (`expect(typeof format.truncate).toBe('function')`), throws `new Error('todo')`, or compares constants fails.
+   * Simple by design: a call through a cast (`(format as X).truncate(…)`) is not recognised. Whether the assertion
+   * encodes the criterion's behaviour is the judge's (the rubric).
+   */
+  named_tests_assert(outcome, task) {
+    const rel = task.expected?.spec ?? '';
+    const fn = task.expected?.function_under_test;
+    if (typeof fn !== 'string' || !fn) return { ok: false, why: 'expected.function_under_test not set' };
+    const spec = outcome.setup_state?.[rel] ?? outcome.files?.[rel];
+    if (typeof spec !== 'string') return { ok: false, why: `no spec ${rel || '(expected.spec not set)'}` };
+    const rows = K.parseSections(K.stripHtmlComments(K.splitlines(spec))).get('done-criteria')?.tableRows() ?? [];
+    const named = rows.map(([, c]) => /`?([^`\s]+)::([^`]+?)`?\s*$/.exec(String(c[2] ?? '').trim())).filter(Boolean).map((m) => [m[1], m[2].trim()]);
+    if (!named.length) return { ok: false, why: `${rel} names no test (file::name) in its Done-criteria` };
+    const esc = (x) => x.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const code = (t) => t.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:'"`])\/\/.*$/gm, '$1');
+    const callsFn = new RegExp(String.raw`^(?:(?:async\s*)?\(\s*\)\s*=>\s*\{?\s*(?:return\s+)?)?(?:await\s+)?(?:[\w$]+\s*\??\.\s*)*${esc(fn)}\s*(?:\?\.)?\(\s*[^\s)]`);
+    const matcher = /^\s*(?:\.\s*(?:not|resolves|rejects)\s*)*\.\s*(?:(?:toBe|toEqual|toStrictEqual|toMatch|toContain|toHaveLength|toMatchObject|toBeCloseTo|toBeLessThan|toBeLessThanOrEqual|toBeGreaterThan|toBeGreaterThanOrEqual)\s*\(\s*[^\s)]|toThrow(?:Error)?\s*\()/;
+    const bad = [];
+    for (const [f, n] of named) {
+      const text = typeof outcome.files?.[f] === 'string' ? code(outcome.files[f]) : null;
+      const m = text && new RegExp(`\\b(?:it|test)\\(\\s*(['"\`])${esc(n)}\\1`).exec(text);
+      if (!m) {
+        bad.push(`${f}::${n} not written`);
+        continue;
+      }
+      const body = text.slice(m.index, closeParen(text, text.indexOf('(', m.index)));
+      let asserts = false;
+      for (const e of body.matchAll(/\bexpect\s*\(/g)) {
+        const open = e.index + e[0].length - 1;
+        const close = closeParen(body, open);
+        if (callsFn.test(body.slice(open + 1, close).trim()) && matcher.test(body.slice(close + 1))) asserts = true;
+      }
+      if (!asserts) bad.push(`${f}::${n} has no expect(${fn}(…)) compared with a matcher`);
+    }
+    return bad.length ? { ok: false, why: bad.slice(0, 3).join('; ') } : { ok: true, why: `${named.length} named test(s), each asserting on a call of ${fn}` };
   },
   /**
    * The session kept the tests it was given (kit/agents/implementer.md: "do not change its assertions", "Never remove

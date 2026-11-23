@@ -156,6 +156,17 @@ test('hard checks fail for the right reasons', () => {
   assert.equal(nt({ 'tests/truncate.test.ts': `/*\n${truncTest}*/\n` }), false, 'a test in a block comment');
   assert.equal(nt({ 'tests/truncate.test.ts': truncTest, 'docs/specs/truncate-text.md': specText.replace('max characters ending in an ellipsis`', 'works`') }), true, 'the spec as the setup left it, not as the session edited it');
   assert.equal(nt({ 'tests/truncate.test.ts': truncTest }, {}), false, 'no spec');
+  // named_tests_assert: each named test asserts on a call of the function under test (finding: a shallow test passed)
+  const tester = loadTasks().find((x) => x.id === 'tester-writes-failing-test-only');
+  const body = (b) => `import { it, expect } from 'vitest';\nimport * as format from '../src/text/format';\nit('shortens text longer than max to max characters ending in an ellipsis', () => {\n${b}\n});\n`;
+  const NA = (b) => CHECKS.named_tests_assert({ files: { 'tests/truncate.test.ts': body(b) }, setup_state: { 'docs/specs/truncate-text.md': specText } }, tester);
+  assert.equal(CHECKS.named_tests_assert({ files: { 'tests/truncate.test.ts': truncTest }, setup_state: { 'docs/specs/truncate-text.md': specText } }, tester).ok, true, 'the setup\'s own test');
+  for (const b of ["expect(format.truncate('hello world', 5)).toBe('hell…');", "expect(truncate?.('hi', 5)).toEqual('hi');", "expect(() => truncate('x', -1)).toThrow();", "expect(truncate('a(b)', 3)).not.toBe('a(b)');", "await expect(truncate(`x`, 1)).resolves.toBe('…');"])
+    assert.equal(NA(b).ok, true, b);
+  for (const b of ["expect(typeof format.truncate).toBe('function');", "throw new Error('todo');", "expect(1).toBe(1);", "expect(truncate).toBeDefined();", "expect(truncate()).toBe('');", "truncate('hello world', 5);", "// expect(truncate('hello world', 5)).toBe('hell…');", "expect(String('hello')).toBe('hello');", "expect(truncate('hello world', 5)).toBeTruthy();"])
+    assert.equal(NA(b).ok, false, b);
+  assert.equal(NA("expect(truncate('a', 1)).toBe('a');\n});\nit('another', () => {").ok, true, 'the assertion inside the named test');
+  assert.equal(CHECKS.named_tests_assert({ files: { 'tests/truncate.test.ts': `it('other', () => { expect(truncate('a', 1)).toBe('a'); });\n${body("expect(typeof truncate).toBe('function');")}` }, setup_state: { 'docs/specs/truncate-text.md': specText } }, tester).ok, false, 'an assertion in another test does not count');
   // tests_kept: the setup's tests against the end state, by the post-edit hook's rules
   const TK = (files, events = [], setup = { 'tests/truncate.test.ts': truncTest }) => CHECKS.tests_kept({ files, events, setup_state: setup }).ok;
   assert.equal(TK({ 'tests/truncate.test.ts': truncTest }), true);
@@ -407,7 +418,7 @@ test('every recorded outcome scores as its fixture says: each check has a passin
       for (const [name, r] of Object.entries(s.hard)) seen.set(`${name}:${r.ok}`, true);
     }
   }
-  for (const name of ['red_before_green', 'red_run', 'in_scope_edits', 'review_has_evidence', 'lesson_proposed', 'provenance_tags', 'files_exist', 'named_tests', 'tests_kept', 'spec_valid', 'files_unchanged']) for (const ok of [true, false]) assert.ok(seen.has(`${name}:${ok}`), `a fixture where ${name} is ${ok}`);
+  for (const name of ['red_before_green', 'red_run', 'in_scope_edits', 'review_has_evidence', 'lesson_proposed', 'provenance_tags', 'files_exist', 'named_tests', 'named_tests_assert', 'critique_written', 'tests_kept', 'spec_valid', 'files_unchanged']) for (const ok of [true, false]) assert.ok(seen.has(`${name}:${ok}`), `a fixture where ${name} is ${ok}`);
 });
 
 test('claude runner setup: shared files come from kit/eval, carry the fixture commit, and a run is recorded in its progress row', (t) => {
