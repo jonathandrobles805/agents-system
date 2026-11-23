@@ -7,7 +7,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { CORE_ROLES, compare, fmt, loadTasks, runSet, selectTasks, summarize, writeBaseline } from '../../eval/harness.js';
+import { CORE_ROLES, RUNNERS, compare, fmt, loadTasks, runSet, selectTasks, summarize, writeBaseline } from '../../eval/harness.js';
 import { CHECKS, score, testCommandIn, testRuns } from '../../eval/score.js';
 import * as fixture from '../../eval/runners/fixture.js';
 import * as claude from '../../eval/runners/claude.js';
@@ -361,4 +361,31 @@ test('a kept transcript and a report are redacted: Anthropic, GitHub, AWS, Beare
   for (const v of Object.values(planted)) assert.ok(!text.includes(v), v);
   // prose about secrets is not a value: a config key and a sentence stay as they are
   assert.equal(claude.redact('"secret_read_patterns": ["*.pem"] and the password is checked'), '"secret_read_patterns": ["*.pem"] and the password is checked');
+});
+
+test('a role task the container runtime runs without --agent is reported as measuring plain Claude Code', async (t) => {
+  const dir = tmpPath(t);
+  const bin = path.join(dir, 'bin');
+  fs.mkdirSync(bin);
+  // container stand-in: runs what follows the image name (the real container is proven by sandbox.js)
+  fs.writeFileSync(path.join(bin, 'docker'), '#!/bin/sh\nwhile [ "$1" != "kit-lane:latest" ]; do shift; done\nshift\nexec "$@"\n', { mode: 0o755 });
+  fs.writeFileSync(path.join(bin, 'claude'), '#!/bin/sh\nprintf done\n', { mode: 0o755 });
+  setEnv(t, 'PATH', `${bin}${path.delimiter}${process.env.PATH}`);
+  setEnv(t, 'KIT_SANDBOX_RUNTIME', 'container');
+  setEnv(t, 'KIT_CONTAINER_ENGINE', 'docker');
+  setEnv(t, 'ANTHROPIC_API_KEY', 'sk-ant-fake');
+  const task = loadTasks().find((x) => x.id === 'spec-critic-reads-before-judging');
+  const o = await claude.run({ ...task, rubric: [] });
+  assert.equal(o.worker_agent, null);
+  assert.ok(!o.worker_command.includes('--agent'), o.worker_command.join(' '));
+  assert.deepEqual(o.warnings, ['ran without --agent spec-critic: the container runtime gets no session home with the kit\'s agents; this attempt measures plain Claude Code, not the kit\'s spec-critic']);
+  // the harness carries the warning into the attempt, report.json and the text output
+  RUNNERS.stub = { available: () => ({ ok: true }), run: async (tk) => ({ ...(await fixture.run(tk)), runner: 'claude', worker_agent: null, warnings: tk.id === task.id ? o.warnings : [] }) };
+  t.after(() => delete RUNNERS.stub);
+  const rep = await runSet({ set: 'smoke', runner: 'stub', out: path.join(dir, 'r') });
+  assert.deepEqual(rep.results[task.id].attempts[0].warnings, o.warnings);
+  assert.equal(rep.results[task.id].attempts[0].worker.agent, null);
+  assert.deepEqual(JSON.parse(fs.readFileSync(path.join(dir, 'r', 'report.json'), 'utf8')).results[task.id].attempts[0].warnings, o.warnings);
+  assert.match(fmt(rep), /WARN spec-critic-reads-before-judging attempt 0: ran without --agent spec-critic: the container runtime/);
+  assert.equal(fmt(rep).match(/WARN/g).length, 1, 'only the attempt that ran without its agent');
 });

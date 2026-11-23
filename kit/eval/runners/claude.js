@@ -361,7 +361,10 @@ export async function run(task, { attempt = 0, timeoutMs = 20 * 60 * 1000, trans
     const before = eventOffsets(evFiles);
     const base = { ...process.env, ...SB.telemetryEnv({ project: 'kit-eval', slug: task.id, stage: task.role ?? 'build' }), KIT_EVAL_ATTEMPT: String(attempt) };
     const env = { ...base, ...(home?.env ?? {}) };
-    const work = headless(task.goal, cwd, env, settings, timeoutMs, kitAgent(task, home));
+    const agent = kitAgent(task, home);
+    // a role task that runs as no kit agent measures plain Claude Code, not the kit's agent: the report says so
+    const warnings = task.role && !agent ? [`ran without --agent ${task.role}: ${home ? `the session's home has no agents/${task.role}.md` : `the ${SB.detectRuntime(process.env).runtime} runtime gets no session home with the kit's agents`}; this attempt measures plain Claude Code, not the kit's ${task.role}`] : [];
+    const work = headless(task.goal, cwd, env, settings, timeoutMs, agent);
     const kept = { worker: home && transcripts ? keepTranscripts(home.config, path.join(transcripts, 'worker')) : [], judge: [] };
     const files = snapshot(cwd);
     const events = eventsSince(evFiles, before);
@@ -394,7 +397,7 @@ export async function run(task, { attempt = 0, timeoutMs = 20 * 60 * 1000, trans
         }
       }
     }
-    return { runner: name, variant: null, files, events, git, judge, test_commands: testCommands, transcripts: kept, ms: Date.now() - started, worker_command: work.command, worker_status: work.status, worker_signal: work.signal, worker_error: work.error, worker_stderr: work.stderr.slice(-2000), judge_session: judgeSession };
+    return { runner: name, variant: null, files, events, git, judge, test_commands: testCommands, transcripts: kept, ms: Date.now() - started, worker_command: work.command, worker_status: work.status, worker_signal: work.signal, worker_error: work.error, worker_stderr: work.stderr.slice(-2000), worker_agent: agent, warnings, judge_session: judgeSession };
   } finally {
     if (!process.env.KIT_EVAL_KEEP) fs.rmSync(dir, { recursive: true, force: true });
   }

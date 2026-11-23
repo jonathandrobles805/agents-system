@@ -126,9 +126,11 @@ export async function runSet({ set, runner = 'fixture', n = set === 'full' ? 3 :
       // started (no sandbox, no credential, a refused token) must be diagnosable from the report alone
       const worker = { status: outcome.worker_status ?? null, signal: outcome.worker_signal ?? null, error: outcome.worker_error ?? null, stderr: String(outcome.worker_stderr ?? '').slice(-2000) };
       if (outcome.worker_command) worker.command = outcome.worker_command;
+      if ('worker_agent' in outcome) worker.agent = outcome.worker_agent;
+      const warnings = outcome.warnings ?? [];
       const rel = (files) => (files ?? []).map((f) => path.relative(outDir, f));
       const kept = outcome.transcripts ? { transcripts: { worker: rel(outcome.transcripts.worker), judge: rel(outcome.transcripts.judge) } } : {};
-      attempts.push({ attempt: i, runner: outcome.runner, variant: outcome.variant ?? null, ms: outcome.ms, worker, judge_session: outcome.judge_session ?? null, ...kept, scored });
+      attempts.push({ attempt: i, runner: outcome.runner, variant: outcome.variant ?? null, ms: outcome.ms, worker, judge_session: outcome.judge_session ?? null, ...kept, ...(warnings.length ? { warnings } : {}), scored });
       if (!scored.hard_ok) violations.push({ task: task.id, attempt: i, checks: scored.violations, why: scored.violations.map((v) => `${v}: ${scored.hard[v].why}`) });
     }
     results[task.id] = { role: task.role ?? null, kind: task.kind ?? null, runner, attempts, summary: summarize(attempts) };
@@ -166,6 +168,7 @@ export function fmt(rep) {
     for (const a of r.attempts ?? []) {
       if (a.runner === 'claude' && a.worker && a.worker.status !== 0) lines.push(`  WORKER ${id} attempt ${a.attempt}: ${how(a.worker)}; stderr: ${tail(a.worker.stderr)}`);
       if (a.runner === 'claude' && a.judge_session && a.judge_session.status !== 0) lines.push(`  JUDGE ${id} attempt ${a.attempt}: ${how(a.judge_session)}; stderr: ${tail(a.judge_session.stderr)}`);
+      for (const w of a.warnings ?? []) lines.push(`  WARN ${id} attempt ${a.attempt}: ${w}`);
     }
   }
   lines.push(rep.ok ? 'eval: PASS' : 'eval: FAIL');
