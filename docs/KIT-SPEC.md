@@ -159,7 +159,7 @@ All agents are subagents in `~/.claude/agents/`. Each file has: frontmatter (`na
 
 - Input: the spec, the diff against `main`, `.log`, `.events.jsonl`, `ARCHITECTURE.md`, `DESIGN.md`, `LESSONS.md`. Never the implementer's conversation.
 - Tools: Read, Grep, Glob, Bash (run tests and lints; no edits to source), Write to `docs/specs/<feature>.review.md` only.
-- Output: review report in the review template: a checklist with PASS/FAIL per item and evidence (`file:line` or log line), plus a fail list in the required form.
+- Output: review report in the review template: a checklist with PASS/FAIL per item and evidence (`file:line`, log line, or a command copied verbatim as it was run, with its output), plus a fail list in the required form.
 - Checklist (minimum): every done-criterion has a named test with a red run and a green run in the log; the reviewer re-ran the suite and the result matches the log; every changed file is in the spec's list; no assertion removed or test skipped without a spec note; import boundaries respected; design tokens respected; new dependencies declared; data changes reversible or signed off; `progress.md` complete; reviewer wrote at least one adversarial test from the spec and it passes.
 - Refuses: PASS without evidence; reading the builder's reasoning.
 - Hooks: `SubagentStop` runs `validate-docs` on the review report.
