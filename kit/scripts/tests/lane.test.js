@@ -340,7 +340,9 @@ test('next in queue respects goal and wip', (t) => {
 test('lane.js template prints a kit template with slug, date and commit; agents never read ~/.claude/kit/templates', (t) => {
   const { root } = project(t);
   const head = git(['rev-parse', '--short', 'HEAD'], root).trim();
-  const today = new Date().toISOString().slice(0, 10);
+  // lane.js dates a template in local time (todayIso), not UTC: between local and UTC midnight the two differ
+  const d = new Date();
+  const today = `${String(d.getFullYear()).padStart(4, '0')}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
   let r = runScript('lane.js', ['template', 'spec', '--slug', 'refund-route', '--repo', root]);
   assert.equal(r.returncode, 0, r.stderr);
   assert.match(r.stdout, /^# Spec: \{\{feature\}\}/);
