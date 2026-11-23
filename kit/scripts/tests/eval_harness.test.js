@@ -320,3 +320,36 @@ process.stdout.write(process.env.KIT_EVAL_JUDGE ? '{"r1": 1}' : 'done');
   assert.equal(claude.kitAgent({ role: 'no-such-agent' }, { config: path.join(dir, 'nothing') }), null);
   assert.equal(claude.kitAgent({ role: '../x' }, { config: dir }), null);
 });
+
+test('a kept transcript and a report are redacted: Anthropic, GitHub, AWS, Bearer, Slack and password=/secret= values', (t) => {
+  // each value is assembled at run time, so no credential-shaped literal sits in the repository
+  const planted = {
+    anthropic: ['sk-ant-', 'api03-', 'abcdefSECRET1'].join(''),
+    github: ['ghp', '_', 'A1b2C3d4E5f6G7h8I9j0SECRET2'].join(''),
+    github_pat: ['github', '_pat_', '11ABCDEFG0123456789_SECRET3abcdef'].join(''),
+    aws: ['AK', 'IA', 'Z7SECRET4ABCDEFG'].join(''),
+    bearer: ['eyJhbGciOi', 'SECRET5.payload-part_x~y+z/w=='].join(''),
+    slack: ['xo', 'xb-', '1234-5678-SECRET6abc'].join(''),
+    password: 'hunter2SECRET7',
+    secret: 'shhSECRET8',
+  };
+  const line = JSON.stringify({ type: 'tool_result', text: [
+    `key ${planted.anthropic}`, `gh ${planted.github}`, `pat ${planted.github_pat}`, `aws ${planted.aws}`,
+    `curl -H "Authorization: Bearer ${planted.bearer}"`, `slack ${planted.slack}`,
+    `DB_PASSWORD=${planted.password} psql`, `client_secret=${planted.secret}&x=1`,
+  ].join('\n') });
+  const out = claude.redact(line);
+  assert.ok(!/SECRET\d/.test(out), out);
+  assert.doesNotThrow(() => JSON.parse(out), 'a redacted JSONL line is still JSON');
+  for (const kept of ['sk-ant-***', 'gh*_***', 'github_pat_***', 'AKIA***', 'Bearer ***', 'xox*-***', 'DB_PASSWORD=***', 'client_secret=***']) assert.ok(out.includes(kept), `${kept} in ${out}`);
+  // keepTranscripts writes the redacted text, every planted value gone
+  const dir = tmpPath(t);
+  const config = path.join(dir, '.claude');
+  fs.mkdirSync(path.join(config, 'projects', 'p'), { recursive: true });
+  fs.writeFileSync(path.join(config, 'projects', 'p', 's.jsonl'), line + '\n');
+  const [copy] = claude.keepTranscripts(config, path.join(dir, 'out'));
+  const text = fs.readFileSync(copy, 'utf8');
+  for (const v of Object.values(planted)) assert.ok(!text.includes(v), v);
+  // prose about secrets is not a value: a config key and a sentence stay as they are
+  assert.equal(claude.redact('"secret_read_patterns": ["*.pem"] and the password is checked'), '"secret_read_patterns": ["*.pem"] and the password is checked');
+});

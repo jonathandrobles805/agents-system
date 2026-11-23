@@ -125,8 +125,21 @@ export function fixtureRepo(task, dir, claudeHome) {
   return { root, cwd: startLane(root, dir, setup.lane, env, head), lane: setup.lane.slug };
 }
 
-/** Credential-looking strings never reach a report, whatever a session printed. */
-const redact = (s) => s.replace(/sk-ant-[A-Za-z0-9_-]+/g, 'sk-ant-***').replace(/\bgh[pousr]_[A-Za-z0-9]{20,}\b/g, 'gh*_***');
+/**
+ * Credential-looking strings never reach a report or a kept transcript, whatever a session printed: Anthropic keys,
+ * GitHub tokens (classic and fine-grained), AWS access key ids, Bearer tokens, Slack tokens, and the value of any
+ * `…password=` or `…secret=` assignment. A value stops at a quote or backslash, so a redacted JSONL line stays JSON.
+ */
+const REDACTIONS = [
+  [/sk-ant-[A-Za-z0-9_-]+/g, 'sk-ant-***'],
+  [/\bgh[pousr]_[A-Za-z0-9]{20,}\b/g, 'gh*_***'],
+  [/\bgithub_pat_[A-Za-z0-9_]{20,}/g, 'github_pat_***'],
+  [/\bAKIA[0-9A-Z]{16}\b/g, 'AKIA***'],
+  [/\b(Bearer\s+)[A-Za-z0-9._~+/-]+=*/gi, '$1***'],
+  [/\bxox[abpr]-[A-Za-z0-9-]+/g, 'xox*-***'],
+  [/([A-Za-z0-9_]*(?:password|passwd|secret)\s*=\s*)[^\s"'\\&,;]+/gi, '$1***'],
+];
+export const redact = (s) => REDACTIONS.reduce((t, [re, to]) => t.replace(re, to), s);
 
 /**
  * What Claude Code itself needs inside the sandbox, beyond the lane's own rules. Seen on GitHub's runner (eval-smoke-main
