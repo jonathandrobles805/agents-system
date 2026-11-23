@@ -1,5 +1,5 @@
 {
-  "$comment": "Installed into <repo>/.claude/settings.json by /zi-bootstrap. Versioned with the project. Hooks call kit scripts in ~/.claude/kit/scripts. Edit via /zi-bootstrap --upgrade, not by hand during a lane. permissions.allow is the lane's own working set: a headless `claude -p --permission-mode default` session DENIES any call that needs approval when no human is there to answer, so without it a lane can only read. Reads and read-only commands (ls, cat, grep, find, read-only git) need no rule; Claude Code runs those without a prompt. `Edit(/**)` anchors at the session's working directory, which for a lane is its worktree, mirroring the sandbox's allowWrite. Deny beats allow in every scope, so none of this reaches what the floor denies. Project commands are added by /zi-bootstrap from .claude/kit.json commands. permissions.ask holds the human's own decisions: merging (`kit lane merge`), lifting the kill switch (`kit lane resume-all`) and re-running `/bootstrap` prompt every time. Ask beats allow, so `Bash(kit *)` never approves them, and a headless session cannot run them at all (#63, hardening plan Step 2). A direct `gh pr merge` (and its `gh api` forms) is blocked by the bash guard; merging goes through `kit lane merge`, which waits for CI.",
+  "$comment": "Installed into <repo>/.claude/settings.json by /zi-bootstrap. Versioned with the project. Hooks call kit scripts in ~/.claude/kit/scripts. Edit via /zi-bootstrap --upgrade, not by hand during a lane. permissions.allow is the lane's own working set: a headless `claude -p --permission-mode default` session DENIES any call that needs approval when no human is there to answer, so without it a lane can only read. Reads and read-only commands (ls, cat, grep, find, read-only git) need no rule; Claude Code runs those without a prompt. `Edit(/**)` anchors at the session's working directory, which for a lane is its worktree, mirroring the sandbox's allowWrite. Deny beats allow in every scope, so none of this reaches what the floor denies. Project commands are added by /zi-bootstrap from .claude/kit.json commands. permissions.ask holds the human's own decisions: merging (`kit lane merge`), lifting the kill switch (`kit lane resume-all`) and re-running `/bootstrap` prompt every time. Ask beats allow, so `Bash(kit *)` never approves them, and a headless session cannot run them (#63, hardening plan Step 2). A rule ending in ` *` also matches the bare command. Like every permission rule this matches the command as written, so it is a guardrail, not a wall: the bash guard refuses the disguised forms (`kit lane -- merge`, quoted or double-spaced words), and a command an agent can rewrite (a package.json script) can still run anything until the container (Step 8). A direct `gh pr merge` (and its `gh api` forms) is blocked by the bash guard; merging goes through `kit lane merge`, which waits for CI.",
   "permissions": {
     "allow": [
       "Edit(/**)",
@@ -9,10 +9,8 @@
     ],
     "ask": [
       "Bash(kit lane merge *)",
-      "Bash(kit lane merge)",
       "Bash(kit lane resume-all *)",
-      "Bash(kit bootstrap *)",
-      "Bash(kit bootstrap)"
+      "Bash(kit bootstrap *)"
     ],
     "deny": [
       "Read(.env)",

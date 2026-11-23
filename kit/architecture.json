@@ -479,6 +479,7 @@
     {"file": "kit/scripts/tests/hooks.test.js", "from": "test:hooks", "kind": "tests", "to": "hook:post_edit_check"},
     {"file": "kit/scripts/tests/hooks.test.js", "from": "test:hooks", "kind": "tests", "to": "hook:read_log"},
     {"file": "kit/scripts/tests/hooks.test.js", "from": "test:hooks", "kind": "tests", "to": "script:kitlib"},
+    {"file": "kit/scripts/tests/hooks.test.js", "from": "test:hooks", "kind": "tests", "to": "script:lane"},
     {"file": "kit/scripts/tests/kit_status.test.js", "from": "test:kit_status", "kind": "tests", "to": "script:kit_status"},
     {"file": "kit/scripts/tests/kit_status.test.js", "from": "test:kit_status", "kind": "tests", "to": "script:lane"},
     {"file": "kit/scripts/tests/kitlib.test.js", "from": "test:kitlib", "kind": "tests", "to": "script:kitlib"},

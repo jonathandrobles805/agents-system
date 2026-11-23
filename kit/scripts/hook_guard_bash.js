@@ -6,7 +6,8 @@
 //   rm -rf on anything outside /tmp or the worktree, sudo, curl|sh / wget|sh, --no-verify,
 //   writes into .claude/ or .github/workflows via redirection, sed -i, tee, cp, mv,
 //   chmod/chown on .claude/hooks, printing secrets (cat .env), git commit when staged files match secret patterns,
-//   merging a PR directly (gh pr merge, gh api PUT …/merge, GraphQL mergePullRequest): lane.js merge waits for CI.
+//   merging a PR directly (gh pr merge, gh api PUT …/merge, GraphQL mergePullRequest): lane.js merge waits for CI,
+//   and the owner's decisions through `kit` (merge, resume-all, bootstrap) in any form the permission ask rule misses.
 // In a lane additionally: git worktree remove/prune, git branch -D, checkout/switch to another branch.
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
@@ -63,6 +64,90 @@ export const FETCH = new RegExp(`${B}(curl|wget)${E}`, 'u');
 export const URL_IN = /(?:https?:\/\/|\/\/)([A-Za-z0-9._-]+\.[A-Za-z]{2,})/gu;
 
 /** The reason a fetch must not run in this lane, or null when every host it names is declared. */
+/**
+ * The simple commands of a shell line, each as words with quotes removed and the raw text of each word, split on
+ * unquoted `;`, `&`, `|`, newlines and parentheses. Not a full shell parser: enough to see which program a command
+ * runs and how its words were written.
+ */
+export function shellCommands(line) {
+  const cmds = [];
+  let words = [];
+  let cur = null; // { value, raw }
+  let q = null;
+  const endWord = () => {
+    if (cur !== null) words.push(cur);
+    cur = null;
+  };
+  const endCmd = () => {
+    endWord();
+    if (words.length) cmds.push(words);
+    words = [];
+  };
+  for (let i = 0; i < line.length; i++) {
+    const c = line[i];
+    if (q) {
+      cur.raw += c;
+      if (c === q) q = null;
+      else if (c === '\\' && q === '"' && i + 1 < line.length) cur.value += line[++i], (cur.raw += line[i]);
+      else cur.value += c;
+      continue;
+    }
+    if (c === "'" || c === '"') {
+      cur = cur ?? { value: '', raw: '' };
+      cur.raw += c;
+      q = c;
+      continue;
+    }
+    if (c === '\\' && i + 1 < line.length) {
+      cur = cur ?? { value: '', raw: '' };
+      cur.raw += c + line[i + 1];
+      cur.value += line[++i];
+      continue;
+    }
+    if (';&|\n()'.includes(c)) {
+      endCmd();
+      continue;
+    }
+    if (/\s/.test(c)) {
+      endWord();
+      continue;
+    }
+    cur = cur ?? { value: '', raw: '' };
+    cur.raw += c;
+    cur.value += c;
+  }
+  endCmd();
+  return cmds;
+}
+
+/**
+ * The owner's decisions run through `kit` behind permission ask rules (`Bash(kit lane merge *)`,
+ * `Bash(kit lane resume-all *)`, `Bash(kit bootstrap *)`). Claude Code matches those rules against the command as
+ * written, so `kit lane -- merge`, `kit lane 'merge'` or `kit  lane merge` would slip past the prompt and match only
+ * `Bash(kit *)`. Such a command must be written in the plain form, or it is refused here (#106 review).
+ */
+const WRAPPERS = new Set(['timeout', 'nice', 'nohup', 'command', 'exec', 'time']);
+export function kitDecisionDisguised(line) {
+  for (const words of shellCommands(line)) {
+    let k = 0;
+    while (k < words.length && /^[A-Za-z_][A-Za-z0-9_]*=/.test(words[k].value)) k++; // leading assignments
+    while (k < words.length && WRAPPERS.has(words[k].value)) {
+      k++;
+      while (k < words.length && (/^-/.test(words[k].value) || /^\d+[smhd]?$/.test(words[k].value))) k++; // wrapper options
+    }
+    if (words[k]?.value !== 'kit') continue;
+    const rest = words.slice(k);
+    const plain = (n) => rest.slice(0, n).every((w) => w.raw === w.value);
+    const decision = rest[1]?.value === 'bootstrap' ? 2 : rest[1]?.value === 'lane' && rest.slice(2).some((w) => w.value === 'merge' || w.value === 'resume-all') ? 3 : 0;
+    if (!decision) continue;
+    const ok = decision === 2 ? plain(2) : plain(3) && (rest[2].value === 'merge' || rest[2].value === 'resume-all');
+    // the words must also be separated by exactly one space in the original text
+    const head = rest.slice(0, decision).map((w) => w.raw).join(' ');
+    if (!ok || !line.includes(head)) return `the owner's decision (${rest.slice(1, decision).map((w) => w.value).join(' ')}) written in a form the permission prompt does not match; write it plainly as \`kit ${decision === 2 ? 'bootstrap' : `lane ${rest.find((w, j) => j >= 2 && (w.value === 'merge' || w.value === 'resume-all')).value}`} …\` so Claude Code asks the owner`;
+  }
+  return null;
+}
+
 export function fetchOk(cmd, specPath) {
   if (!FETCH.test(cmd)) return null;
   const declared = K.specNetwork(specPath);
@@ -161,6 +246,8 @@ export function main() {
   };
 
   for (const [re, why] of RULES) if (re.test(cmd)) return deny(why);
+  const disguised = kitDecisionDisguised(cmd);
+  if (disguised) return deny(disguised);
   if (lane) for (const [re, why] of LANE_RULES) if (re.test(cmd)) return deny(why);
   const bad = rmTargetsOk(cmd, root, cwd);
   if (bad) return deny(bad);

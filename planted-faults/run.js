@@ -660,6 +660,15 @@ process.stderr.write('fake gh: unexpected ' + j); process.exit(9);
     const r47 = hook('hook_guard_bash.js', { ...base, hook_event_name: 'PreToolUse', tool_name: 'Bash', tool_input: { command: 'gh pr merge 4 --squash' } });
     record(47, 'an agent merges a pull request directly, without waiting for CI', 'guard-bash: gh pr merge / gh api …/merge blocked; lane.js merge is the only way', r47.returncode === 2 && r47.stderr.includes('kit lane merge'), r47.stderr);
 
+    // 53 an agent merges (or lifts the kill switch) through `kit` in a form the permission ask rule does not match, so
+    //    Claude Code would approve it under Bash(kit *) without asking the owner (#106 review)
+    const forms53 = ['kit lane -- merge --pr 4 --by x', "kit lane 'merge' footer --by x", 'kit  lane merge footer --by x', 'kit lane -- resume-all --by x'];
+    const r53 = forms53.map((c) => hook('hook_guard_bash.js', { ...base, hook_event_name: 'PreToolUse', tool_name: 'Bash', tool_input: { command: c } }));
+    const plain53 = hook('hook_guard_bash.js', { ...base, hook_event_name: 'PreToolUse', tool_name: 'Bash', tool_input: { command: 'kit lane merge footer --by Jonathan' } });
+    const args53 = run('lane.js', ['--', 'merge', '--by', 'x']);
+    const caught53 = r53.every((r) => r.returncode === 2) && plain53.returncode === 0 && args53.returncode !== 0 && !/pass a slug or --pr/.test(args53.stderr);
+    record(53, "the owner's merge (or resume-all) run through kit in a form the permission prompt does not match", 'guard-bash refuses disguised kit decisions; lane.js picks no subcommand after --', caught53, `disguised forms -> exits ${r53.map((r) => r.returncode).join(',')}; plain form -> exit ${plain53.returncode}; lane.js -- merge -> exit ${args53.returncode}`, 'mechanical');
+
     // 48 "no checks reported" (CI not started yet) or a red check is read as mergeable
     const req48 = G.projectChecks(root);
     const none48 = G.evaluate([], req48);

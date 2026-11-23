@@ -169,6 +169,29 @@ test('guard bash allows normal', (t) => {
   }
 });
 
+test('guard bash refuses the owner\'s decisions through kit in forms the permission ask rule does not match (#106)', (t) => {
+  const repo = makeRepo(t);
+  // Claude Code matches `Bash(kit lane merge *)` against the command as written; these would match only Bash(kit *)
+  const disguised = ['kit lane -- merge --pr 4 --by x', "kit lane 'merge' footer --by x", 'kit lane "merge" footer --by x', 'kit  lane merge footer --by x',
+    'kit lane -- resume-all --by x', "kit 'bootstrap' --repo .", 'timeout 60 kit lane -- merge x', 'npm test && kit lane -- merge x', 'kit lan\\e merge x'];
+  for (const c of disguised) {
+    const r = run('hook_guard_bash.js', pre(repo, 'Bash', { command: c }));
+    assert.ok(r.returncode === 2 && r.stderr.includes('write it plainly'), `${c}: ${r.returncode} ${r.stderr}`);
+  }
+  // the plain forms reach Claude Code's prompt, so the guard lets them through; other kit commands are untouched
+  for (const c of ['kit lane merge footer --by Jonathan', 'kit lane resume-all --by Jonathan', 'kit bootstrap --repo .', 'FOO=1 kit lane merge x --by j',
+    'kit lane next-step footer --repo .', 'kit lane template spec --slug merge-x', 'echo "kit lane -- merge"']) {
+    const r = run('hook_guard_bash.js', pre(repo, 'Bash', { command: c }));
+    assert.equal(r.returncode, 0, `${c}: ${r.stderr}`);
+  }
+});
+
+test('lane.js never picks a subcommand after a leading --, so `lane.js -- merge` cannot reach merge (#106)', () => {
+  const r = runScript('lane.js', ['--', 'merge', '--by', 'x']);
+  assert.notEqual(r.returncode, 0);
+  assert.doesNotMatch(r.stderr, /pass a slug or --pr/);
+});
+
 test('guard bash blocks merging a PR outside lane.js merge (#68)', (t) => {
   const repo = makeRepo(t);
   const bad = ['gh pr merge 4 --squash', 'cd /p && gh pr merge 4', 'x=$(gh pr merge 4)', 'echo ok\ngh pr merge 4 --auto',
