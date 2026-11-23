@@ -86,7 +86,9 @@ export function testRuns(outcome) {
 const testFiles = (cmd) => String(cmd ?? '').split(/\s+/).filter((t) => !t.startsWith('-') && !t.includes('=') && /[^/]\.[A-Za-z0-9]{1,5}$/.test(t));
 
 /** The events a retro looks for (kit/agents/retro.md, "Look for"). */
-const FINDING_EVENTS = new Set(['blocked', 'stop_refused', 'test_weakened', 'budget_exceeded']);
+// retro.md "Look for" lists the four, and "every escalation", which the post-edit hook records as `escalation` after the
+// third failed attempt at one failure
+const FINDING_EVENTS = new Set(['blocked', 'stop_refused', 'test_weakened', 'budget_exceeded', 'escalation']);
 
 /** What the lane recorded before the session that the retro must answer: finding events and review FAIL rows. */
 export function laneFindings(outcome) {
@@ -205,8 +207,8 @@ export const CHECKS = {
    * not the retro ran. An entry is a `## <YYYY-MM-DD> — …` heading (the lesson template's) and the lines under it, up
    * to the next `#`/`##` heading outside a fenced block (the agent sketches a proposed check in one).
    * The agent proposes an entry "for each finding" (retro.md), so whether one is required depends on the lane: a
-   * finding is a `blocked`, `stop_refused`, `test_weakened` or `budget_exceeded` event the setup recorded (retro.md,
-   * "Look for") or a FAIL row in a review report (`*.review.md`) in the end state. A lane with a finding needs at least
+   * finding is a `blocked`, `stop_refused`, `test_weakened`, `budget_exceeded` or `escalation` event the setup recorded
+   * (retro.md, "Look for") or a FAIL row in a review report (`*.review.md`) in the end state. A lane with a finding needs at least
    * one entry; a lane with none passes with no entry (the honest "no findings" answer), and any entry it does propose
    * must still be valid. Whether the entries answer the lane's findings, and invent none, is the judge's.
    */
@@ -227,7 +229,7 @@ export const CHECKS = {
       const found = laneFindings(outcome);
       return found.length
         ? { ok: false, why: `no lesson entry (## <date> — …) in the session's output; the lane recorded ${found.length} finding(s): ${found.slice(0, 3).join('; ')}` }
-        : { ok: true, why: 'the lane recorded no finding (no blocked, stop_refused, test_weakened or budget_exceeded event, no review FAIL) and no entry was proposed' };
+        : { ok: true, why: 'the lane recorded no finding (no blocked, stop_refused, test_weakened, budget_exceeded or escalation event, no review FAIL) and no entry was proposed' };
     }
     const v = new V.Validator(path.sep, null, {});
     v.lesson('output', entry);

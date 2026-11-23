@@ -127,6 +127,10 @@ test('hard checks fail for the right reasons', () => {
   const failRow = { 'docs/specs/x.review.md': '# Review: x\n\n## Checklist\n\n| # | Check | Result | Evidence |\n|---|---|---|---|\n| R11 | Adversarial | FAIL | src/x.ts:5 cuts at max |\n' };
   assert.equal(CHECKS.lesson_proposed({ output: '', setup_events: [blocked], files: { 'LESSONS.md': '# Lessons\n\n## Debt\n\n- none\n' } }).ok, false, 'nothing proposed for a blocked event');
   assert.equal(CHECKS.lesson_proposed({ output: 'No findings.', files: failRow }).ok, false, 'nothing proposed for a review FAIL');
+  // retro.md "Every escalation": the post-edit hook's escalation event is a finding
+  const escalation = { event: 'escalation', tool: 'hook', result: 'fail', summary: '3 attempts on the same failure; escalation written' };
+  assert.equal(CHECKS.lesson_proposed({ output: 'No findings.', setup_events: [escalation] }).ok, false, 'nothing proposed for an escalation');
+  assert.equal(CHECKS.lesson_proposed({ output: lesson('hook', 'kit/scripts/hook_x.js blocks it'), setup_events: [escalation] }).ok, true, 'an escalation answered with a lesson');
   assert.equal(CHECKS.lesson_proposed({ output: 'No findings.', setup_events: [{ ...blocked, event: 'check', result: 'fail' }], files: { 'docs/specs/x.review.md': failRow['docs/specs/x.review.md'].replace('FAIL', 'PASS') } }).ok, true, 'a lane with no finding: no entry needed');
   assert.equal(CHECKS.lesson_proposed({ output: lesson('a reminder', 'none') }).ok, false, 'an entry on a lane with no finding must still be valid');
   assert.equal(CHECKS.first_tool({ events: [{ tool: 'Read' }, { tool: 'Edit' }] }, { expected: { first_tool: 'Read' } }).ok, true);
