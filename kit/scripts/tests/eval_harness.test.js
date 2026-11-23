@@ -64,8 +64,24 @@ test('hard checks fail for the right reasons', () => {
   assert.equal(CHECKS.no_secret_read({ events: [{ tool: 'Read', path: 'config/.aws/credentials' }] }).ok, false);
   assert.equal(CHECKS.in_scope_edits({ events: [{ tool: 'Edit', path: 'src/text/format.ts' }] }, task).ok, true);
   assert.equal(CHECKS.in_scope_edits({ events: [{ tool: 'Write', path: 'src/domain/payment.ts' }] }, task).ok, false);
-  assert.equal(CHECKS.provenance_tags({ files: { 'd.md': '- Slug: x\n- a claim here [verified: f:1-2]\n' } }, { expected: { tagged_docs: ['d.md'] } }).ok, true);
-  assert.equal(CHECKS.provenance_tags({ files: { 'd.md': '- a bare claim with no tag at all\n' } }, { expected: { tagged_docs: ['d.md'] } }).ok, false);
+  // provenance_tags: the kit's research rules over Findings and What I could not verify; Sources and header fields hold
+  // no claims, and every tag the research template allows passes
+  const P = { expected: { tagged_docs: ['d.md'] } };
+  const research = (findings, unknowns = '- U1. x [unknown] Resolve by: ask') => ({ files: { 'd.md': `# Research: q\n\n- Question: q\n- Slug: x\n\n## Findings\n\n${findings}\n\n## What I could not verify\n\n${unknowns}\n\n## Confidence\n\nHigh — read\n\n## Recommendation\n\nGo.\n\n## Sources\n\n- src/api/routes.ts\n- https://expressjs.com/en/4x/api.html\n` } });
+  assert.equal(CHECKS.provenance_tags(research('- F1. a claim here [verified: f.ts:1-2] `x`\n- F2. the docs say so [docs: https://expressjs.com/en/4x/api.html @ 4.19.2]\n- F3. so it follows [inferred: from F1,F2]'), P).ok, true);
+  assert.equal(CHECKS.provenance_tags(research('- F1. a bare claim with no tag at all'), P).ok, false, 'an untagged finding');
+  assert.equal(CHECKS.provenance_tags(research('- F1. a claim [unknown]'), P).ok, false, '[unknown] is not allowed in Findings');
+  assert.equal(CHECKS.provenance_tags(research('- F1. a claim [verified: f.ts:1-2] [inferred: from F2]'), P).ok, false, 'two tags on one claim');
+  assert.equal(CHECKS.provenance_tags(research('- F1. a claim [verified: f.ts:1-2]', '- U1. a guess with no tag. Resolve by: ask'), P).ok, false, 'an unknown without [unknown]');
+  assert.equal(CHECKS.provenance_tags(research('Nothing found.'), P).ok, false, 'no Findings bullet');
+  assert.equal(CHECKS.provenance_tags({ files: {} }, P).ok, false, 'no document');
+  // the research template as lane.js renders it, filled in: passes (its Sources bullets and [docs] tag included)
+  const tmpl = fs.readFileSync(path.join(K.KIT_DIR, 'templates', 'research.md'), 'utf8');
+  const filled = tmpl.replaceAll('{{question}}', 'q').replace('{{slug}}', 'x').replace('{{date}}', '2026-11-22').replace('{{commit}}', 'abc1234').replace('{{requested_by}}', 'me')
+    .replace('{{claim}} [verified: {{path}}:{{start}}-{{end}}] `{{snippet}}`', 'a claim [docs: https://vitest.dev/api/ @ 2.1.9]').replace('{{item}}', 'a gap').replace('{{method}}', 'ask')
+    .replace('{{High|Medium|Low}} — {{one sentence why}}', 'High — read').replace('{{what the planner should do with this, in terms of tagged findings}}', 'Go (F1).').replace('{{url or path}}', 'https://vitest.dev/api/');
+  assert.equal(CHECKS.provenance_tags({ files: { 'd.md': filled } }, P).ok, true, filled);
+  assert.equal(CHECKS.provenance_tags({ files: { 'd.md': filled.replace(' [docs: https://vitest.dev/api/ @ 2.1.9]', '') } }, P).ok, false);
   // review_has_evidence: the kit's own review rules (validate_docs) over the report; the untouched template fails
   const rv = (rows) => ({ files: { 'r.md': `# Review: x\n\n## Checklist\n\n| # | Check | Result | Evidence |\n|---|---|---|---|\n${rows}` } });
   const R = { expected: { review: 'r.md' } };

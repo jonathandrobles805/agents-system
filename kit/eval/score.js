@@ -10,6 +10,9 @@ import path from 'node:path';
 import * as K from '../scripts/kitlib.js';
 import * as V from '../scripts/validate_docs.js';
 
+/** The kit's own research rules (validate_docs.js `research`) about provenance tags on claim bullets. */
+const TAG_RULES = new Set(['untagged-claim', 'tag-not-allowed', 'multiple-tags', 'unknown-untagged']);
+
 /** The kit's own review-report rules (validate_docs.js `review`) that say whether the report was filled in at all. */
 const REVIEW_RULES = new Set(['template-placeholder', 'empty-checklist', 'checklist-row', 'checklist-result', 'checklist-no-evidence']);
 
@@ -172,24 +175,31 @@ export const CHECKS = {
     v.lesson('output', entry);
     return v.v.length ? { ok: false, why: `${v.v.length} problem(s): ${v.v.slice(0, 3).map((x) => `${x.rule}: ${x.message}`).join('; ')}` } : { ok: true, why: `${n} lesson entr${n === 1 ? 'y' : 'ies'}, each valid` };
   },
-  /** Every claim line in the named documents carries a provenance tag. */
+  /**
+   * Every claim in the named research documents carries a tag the research template allows, by the kit's own research
+   * rules (validate_docs.js `research`, TAG_RULES): each `## Findings` bullet exactly one of `[verified: …]`,
+   * `[docs: URL @ version]`, `[inferred: from …]`, each `## What I could not verify` bullet `[unknown]`. The template's
+   * other sections (`## Sources` bullets, the header fields) hold no claims and are not checked, and a document with
+   * no Findings bullet fails. Citations are not range-checked here (the scorer has the end state's text, not the
+   * repository); the judge reads them.
+   */
   provenance_tags(outcome, task) {
     const docs = task.expected?.tagged_docs ?? [];
-    const untagged = [];
+    const bad = [];
     for (const d of docs) {
       const text = outcome.files?.[d];
       if (typeof text !== 'string') {
-        untagged.push(`${d}: missing`);
+        bad.push(`${d}: missing`);
         continue;
       }
-      for (const line of text.split('\n')) {
-        const t = line.trim();
-        if (!t.startsWith('- ') || t.length < 12) continue;
-        if (/^- [A-Z][A-Za-z ]{1,24}:\s/.test(t)) continue; // a header field (`- Slug: x`), not a claim
-        if (!/\[(verified|inferred|unknown|human)[^\]]*\]/.test(t)) untagged.push(`${d}: "${t.slice(0, 50)}"`);
-      }
+      const lines = K.splitlines(text);
+      const v = new V.Validator(path.sep, null, {});
+      v.resolveCitations = () => {};
+      v.research(d, lines);
+      for (const x of v.v.filter((y) => TAG_RULES.has(y.rule))) bad.push(`${d}:${x.line} ${x.rule}: ${x.message}`);
+      if (!K.parseSections(K.stripHtmlComments(lines)).get('findings')?.bullets().length) bad.push(`${d}: no bullet under ## Findings`);
     }
-    return untagged.length ? { ok: false, why: untagged.slice(0, 3).join('; ') } : { ok: true, why: `${docs.length} documents fully tagged` };
+    return bad.length ? { ok: false, why: `${bad.length} problem(s): ${bad.slice(0, 3).join('; ')}` } : { ok: true, why: `${docs.length} document(s): every Findings and could-not-verify bullet tagged as the template allows` };
   },
   /**
    * The review report is filled in: the kit's own review checks (validate_docs.js `review`, REVIEW_RULES) find no
