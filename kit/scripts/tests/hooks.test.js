@@ -169,6 +169,46 @@ test('guard bash allows normal', (t) => {
   }
 });
 
+test('guard bash refuses the owner\'s decisions through kit in forms the permission ask rule does not match (#106)', (t) => {
+  const repo = makeRepo(t);
+  // Claude Code matches `Bash(kit lane merge *)` against the command as written; these would match only Bash(kit *)
+  const disguised = ['kit lane -- merge --pr 4 --by x', "kit lane 'merge' footer --by x", 'kit lane "merge" footer --by x', 'kit  lane merge footer --by x',
+    'kit lane -- resume-all --by x', "kit 'bootstrap' --repo .", 'timeout 60 kit lane -- merge x', 'npm test && kit lane -- merge x', 'kit lan\\e merge x',
+    "echo 'merge s --by J' | xargs kit lane", 'echo bootstrap | xargs kit', "stdbuf -o0 kit lane 'merge' s", 'builtin kit lane "merge" s',
+    "timeout -s KILL 5 kit lane 'merge' s", "for i in 1; do kit lane 'merge' s; done", "{ kit lane 'merge' s; }", "if true; then kit lane 'merge' s; fi",
+    "! kit lane 'merge' s", "kit lane $'merge' s", 'kit lane $(echo merge) s', 'kit lane `echo merge` s', 'x=merge; kit lane $x s', 'kit lane mer\\\nge s',
+    // a fake here-doc marker must not hide the commands after it (review)
+    "cat <<<x\nkit lane 'merge' s", 'echo "<<EOF"\nkit lane \'merge\' s', "# <<EOF\nkit lane 'merge' s", "echo $((1<<X))\nkit lane 'merge' s",
+    "cat <<EOF\nx\nEOF\nkit lane 'merge' s",
+    'kit lane {merge,} s', 'kit lane merg[e] s', 'kit lane --repo . merge', "'kit' lane merge s",
+    // review 3: substitutions inside double quotes, redirects glued to kit, the spacing check scoped to the command
+    "echo `kit lane 'merge' s --by j`", `echo "$(kit lane 'merge' s --by j)"`, "kit>/dev/null lane 'merge' s --by j", 'kit>/dev/null  bootstrap --upgrade',
+    'kit 2>&1 lane merge s', 'echo kit lane merge; kit lane  merge s', 'kit lane  merge s --by j # kit lane merge',
+    'git commit -m "note: kit lane merge" && kit lane  merge s', 'kit lane\tmerge s'];
+  for (const c of disguised) {
+    const r = run('hook_guard_bash.js', pre(repo, 'Bash', { command: c }));
+    assert.ok(r.returncode === 2 && /write it (plainly|on one line)|run the kit command directly/.test(r.stderr), `${c}: ${r.returncode} ${r.stderr}`);
+  }
+  // the plain forms reach Claude Code's prompt, so the guard lets them through; other kit commands are untouched
+  for (const c of ['kit lane merge footer --by Jonathan', 'kit lane resume-all --by Jonathan', 'kit bootstrap --repo .', 'FOO=1 kit lane merge x --by j',
+    'kit lane next-step footer --repo .', 'kit lane template spec --slug merge-x', 'echo "kit lane -- merge"', 'kit lane goal-set merge done',
+    'kit lane next-step merge-sort --repo .', 'git commit -m "run kit lane merge when CI is green"', 'git merge --no-ff main', 'timeout 60 kit lane merge x --by j',
+    // kit as an argument, not the program, is untouched
+    'grep -n kit README.md', 'grep -rn "kit" docs | head', 'rg kit -g "*.md"', 'grep kit $(git ls-files)', 'find . -name "*.js" | xargs grep -l kit',
+    'git commit -m "update kit docs" \\\n --author x', 'kit lane merge s --by j 2>&1 | tail -3', 'kit --help',
+    // a here-doc body is text (review 5: a commit message naming the rule was refused)
+    "git commit -m \"$(cat <<'EOF'\nfix\n\nBash(kit *) no longer approves it.\nEOF\n)\"", 'echo "$(kit lane merge s --by j)"']) {
+    const r = run('hook_guard_bash.js', pre(repo, 'Bash', { command: c }));
+    assert.equal(r.returncode, 0, `${c}: ${r.stderr}`);
+  }
+});
+
+test('lane.js never picks a subcommand after a leading --, so `lane.js -- merge` cannot reach merge (#106)', () => {
+  const r = runScript('lane.js', ['--', 'merge', '--by', 'x']);
+  assert.notEqual(r.returncode, 0);
+  assert.doesNotMatch(r.stderr, /pass a slug or --pr/);
+});
+
 test('guard bash blocks merging a PR outside lane.js merge (#68)', (t) => {
   const repo = makeRepo(t);
   const bad = ['gh pr merge 4 --squash', 'cd /p && gh pr merge 4', 'x=$(gh pr merge 4)', 'echo ok\ngh pr merge 4 --auto',

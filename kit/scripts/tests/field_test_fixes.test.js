@@ -203,3 +203,19 @@ test('#63 an upgrade moves the kit\'s gate commands from the "$HOME" form to the
   assert.equal(c.mutation, 'kit ci_audit --repo . --level critical');
   assert.ok(settings().every((r) => !r.includes('$HOME')), settings().join(', '));
 });
+
+test('#63 the human\'s decisions ask every time: bootstrap writes the kit\'s ask rules, an upgrade adds them, a project\'s own are kept', (t) => {
+  const root = F.nodeApi(path.join(tmpPath(t), 'node-api'));
+  boot(root);
+  const sp = path.join(root, '.claude', 'settings.json');
+  const perms = () => JSON.parse(fs.readFileSync(sp, 'utf8')).permissions;
+  const kitAsk = ['Bash(kit bootstrap *)', 'Bash(kit lane merge *)', 'Bash(kit lane resume-all *)'];
+  for (const r of kitAsk) assert.ok(perms().ask.includes(r), r);
+  // a project set up before ask rules existed, with one ask rule of its own
+  const s = JSON.parse(fs.readFileSync(sp, 'utf8'));
+  s.permissions.ask = ['Bash(npm publish *)'];
+  fs.writeFileSync(sp, JSON.stringify(s, null, 2));
+  boot(root, '--upgrade');
+  for (const r of [...kitAsk, 'Bash(npm publish *)']) assert.ok(perms().ask.includes(r), r);
+  assert.equal(runScript('ci_security_floor.js', ['--repo', root]).returncode, 0);
+});

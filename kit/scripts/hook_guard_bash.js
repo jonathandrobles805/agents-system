@@ -6,7 +6,8 @@
 //   rm -rf on anything outside /tmp or the worktree, sudo, curl|sh / wget|sh, --no-verify,
 //   writes into .claude/ or .github/workflows via redirection, sed -i, tee, cp, mv,
 //   chmod/chown on .claude/hooks, printing secrets (cat .env), git commit when staged files match secret patterns,
-//   merging a PR directly (gh pr merge, gh api PUT …/merge, GraphQL mergePullRequest): lane.js merge waits for CI.
+//   merging a PR directly (gh pr merge, gh api PUT …/merge, GraphQL mergePullRequest): lane.js merge waits for CI,
+//   and the owner's decisions through `kit` (merge, resume-all, bootstrap) in any form the permission ask rule misses.
 // In a lane additionally: git worktree remove/prune, git branch -D, checkout/switch to another branch.
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
@@ -63,6 +64,206 @@ export const FETCH = new RegExp(`${B}(curl|wget)${E}`, 'u');
 export const URL_IN = /(?:https?:\/\/|\/\/)([A-Za-z0-9._-]+\.[A-Za-z]{2,})/gu;
 
 /** The reason a fetch must not run in this lane, or null when every host it names is declared. */
+/**
+ * The simple commands of a shell line, each a list of words `{ value, raw, start, end }` (offsets into `line`), split
+ * on `; & | ( )`, and newlines outside quotes (a backtick stays in its word, so it is never plain). Quotes and backslashes are removed from `value` and kept in
+ * `raw`. Redirections (`>f`, `2>&1`, `<f`) are dropped with their target. `cont` marks a command continued over a
+ * backslash-newline. Command substitutions inside double quotes are not split here; `substitutionBodies` finds them.
+ */
+export function shellCommands(line) {
+  const cmds = [];
+  let words = [];
+  let cont = false;
+  let cur = null;
+  let q = null;
+  let redirect = false;
+  const word = (i) => (cur = cur ?? { value: '', raw: '', start: i, end: i });
+  const endWord = () => {
+    if (cur !== null && !redirect) words.push(cur);
+    else if (cur !== null) redirect = false;
+    cur = null;
+  };
+  const endCmd = () => {
+    endWord();
+    redirect = false;
+    if (words.length) cmds.push(Object.assign(words, { cont }));
+    words = [];
+    cont = false;
+  };
+  for (let i = 0; i < line.length; i++) {
+    const c = line[i];
+    if (q) {
+      cur.raw += c;
+      cur.end = i + 1;
+      if (c === q) q = null;
+      else if (c === '\\' && q === '"' && i + 1 < line.length) (cur.value += line[++i]), (cur.raw += line[i]), (cur.end = i + 1);
+      else cur.value += c;
+      continue;
+    }
+    if (c === '\\' && line[i + 1] === '\n') {
+      endWord();
+      cont = true;
+      i++;
+      continue;
+    }
+    if (c === "'" || c === '"') {
+      word(i);
+      cur.raw += c;
+      cur.end = i + 1;
+      q = c;
+      continue;
+    }
+    if (c === '\\' && i + 1 < line.length) {
+      word(i);
+      cur.raw += c + line[i + 1];
+      cur.value += line[++i];
+      cur.end = i + 1;
+      continue;
+    }
+    if (c === '>' || c === '<') {
+      if (cur !== null && /^\d+$/.test(cur.raw)) cur = null; // the fd of `2>`
+      endWord();
+      while ('<>&|'.includes(line[i + 1] ?? 'x') && line[i + 1] !== undefined) i++;
+      redirect = true;
+      continue;
+    }
+    if (';&|\n()'.includes(c)) {
+      endCmd();
+      continue;
+    }
+    if (/\s/.test(c)) {
+      endWord();
+      continue;
+    }
+    word(i);
+    cur.raw += c;
+    cur.value += c;
+    cur.end = i + 1;
+  }
+  endCmd();
+  return cmds;
+}
+
+/** The bodies of every `$(…)` and `` `…` `` in a line, outside single quotes (inside double quotes too). */
+export function substitutionBodies(line) {
+  const out = [];
+  let q = null;
+  for (let i = 0; i < line.length; i++) {
+    const c = line[i];
+    if (c === '\\' && q !== "'") { i++; continue; }
+    if (q === "'") { if (c === "'") q = null; continue; }
+    if (c === "'" && !q) { q = "'"; continue; }
+    if (c === '"') { q = q ? null : '"'; continue; }
+    if (c === '`') {
+      let j = i + 1;
+      while (j < line.length && line[j] !== '`') j += line[j] === '\\' ? 2 : 1;
+      out.push(line.slice(i + 1, j));
+      i = j;
+      continue;
+    }
+    if (c === '$' && line[i + 1] === '(') {
+      let depth = 1;
+      let j = i + 2;
+      let sq = false;
+      for (; j < line.length && depth; j++) {
+        if (line[j] === "'") sq = !sq;
+        else if (!sq && line[j] === '\\') j++;
+        else if (!sq && line[j] === '(') depth++;
+        else if (!sq && line[j] === ')') depth--;
+      }
+      out.push(line.slice(i + 2, depth ? j : j - 1));
+      i = (depth ? j : j - 1);
+    }
+  }
+  return out;
+}
+
+/** The here-doc delimiters a line opens: `<<` outside quotes, comments and `((…))`, and not part of `<<<`. */
+function heredocDelims(text) {
+  const out = [];
+  let q = null;
+  let arith = 0;
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i];
+    if (q) {
+      if (c === '\\' && q === '"') i++;
+      else if (c === q) q = null;
+      continue;
+    }
+    if (c === '\\') { i++; continue; }
+    if (c === "'" || c === '"') { q = c; continue; }
+    if (c === '#' && (i === 0 || /\s/.test(text[i - 1]))) break;
+    if (c === '(' && text[i + 1] === '(') { arith++; i++; continue; }
+    if (c === ')' && text[i + 1] === ')' && arith) { arith--; i++; continue; }
+    if (c === '<' && text[i + 1] === '<' && text[i + 2] !== '<' && text[i - 1] !== '<' && !arith) {
+      const m = /^<<-?\s*(['"]?)([A-Za-z_][A-Za-z0-9_]*)\1/.exec(text.slice(i));
+      if (m) { out.push(m[2]); i += m[0].length - 1; }
+    }
+  }
+  return out;
+}
+
+/**
+ * The line with each here-doc's body removed (text such as a commit message, not commands; a known miss when one is
+ * fed to a shell). A body is removed only when its closing delimiter is found; otherwise every line is kept.
+ */
+export function withoutHeredocBodies(line) {
+  const lines = line.split('\n');
+  const out = [];
+  for (let i = 0; i < lines.length; i++) {
+    out.push(lines[i]);
+    for (const d of heredocDelims(lines[i])) {
+      let j = i + 1;
+      while (j < lines.length && lines[j].replace(/^\t+/, '') !== d) j++;
+      if (j >= lines.length) continue; // no closing line: keep the rest as commands
+      out.push(lines[j]);
+      i = j;
+    }
+  }
+  return out.join('\n');
+}
+
+// what may stand before the program in a simple command: assignments, the wrappers Claude Code strips (and env/exec),
+// their options and the plain values those options take
+const BEFORE_PROGRAM = /^(!|\{|if|then|else|elif|do|while|until|[A-Za-z_][A-Za-z0-9_]*=.*|timeout|time|nice|nohup|stdbuf|command|builtin|noglob|xargs|env|exec|-.*|[0-9.]+[smhd]?|[A-Z]+)$/;
+const DECISIONS = [['bootstrap'], ['lane', 'merge'], ['lane', 'resume-all']];
+
+/**
+ * Why a line runs a kit command in a form Claude Code's ask rules (`Bash(kit lane merge *)`, …) might not match, or
+ * null. `kit` counts only where it is the program of a simple command (after assignments and wrappers), in the line
+ * or in any command substitution. Such a command must name its script, and for `lane` its subcommand, as plain
+ * lowercase words; an owner's decision must be written exactly `kit lane merge` (single spaces, nothing between; what follows is the
+ * ask rule's `*`); it
+ * must not run through xargs or continue over a backslash-newline. A guardrail for common forms: the shell is parsed only
+ * approximately (comments, here-docs, `$'…'`, `&>` and `xargs -I` are known misses); the ask rule and your prompt are the
+ * control, and the container (Step 8) is the wall.
+ */
+export function kitDecisionDisguised(line, depth = 0) {
+  line = withoutHeredocBodies(line);
+  for (const words of shellCommands(line)) {
+    const k = words.findIndex((w, i) => (w.value === 'kit' || w.raw === 'kit') && words.slice(0, i).every((x) => BEFORE_PROGRAM.test(x.value)));
+    if (k < 0) continue;
+    const plainWord = (w, re) => w !== undefined && w.raw === w.value && re.test(w.value);
+    if (words.slice(0, k).some((w) => w.value === 'xargs')) return 'running kit through xargs (its arguments are not visible to the permission prompt); run the kit command directly';
+    const [kitWord, script, sub] = [words[k], words[k + 1], words[k + 2]];
+    if (kitWord.raw !== 'kit') return `the kit command written in a quoted or escaped form (${kitWord.raw}); write it plainly as \`kit <script> …\``;
+    if (words.cont) return 'a kit command continued over a backslash-newline; write it on one line';
+    if (script === undefined || (script.raw === script.value && /^(-h|--help)$/.test(script.value))) continue;
+    if (!plainWord(script, /^[a-z0-9_]+$/)) return `a kit script name written in a computed or quoted form (${script.raw}); write it plainly as \`kit <script> …\``;
+    if (script.value === 'lane' && sub !== undefined && !plainWord(sub, /^[a-z][a-z0-9-]*$/)) return `a kit lane subcommand written in a computed or quoted form (${sub.raw}); write it plainly as \`kit lane <subcommand> …\``;
+    const decision = DECISIONS.find((d) => d.every((x, i) => words[k + 1 + i]?.value === x));
+    if (decision) {
+      const want = ['kit', ...decision].join(' ');
+      if (line.slice(kitWord.start, words[k + decision.length].end) !== want) return `the owner's decision (${want}) written with extra spacing or text between its words; write it plainly as \`${want} …\``;
+    }
+  }
+  if (depth < 4) for (const body of substitutionBodies(line)) {
+    const why = kitDecisionDisguised(body, depth + 1);
+    if (why) return why;
+  }
+  return null;
+}
+
 export function fetchOk(cmd, specPath) {
   if (!FETCH.test(cmd)) return null;
   const declared = K.specNetwork(specPath);
@@ -161,6 +362,8 @@ export function main() {
   };
 
   for (const [re, why] of RULES) if (re.test(cmd)) return deny(why);
+  const disguised = kitDecisionDisguised(cmd);
+  if (disguised) return deny(disguised);
   if (lane) for (const [re, why] of LANE_RULES) if (re.test(cmd)) return deny(why);
   const bad = rmTargetsOk(cmd, root, cwd);
   if (bad) return deny(bad);
