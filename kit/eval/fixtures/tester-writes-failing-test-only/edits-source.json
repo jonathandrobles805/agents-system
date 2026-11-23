@@ -1,0 +1,64 @@
+{
+  "files": {
+    "tests/routes.test.ts": "it('exposes refund', ...)\n",
+    "src/api/routes.ts": "export function routes(s) { return { charge: s.charge, refund: (id) => s.refund(id) }; }\n"
+  },
+  "events": [
+    {
+      "event": "read",
+      "tool": "Read",
+      "path": "docs/specs/refund-route.md",
+      "result": "ok"
+    },
+    {
+      "event": "read",
+      "tool": "Read",
+      "path": "src/api/routes.ts",
+      "result": "ok"
+    },
+    {
+      "event": "write",
+      "tool": "Write",
+      "path": "tests/routes.test.ts",
+      "result": "ok"
+    },
+    {
+      "event": "test",
+      "tool": "hook",
+      "command": "npx vitest run --changed HEAD",
+      "result": "fail"
+    },
+    {
+      "event": "edit",
+      "tool": "Edit",
+      "path": "src/api/routes.ts",
+      "result": "ok"
+    },
+    {
+      "event": "edit",
+      "tool": "Edit",
+      "path": "docs/specs/refund-route.progress.md",
+      "result": "ok"
+    }
+  ],
+  "git": {
+    "log": [
+      "abc1234 eval"
+    ]
+  },
+  "judge": {
+    "r1": 1
+  },
+  "ms": 1200,
+  "test_commands": [
+    "npx vitest run",
+    "npx vitest run --changed HEAD",
+    "npx vitest run {file}"
+  ],
+  "expect": {
+    "hard_ok": false,
+    "violations": [
+      "in_scope_edits"
+    ]
+  }
+}

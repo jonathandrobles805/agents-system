@@ -16,7 +16,7 @@ export function available() {
   return { ok: true, why: 'replays recorded outcomes' };
 }
 
-/** @returns {{ runner: string, variant: string, files: object, events: object[], git: object, judge: object, ms: number }} */
+/** @returns {{ runner: string, variant: string, files: object, events: object[], git: object, judge: object, test_commands: string[], ms: number }} */
 export async function run(task, { variant = process.env.KIT_EVAL_FIXTURE_VARIANT || task.fixture_variant || 'good', attempt = 0 } = {}) {
   // a variant models one fault for the tasks it applies to; tasks without that variant replay their good outcome
   let p = path.join(EVAL_DIR, 'fixtures', task.id, `${variant}.json`);
@@ -28,5 +28,5 @@ export async function run(task, { variant = process.env.KIT_EVAL_FIXTURE_VARIANT
   const rec = JSON.parse(fs.readFileSync(p, 'utf8'));
   // a recorded "judge" per attempt lets a fixture model run-to-run variance for the regression statistics
   const judge = Array.isArray(rec.judge_by_attempt) ? rec.judge_by_attempt[attempt % rec.judge_by_attempt.length] : rec.judge ?? {};
-  return { runner: name, variant, files: rec.files ?? {}, events: rec.events ?? [], git: rec.git ?? {}, judge, ms: rec.ms ?? 0 };
+  return { runner: name, variant, files: rec.files ?? {}, events: rec.events ?? [], git: rec.git ?? {}, judge, test_commands: rec.test_commands ?? [], ms: rec.ms ?? 0 };
 }

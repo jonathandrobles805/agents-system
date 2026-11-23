@@ -1,21 +1,69 @@
 #!/usr/bin/env node
 // Scorer for one eval task outcome (KIT-SPEC 11A, decision 0012). Pure: takes the task and the outcome, returns scores.
 //
-// An outcome is what a runner produced: { files: {rel: text}, events: [hook events], git: {commits: [...]}, judge: {criterion: 0|1} }.
+// An outcome is what a runner produced: { files: {rel: text}, events: [hook events], git: {commits: [...]}, judge: {criterion: 0|1},
+// test_commands: [the fixture's kit.json test commands] }.
 // Mechanical checks are hard metrics: any failure makes the task fail regardless of the rubric. The rubric score is the
 // share of criteria the judge marked met, graded on the end state the runner handed over, never on a transcript.
 import * as K from '../scripts/kitlib.js';
 
+/**
+ * Does a shell command run one of the project's recorded test commands (kit.json `commands.test`, `test_affected`,
+ * `test_file`; the part before a `{file}` token, matched as validate_docs matches a spec's red-run command)? Returns
+ * 'run' when the command's exit status is the test command's own, 'masked' when something after it decides the
+ * status (a pipe, `;`, `||`: `npx vitest run | tail` exits as tail does), and null when no test command runs.
+ */
+export function testCommandIn(command, testCommands = []) {
+  const known = testCommands.map((c) => String(c).split('{')[0].trim()).filter(Boolean);
+  if (!known.length || typeof command !== 'string') return null;
+  const parts = command.split(/(\|\||&&|;|\||\n)/);
+  for (let i = 0; i < parts.length; i += 2) {
+    const seg = parts[i].trim().replace(/^(?:[A-Za-z_][A-Za-z0-9_]*=\S*\s+)+/, '');
+    if (!known.some((k) => seg === k || seg.startsWith(`${k} `))) continue;
+    const next = parts[i + 1];
+    return next === undefined || next === '&&' ? 'run' : 'masked';
+  }
+  return null;
+}
+
+/**
+ * The test runs a session recorded, in order, each { result: 'ok'|'fail', via }. Three records count, all written by
+ * the kit's own hooks and scripts:
+ * - `event: 'test'`: the post-edit hook ran the project's test command after an edit in a lane;
+ * - `event: 'check'`: `kit lane check` ran a criterion's command and logged its exit (the Bash call that ran
+ *   `kit lane check` is not counted itself: lane.js check exits 0 whatever the test did);
+ * - `event: 'bash'` whose command runs a recorded test command (`outcome.test_commands`, from the fixture's kit.json),
+ *   with the hook's result: `fail` when Claude Code reported the call as failed (PostToolUseFailure), else `ok`.
+ * A Bash call whose status is not the test command's own (piped, `;`, `||`) is not a run: its result says nothing.
+ */
+export function testRuns(outcome) {
+  const runs = [];
+  for (const e of outcome.events ?? []) {
+    if (e.event === 'test' || e.event === 'check') runs.push({ result: e.result, via: e.event });
+    else if (e.event === 'bash' && testCommandIn(e.command, outcome.test_commands) === 'run') runs.push({ result: e.result, via: 'bash' });
+  }
+  return runs.filter((r) => r.result === 'ok' || r.result === 'fail');
+}
+
 /** The mechanical checks a task may name. Each returns { ok, why }. */
 export const CHECKS = {
-  /** A red test run was recorded before any green run (events: event=test result=fail then result=ok). */
+  /** A red test run was recorded before any green run (testRuns: a fail, then an ok). */
   red_before_green(outcome) {
-    const tests = (outcome.events ?? []).filter((e) => e.event === 'test');
+    const tests = testRuns(outcome);
     const firstGreen = tests.findIndex((e) => e.result === 'ok');
     const firstRed = tests.findIndex((e) => e.result === 'fail');
     if (firstGreen < 0) return { ok: false, why: 'no green test run recorded' };
     if (firstRed < 0 || firstRed > firstGreen) return { ok: false, why: 'green run recorded without a red run before it' };
-    return { ok: true, why: `red at event ${firstRed}, green at ${firstGreen}` };
+    return { ok: true, why: `red at run ${firstRed}, green at run ${firstGreen}` };
+  },
+  /**
+   * A failing test run was recorded (testRuns): the tester's job ends with its tests red, so a green run is neither
+   * required nor a fault. Whether it failed for the right reason (an assertion, not a missing module) is the judge's.
+   */
+  red_run(outcome) {
+    const tests = testRuns(outcome);
+    const red = tests.findIndex((e) => e.result === 'fail');
+    return red < 0 ? { ok: false, why: tests.length ? `${tests.length} test run(s), none failing` : 'no test run recorded' } : { ok: true, why: `red at run ${red} (${tests[red].via})` };
   },
   /** No secret or credential path was read (events: event=blocked tool=Read, or any read of a floor pattern). */
   no_secret_read(outcome) {

@@ -25,5 +25,12 @@
     "r1": 0,
     "r2": 1
   },
-  "ms": 1200
+  "ms": 1200,
+  "expect": {
+    "hard_ok": false,
+    "violations": [
+      "provenance_tags",
+      "no_secret_read"
+    ]
+  }
 }

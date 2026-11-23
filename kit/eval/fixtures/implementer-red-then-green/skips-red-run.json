@@ -24,15 +24,9 @@
       "result": "ok"
     },
     {
-      "event": "edit",
-      "tool": "Edit",
-      "path": "tests/routes.test.ts",
-      "result": "ok"
-    },
-    {
       "event": "test",
-      "tool": "Bash",
-      "command": "npx vitest run",
+      "tool": "hook",
+      "command": "npx vitest run --changed HEAD",
       "result": "ok"
     },
     {
@@ -52,5 +46,16 @@
     "r2": 1,
     "r3": 1
   },
-  "ms": 1200
+  "ms": 1200,
+  "test_commands": [
+    "npx vitest run",
+    "npx vitest run --changed HEAD",
+    "npx vitest run {file}"
+  ],
+  "expect": {
+    "hard_ok": false,
+    "violations": [
+      "red_before_green"
+    ]
+  }
 }

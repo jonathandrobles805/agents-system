@@ -8,7 +8,7 @@
   "goal": "From the approved spec, write the failing test for D1 in tests/routes.test.ts. Do not touch source files.",
   "checks": [
     "in_scope_edits",
-    "red_before_green"
+    "red_run"
   ],
   "expected": {
     "allowed_files": [

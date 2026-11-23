@@ -31,5 +31,9 @@
     "r1": 1,
     "r2": 1
   },
-  "ms": 1200
+  "ms": 1200,
+  "expect": {
+    "hard_ok": true,
+    "violations": []
+  }
 }

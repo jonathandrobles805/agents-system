@@ -12,31 +12,31 @@
     {
       "event": "read",
       "tool": "Read",
-      "path": "tests/routes.test.ts",
+      "path": "tests/payment.test.ts",
       "result": "ok"
     },
     {
-      "event": "edit",
-      "tool": "Edit",
+      "event": "write",
+      "tool": "Write",
       "path": "tests/routes.test.ts",
       "result": "ok"
     },
     {
       "event": "test",
+      "tool": "hook",
+      "command": "npx vitest run --changed HEAD",
+      "result": "fail"
+    },
+    {
+      "event": "bash",
       "tool": "Bash",
-      "command": "npx vitest run",
+      "command": "npx vitest run --reporter=tap tests/routes.test.ts",
       "result": "fail"
     },
     {
       "event": "edit",
       "tool": "Edit",
       "path": "docs/specs/refund-route.progress.md",
-      "result": "ok"
-    },
-    {
-      "event": "test",
-      "tool": "Bash",
-      "command": "npx vitest run",
       "result": "ok"
     }
   ],
@@ -48,5 +48,14 @@
   "judge": {
     "r1": 1
   },
-  "ms": 1200
+  "ms": 1200,
+  "test_commands": [
+    "npx vitest run",
+    "npx vitest run --changed HEAD",
+    "npx vitest run {file}"
+  ],
+  "expect": {
+    "hard_ok": true,
+    "violations": []
+  }
 }

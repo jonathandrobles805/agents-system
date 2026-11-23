@@ -8,7 +8,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { CORE_ROLES, compare, fmt, loadTasks, runSet, selectTasks, summarize, writeBaseline } from '../../eval/harness.js';
-import { CHECKS, score } from '../../eval/score.js';
+import { CHECKS, score, testCommandIn, testRuns } from '../../eval/score.js';
 import * as fixture from '../../eval/runners/fixture.js';
 import * as claude from '../../eval/runners/claude.js';
 import { tmpPath } from './helpers.js';
@@ -67,7 +67,7 @@ test('fixture runner replays, records its name, falls back to good for a variant
   const good = await fixture.run(task, { variant: 'good' });
   assert.equal(good.runner, 'fixture');
   assert.equal(good.variant, 'good');
-  assert.ok(good.events.some((e) => e.event === 'test' && e.result === 'fail'));
+  assert.equal(testRuns(good)[0].result, 'fail', 'the good outcome records its red run first');
   const other = await fixture.run(loadTasks().find((t) => t.role === 'planner'), { variant: 'skips-red-run' });
   assert.equal(other.variant, 'good');
   // judge_by_attempt gives run-to-run variance
@@ -200,3 +200,44 @@ test('claude runner: each session gets its own home with the kit installed, a wr
   assert.equal(cfg.projects[root].hasTrustDialogAccepted, true);
   assert.equal(cfg.projects[fs.realpathSync(root)].hasTrustDialogAccepted, true);
 });
+
+test('a test run is recognised in a session\'s Bash calls only when its exit status is the recorded test command\'s own', () => {
+  const tc = ['npx vitest run', 'npx vitest run --changed HEAD', 'npx vitest run {file}'];
+  for (const c of ['npx vitest run', 'npx vitest run --reporter=tap tests/routes.test.ts', 'cd /w && npx vitest run tests/r.ts', 'CI=1 npx vitest run', 'npx vitest run && echo ok']) assert.equal(testCommandIn(c, tc), 'run', c);
+  // something after the test decides the exit status: the hook's result says nothing about the test
+  for (const c of ['npx vitest run 2>&1 | tail -5', 'npx vitest run || true', 'npx vitest run; echo done']) assert.equal(testCommandIn(c, tc), 'masked', c);
+  // not the recorded command: another script, a lookalike, or `kit lane check`, whose own exit is always 0
+  for (const c of ['npm test', 'npx vitestx run', 'ls tests', 'kit lane check refund-route D1 --repo /r -- npx vitest run']) assert.equal(testCommandIn(c, tc), null, c);
+  assert.equal(testCommandIn('npx vitest run', []), null, 'no recorded command: nothing is a test run');
+  // what the kit's hooks actually write (hook_event_log: event 'bash', result 'fail' on PostToolUseFailure;
+  // post-edit-check: event 'test'; lane.js check: event 'check') becomes the ordered list of runs
+  const bash = (command, result) => ({ event: 'bash', tool: 'Bash', command, result });
+  const runs = testRuns({ test_commands: tc, events: [
+    bash('npx vitest run tests/r.ts', 'fail'), bash('ls src', 'fail'), bash('npx vitest run | tail', 'ok'),
+    { event: 'test', tool: 'hook', result: 'ok' }, bash('kit lane check s D1 --repo /r -- npx vitest run', 'ok'), { event: 'check', criterion: 'D1', result: 'fail' },
+  ] });
+  assert.deepEqual(runs, [{ result: 'fail', via: 'bash' }, { result: 'ok', via: 'test' }, { result: 'fail', via: 'check' }]);
+  // red_run: the tester's check; a red run anywhere passes, no run or only green runs fail
+  assert.equal(CHECKS.red_run({ test_commands: tc, events: [bash('npx vitest run tests/r.ts', 'fail')] }).ok, true);
+  assert.equal(CHECKS.red_run({ test_commands: tc, events: [bash('npx vitest run tests/r.ts', 'ok')] }).ok, false);
+  assert.equal(CHECKS.red_run({ test_commands: tc, events: [bash('npx vitest run tests/r.ts 2>&1 | tail', 'fail'), bash('npm run nope', 'fail')] }).ok, false);
+  // red_before_green over the same records: a Bash red before a hook green passes; a masked red does not count
+  assert.equal(CHECKS.red_before_green({ test_commands: tc, events: [bash('npx vitest run', 'fail'), { event: 'test', result: 'ok' }] }).ok, true);
+  assert.equal(CHECKS.red_before_green({ test_commands: tc, events: [bash('npx vitest run | tail', 'fail'), { event: 'test', result: 'ok' }] }).ok, false);
+});
+
+test('every recorded outcome scores as its fixture says: each check has a passing and a failing case', async () => {
+  const dir = path.join(path.dirname(path.dirname(fileURLToPath(import.meta.url))), '..', 'eval', 'fixtures');
+  const seen = new Map();
+  for (const task of loadTasks()) {
+    for (const f of fs.readdirSync(path.join(dir, task.id)).filter((x) => x.endsWith('.json'))) {
+      const { expect } = JSON.parse(fs.readFileSync(path.join(dir, task.id, f), 'utf8'));
+      assert.ok(expect, `${task.id}/${f} records what it should score`);
+      const s = score(task, await fixture.run(task, { variant: f.replace(/\.json$/, '') }));
+      assert.deepEqual({ hard_ok: s.hard_ok, violations: s.violations }, expect, `${task.id}/${f}: ${JSON.stringify(s.hard)}`);
+      for (const [name, r] of Object.entries(s.hard)) seen.set(`${name}:${r.ok}`, true);
+    }
+  }
+  for (const name of ['red_before_green', 'red_run', 'in_scope_edits']) for (const ok of [true, false]) assert.ok(seen.has(`${name}:${ok}`), `a fixture where ${name} is ${ok}`);
+});
+
