@@ -7,7 +7,8 @@
 // session], git: {commits: [...]}, judge: {criterion: 0|1}, test_commands: [the fixture's kit.json test commands],
 // output: the session's printed answer }.
 // Mechanical checks are hard metrics: any failure makes the task fail regardless of the rubric. The rubric score is the
-// share of criteria the judge marked met, graded on the end state the runner handed over, never on a transcript.
+// share of criteria the judge marked met, graded on the end state the runner handed over (with the session's Bash
+// commands and their output, never its narration).
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
