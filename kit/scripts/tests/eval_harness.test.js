@@ -207,9 +207,11 @@ test('claude runner: each session gets its own home with the kit installed, a wr
 
 test('a test run is recognised in a session\'s Bash calls only when its exit status is the recorded test command\'s own', () => {
   const tc = ['npx vitest run', 'npx vitest run --changed HEAD', 'npx vitest run {file}'];
-  for (const c of ['npx vitest run', 'npx vitest run --reporter=tap tests/routes.test.ts', 'cd /w && npx vitest run tests/r.ts', 'CI=1 npx vitest run', 'npx vitest run && echo ok']) assert.equal(testCommandIn(c, tc), 'run', c);
+  for (const c of ['npx vitest run', 'npx vitest run --reporter=tap tests/routes.test.ts', 'cd /w && npx vitest run tests/r.ts', 'CI=1 npx vitest run', 'npx vitest run 2>&1', 'npx vitest run &>/dev/null', 'npx vitest run >&2', 'npx vitest run\n']) assert.equal(testCommandIn(c, tc), 'run', c);
+  // an `&&` chain that goes on after the test: success says the test passed, a failure may be the later command's
+  for (const c of ['npx vitest run && echo ok', 'npx vitest run tests/r.ts && npm run lint']) assert.equal(testCommandIn(c, tc), 'pass-only', c);
   // something after the test decides the exit status: the hook's result says nothing about the test
-  for (const c of ['npx vitest run 2>&1 | tail -5', 'npx vitest run || true', 'npx vitest run; echo done']) assert.equal(testCommandIn(c, tc), 'masked', c);
+  for (const c of ['npx vitest run 2>&1 | tail -5', 'npx vitest run || true', 'npx vitest run; echo done', 'npx vitest run &', 'npx vitest run & wait', 'npx vitest run\necho done']) assert.equal(testCommandIn(c, tc), 'masked', c);
   // not the recorded command: another script, a lookalike, or `kit lane check`, whose own exit is always 0
   for (const c of ['npm test', 'npx vitestx run', 'ls tests', 'kit lane check refund-route D1 --repo /r -- npx vitest run']) assert.equal(testCommandIn(c, tc), null, c);
   assert.equal(testCommandIn('npx vitest run', []), null, 'no recorded command: nothing is a test run');
@@ -221,6 +223,8 @@ test('a test run is recognised in a session\'s Bash calls only when its exit sta
     { event: 'test', tool: 'hook', result: 'ok' }, bash('kit lane check s D1 --repo /r -- npx vitest run', 'ok'), { event: 'check', criterion: 'D1', result: 'fail' },
   ] });
   assert.deepEqual(runs, [{ result: 'fail', via: 'bash' }, { result: 'ok', via: 'test' }, { result: 'fail', via: 'check' }]);
+  // a failing `&&` chain is no red run of the test (the lint after it may be what failed); a passing one is a green run
+  assert.deepEqual(testRuns({ test_commands: tc, events: [bash('npx vitest run && npm run lint', 'fail'), bash('npx vitest run && npm run lint', 'ok'), bash('npx vitest run &', 'fail')] }), [{ result: 'ok', via: 'bash' }]);
   // red_run: the tester's check; a red run anywhere passes, no run or only green runs fail
   assert.equal(CHECKS.red_run({ test_commands: tc, events: [bash('npx vitest run tests/r.ts', 'fail')] }).ok, true);
   assert.equal(CHECKS.red_run({ test_commands: tc, events: [bash('npx vitest run tests/r.ts', 'ok')] }).ok, false);

@@ -10,18 +10,24 @@ import * as K from '../scripts/kitlib.js';
 /**
  * Does a shell command run one of the project's recorded test commands (kit.json `commands.test`, `test_affected`,
  * `test_file`; the part before a `{file}` token, matched as validate_docs matches a spec's red-run command)? Returns
- * 'run' when the command's exit status is the test command's own, 'masked' when something after it decides the
- * status (a pipe, `;`, `||`: `npx vitest run | tail` exits as tail does), and null when no test command runs.
+ * 'run' when the command's exit status is the test command's own (it is the last command, or the last of an `&&`
+ * chain), 'pass-only' when an `&&` chain goes on after it (`npx vitest run && npm run lint`: success means the test
+ * passed, a failure may be the later command's), 'masked' when something after it decides the status (a pipe, `;`,
+ * `||`, or a trailing `&` that backgrounds it: `npx vitest run | tail` exits as tail does), and null when no test
+ * command runs.
  */
 export function testCommandIn(command, testCommands = []) {
   const known = testCommands.map((c) => String(c).split('{')[0].trim()).filter(Boolean);
   if (!known.length || typeof command !== 'string') return null;
-  const parts = command.split(/(\|\||&&|;|\||\n)/);
+  // a lone `&` (background) separates too; `2>&1`, `&>` and `>&` are redirections, not separators
+  const parts = command.split(/(\|\||&&|;|\||\n|(?<![<>&])&(?![&>]))/);
   for (let i = 0; i < parts.length; i += 2) {
     const seg = parts[i].trim().replace(/^(?:[A-Za-z_][A-Za-z0-9_]*=\S*\s+)+/, '');
     if (!known.some((k) => seg === k || seg.startsWith(`${k} `))) continue;
     const next = parts[i + 1];
-    return next === undefined || next === '&&' ? 'run' : 'masked';
+    if (next === undefined || (next === '\n' && parts.slice(i + 2).every((p) => !p.trim()))) return 'run';
+    if (next === '&&') return 'pass-only';
+    return 'masked';
   }
   return null;
 }
@@ -34,13 +40,17 @@ export function testCommandIn(command, testCommands = []) {
  *   `kit lane check` is not counted itself: lane.js check exits 0 whatever the test did);
  * - `event: 'bash'` whose command runs a recorded test command (`outcome.test_commands`, from the fixture's kit.json),
  *   with the hook's result: `fail` when Claude Code reported the call as failed (PostToolUseFailure), else `ok`.
- * A Bash call whose status is not the test command's own (piped, `;`, `||`) is not a run: its result says nothing.
+ * A Bash call whose status is not the test command's own (piped, `;`, `||`, backgrounded) is not a run: its result
+ * says nothing. One that goes on with `&&` after the test counts only when it succeeded (testCommandIn 'pass-only').
  */
 export function testRuns(outcome) {
   const runs = [];
   for (const e of outcome.events ?? []) {
     if (e.event === 'test' || e.event === 'check') runs.push({ result: e.result, via: e.event });
-    else if (e.event === 'bash' && testCommandIn(e.command, outcome.test_commands) === 'run') runs.push({ result: e.result, via: 'bash' });
+    else if (e.event === 'bash') {
+      const how = testCommandIn(e.command, outcome.test_commands);
+      if (how === 'run' || (how === 'pass-only' && e.result === 'ok')) runs.push({ result: e.result, via: 'bash' });
+    }
   }
   return runs.filter((r) => r.result === 'ok' || r.result === 'fail');
 }
