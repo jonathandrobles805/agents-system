@@ -56,6 +56,26 @@ test('hook commands reference existing scripts', () => {
   }
 });
 
+// With --agent, an agent's frontmatter hooks and the project's settings hooks both apply. A hook whose command is the
+// same string in both was observed to run once per event on Claude Code 2.1.330 (the eval's event counts rely on it);
+// that is not a documented guarantee, and a command spelled differently in the two would run twice. Keep them identical.
+test('an agent hook whose script the project settings also run uses, byte for byte, the settings\' command', () => {
+  const settings = JSON.parse(read(path.join(KIT, 'hooks', 'settings.project.json')));
+  const registered = new Set(Object.values(settings.hooks).flat().flatMap((m) => m.hooks.map((h) => h.command)));
+  const script = (c) => /kit\/scripts\/([a-z_]+\.js)/.exec(c)?.[1];
+  const shared = new Set([...registered].map(script));
+  let checked = 0;
+  for (const p of AGENTS) {
+    for (const line of splitlines(frontmatter(read(p)))) {
+      const m = /^\s*command:\s*(.+?)\s*$/.exec(line);
+      if (!m || !shared.has(script(m[1]))) continue;
+      checked += 1;
+      assert.ok(registered.has(m[1]), `${path.basename(p)}: '${m[1]}' differs from the settings.project.json command for ${script(m[1])}`);
+    }
+  }
+  assert.ok(checked > 0, 'some agent hook runs a script the settings also run');
+});
+
 test('read only agents cannot edit source', () => {
   for (const name of ['researcher', 'planner', 'reviewer', 'retro', 'spec-critic']) {
     const fm = frontmatter(read(path.join(KIT, 'agents', `${name}.md`)));
