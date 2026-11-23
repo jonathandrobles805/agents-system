@@ -2,7 +2,8 @@
 // repository with the kit installed, then hands the end state back as an outcome: files, hook events, git, and the
 // judge's rubric verdicts. The judge is a second headless session that sees the rubric, the calibration examples, the
 // files the setup wrote, the session's own diff against the setup's state, the end state, the session's printed
-// answer, the lane's check log, and from the worker's transcript only the Bash commands it ran and their output.
+// answer, the lane's check log, and from the worker's transcript only the Bash commands it ran and their output and its
+// Read, Grep, Glob, WebFetch and WebSearch calls with a short excerpt of each result.
 //
 // Needs: `claude` on PATH, ANTHROPIC_API_KEY, and a sandbox runtime (srt or a container). Not runnable in the kit's
 // own unit tests, which use the fixture runner; the planted faults for the harness are proven with fixtures too.
@@ -565,6 +566,58 @@ export function formatBash(calls, { each = 3000, total = 30000 } = {}) {
   return clip(text, total);
 }
 
+/** The read-only tools whose calls the judge reads (transcriptReads), each with the input fields that say what it read. */
+export const READ_TOOLS = { Read: ['file_path'], Grep: ['pattern', 'path', 'glob'], Glob: ['pattern', 'path'], WebFetch: ['url'], WebSearch: ['query'] };
+
+/**
+ * The Read, Grep, Glob, WebFetch and WebSearch calls in a session's transcripts, in order: each `tool_use` with the
+ * input fields READ_TOOLS names (a path, pattern, URL or query), paired with its `tool_result` (the text Claude Code
+ * handed back, and whether it was an error). Every string redacted (redact). A Read of a file the floor forbids reading
+ * (isSecretPath) keeps no result, and a Grep result keeps no line from such a file. The judge reads these to grade
+ * whether a research document's sources are ones the session read or fetched.
+ */
+export function transcriptReads(texts) {
+  const calls = [];
+  const byId = new Map();
+  const textOf = (c) => (typeof c === 'string' ? c : Array.isArray(c) ? c.map((b) => (typeof b === 'string' ? b : typeof b?.text === 'string' ? b.text : '')).join('\n') : '');
+  for (const text of texts) {
+    for (const line of String(text).split('\n')) {
+      let rec;
+      try {
+        rec = JSON.parse(line);
+      } catch {
+        continue;
+      }
+      const content = rec?.message?.content;
+      if (!Array.isArray(content)) continue;
+      for (const b of content) {
+        if (b?.type === 'tool_use' && READ_TOOLS[b.name]) {
+          const input = Object.fromEntries(READ_TOOLS[b.name].filter((k) => typeof b.input?.[k] === 'string').map((k) => [k, redact(b.input[k])]));
+          const call = { tool: b.name, input, output: null, error: false };
+          calls.push(call);
+          if (b.id) byId.set(b.id, call);
+        } else if (b?.type === 'tool_result' && byId.has(b.tool_use_id)) {
+          const call = byId.get(b.tool_use_id);
+          let out = textOf(b.content);
+          if (call.tool === 'Read' && isSecretPath(String(call.input.file_path ?? ''))) out = '(a file the floor forbids reading: no excerpt)';
+          // a Grep line names its file first (`path:line:text`, `path:text` or the path alone)
+          if (call.tool === 'Grep') out = out.split('\n').filter((l) => !isSecretPath(l.split(':')[0].trim())).join('\n');
+          call.output = redact(out);
+          call.error = b.is_error === true;
+        }
+      }
+    }
+  }
+  return calls;
+}
+
+/** The transcripts' read calls (transcriptReads) as the judge reads them: the tool and what it read, then a short excerpt of the result. */
+export function formatReads(calls, { each = 600, total = 20000 } = {}) {
+  const clip = (t, n) => (t.length > n ? `${t.slice(0, n)}\n[... ${t.length - n} more characters]` : t);
+  const text = calls.map((c) => `> ${c.tool} ${Object.entries(c.input).map(([k, v]) => `${k}=${JSON.stringify(v)}`).join(' ')}${c.error ? '   [the call failed]' : ''}\n${c.output === null ? '(no result recorded)' : clip(c.output.trimEnd(), each) || '(empty result)'}`).join('\n\n');
+  return clip(text, total);
+}
+
 /** Every transcript Claude Code wrote under a config directory's projects/, as text, in path order. */
 export function readTranscripts(config) {
   const out = [];
@@ -709,14 +762,18 @@ export async function run(task, { attempt = 0, timeoutMs = 20 * 60 * 1000, trans
     const laneLogLines = laneLog === null ? null : K.splitlines(laneLog).length;
     const git = { log: spawnSync('git', ['log', '--oneline', '-20'], { cwd, encoding: 'utf8' }).stdout.trim().split('\n') };
     // the Bash commands the worker ran and their output, from its own transcripts (none without a session home)
-    const bashLog = home ? formatBash(transcriptBash(readTranscripts(home.config))) : '';
+    const workerTexts = home ? readTranscripts(home.config) : [];
+    const bashCalls = transcriptBash(workerTexts);
+    const bashLog = home ? formatBash(bashCalls) : '';
+    // the files it read and the searches and fetches it made, so the judge can check a research document's sources
+    const readLog = home ? formatReads(transcriptReads(workerTexts)) : '';
     // the judge: rubric + calibration examples + the session's diff against the setup's state + end state + output,
     // and from the transcript only its Bash commands and their output, plus the lane log
     let judge = {};
     let judgeSession = null;
     let judgeInput = null;
     if ((task.rubric ?? []).length) {
-      const prompt = judgePrompt({ task, files, setupFiles, sessionDiff, output: redact(work.stdout), gitLog: git.log, bashLog, laneLog: laneLog === null ? null : redact(laneLog) });
+      const prompt = judgePrompt({ task, files, setupFiles, sessionDiff, output: redact(work.stdout), gitLog: git.log, bashLog, readLog, laneLog: laneLog === null ? null : redact(laneLog) });
       judgeInput = prompt;
       // the judge has its own home and an empty working directory: nothing the worker left in its repo or home
       // (a CLAUDE.md, settings) reaches it; it sees the end state only through its prompt. It runs as no kit agent.
@@ -740,7 +797,8 @@ export async function run(task, { attempt = 0, timeoutMs = 20 * 60 * 1000, trans
     }
     // `output`: what the worker printed (its final answer with `claude -p`), redacted; a check may read it (lesson_proposed)
     // `session_diff`, `setup_files`: what the judge was told the session and the setup changed
-    return { runner: name, variant: null, files, setup_state: setupState, events, setup_events: setupEvents, lane_log_lines: laneLogLines, not_work: notWork, session_diff: sessionDiff, setup_files: setupFiles, judge_prompt: judgeInput, git, judge, test_commands: testCommands, transcripts: kept, ms: Date.now() - started, worker_command: work.command, worker_status: work.status, worker_signal: work.signal, worker_error: work.error, worker_stderr: work.stderr.slice(-2000), output: redact(work.stdout).slice(-20000), worker_agent: agent, warnings, judge_session: judgeSession };
+    // `transcript_commands`: the Bash commands from the worker's transcript (redacted), beside the hook's `bash` events
+    return { runner: name, variant: null, files, setup_state: setupState, events, setup_events: setupEvents, transcript_commands: bashCalls.map((c) => c.command), lane_log_lines: laneLogLines, not_work: notWork, session_diff: sessionDiff, setup_files: setupFiles, judge_prompt: judgeInput, git, judge, test_commands: testCommands, transcripts: kept, ms: Date.now() - started, worker_command: work.command, worker_status: work.status, worker_signal: work.signal, worker_error: work.error, worker_stderr: work.stderr.slice(-2000), output: redact(work.stdout).slice(-20000), worker_agent: agent, warnings, judge_session: judgeSession };
   } finally {
     if (!process.env.KIT_EVAL_KEEP) fs.rmSync(dir, { recursive: true, force: true });
   }
