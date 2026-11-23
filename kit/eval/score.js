@@ -23,6 +23,15 @@ const REVIEW_RULES = new Set(['template-placeholder', 'empty-checklist', 'checkl
  * command runs.
  */
 export function testCommandIn(command, testCommands = []) {
+  return testCommandMatch(command, testCommands)?.how ?? null;
+}
+
+/**
+ * testCommandIn's match: `{ how, run }`, where `run` is the matched segment with any leading `VAR=value` assignments
+ * dropped (`npx vitest run --reporter=tap tests/truncate.test.ts`), so a caller can tell which test it ran; null when
+ * no recorded test command runs.
+ */
+export function testCommandMatch(command, testCommands = []) {
   const known = testCommands.map((c) => String(c).split('{')[0].trim()).filter(Boolean);
   if (!known.length || typeof command !== 'string') return null;
   // a lone `&` (background) separates too; `2>&1`, `&>` and `>&` are redirections, not separators
@@ -31,9 +40,10 @@ export function testCommandIn(command, testCommands = []) {
     const seg = parts[i].trim().replace(/^(?:[A-Za-z_][A-Za-z0-9_]*=\S*\s+)+/, '');
     if (!known.some((k) => seg === k || seg.startsWith(`${k} `))) continue;
     const next = parts[i + 1];
-    if (next === undefined || (next === '\n' && parts.slice(i + 2).every((p) => !p.trim()))) return 'run';
-    if (next === '&&') return 'pass-only';
-    return 'masked';
+    // nothing but whitespace after a trailing `;` or newline: the test is still the last command
+    if (next === undefined || ((next === '\n' || next === ';') && parts.slice(i + 2).every((p) => !p.trim()))) return { how: 'run', run: seg };
+    if (next === '&&') return { how: 'pass-only', run: seg };
+    return { how: 'masked', run: seg };
   }
   return null;
 }
@@ -42,40 +52,69 @@ export function testCommandIn(command, testCommands = []) {
  * The test runs a session recorded, in order, each { result: 'ok'|'fail', via }. Three records count, all written by
  * the kit's own hooks and scripts:
  * - `event: 'test'`: the post-edit hook ran the project's test command after an edit in a lane;
- * - `event: 'check'`: `kit lane check` ran a criterion's command and logged its exit (the Bash call that ran
- *   `kit lane check` is not counted itself: lane.js check exits 0 whatever the test did);
+ * - `event: 'check'`: `kit lane check` ran a criterion's command and logged its exit, when that command is a recorded
+ *   test command whose exit is its own (testCommandIn 'run'); the Bash call that ran `kit lane check` is not counted
+ *   itself: lane.js check exits 0 whatever the test did;
  * - `event: 'bash'` whose command runs a recorded test command (`outcome.test_commands`, from the fixture's kit.json),
  *   with the hook's result: `fail` when Claude Code reported the call as failed (PostToolUseFailure), else `ok`.
  * A Bash call whose status is not the test command's own (piped, `;`, `||`, backgrounded) is not a run: its result
  * says nothing. One that goes on with `&&` after the test counts only when it succeeded (testCommandIn 'pass-only').
+ * Each run carries the test command it ran (`command`; a check's `criterion` too), so a check can ask which test went
+ * green.
  */
 export function testRuns(outcome) {
   const runs = [];
   for (const e of outcome.events ?? []) {
-    if (e.event === 'test' || e.event === 'check') runs.push({ result: e.result, via: e.event });
-    else if (e.event === 'bash') {
-      const how = testCommandIn(e.command, outcome.test_commands);
-      if (how === 'run' || (how === 'pass-only' && e.result === 'ok')) runs.push({ result: e.result, via: 'bash' });
+    if (e.event === 'test') runs.push({ result: e.result, via: 'test', command: e.command ?? null });
+    else if (e.event === 'check') {
+      // a criterion's check counts only when the command it ran is a recorded test command whose exit is its own:
+      // `kit lane check D1 -- true` logs an exit 0 that says nothing about a test
+      const m = testCommandMatch(e.command, outcome.test_commands);
+      if (m?.how === 'run') runs.push({ result: e.result, via: 'check', criterion: e.criterion ?? null, command: m.run });
+    } else if (e.event === 'bash') {
+      const m = testCommandMatch(e.command, outcome.test_commands);
+      if (m?.how === 'run' || (m?.how === 'pass-only' && e.result === 'ok')) runs.push({ result: e.result, via: 'bash', command: m.run });
     }
   }
   return runs.filter((r) => r.result === 'ok' || r.result === 'fail');
 }
 
+/** The file arguments of a test command (`tests/truncate.test.ts` in `npx vitest run --reporter=tap tests/truncate.test.ts`). */
+const testFiles = (cmd) => String(cmd ?? '').split(/\s+/).filter((t) => !t.startsWith('-') && !t.includes('=') && /[^/]\.[A-Za-z0-9]{1,5}$/.test(t));
+
 /** The mechanical checks a task may name. Each returns { ok, why }. */
 export const CHECKS = {
   /**
-   * The session made a criterion's test green, and a red run came before its first green run: the session's own, or
-   * the red run the setup recorded for a done-criterion with `kit lane check` (the tester's; the implementer is told
-   * not to re-run it, kit/agents/implementer.md "Order of work"). The green run must be the session's: the setup's
-   * events (`outcome.setup_events`, all before the session) never count as one.
+   * The session made a criterion's test green, and a red run came before its first green run: the session's own, or,
+   * for a task that declares it (`expected.red_from_setup`: the implementer, told not to re-run the tester's red run,
+   * kit/agents/implementer.md "Order of work"), the red run the setup recorded for a done-criterion with
+   * `kit lane check`. The green run must be the session's: the setup's events (`outcome.setup_events`, all before the
+   * session) never count as one. Credited with the setup's red, the session's green must be a run of that test: a
+   * `check` of the same criterion running a recorded test command, the post-edit hook's `test` run, or a Bash run of the
+   * whole suite (`commands.test`), the affected tests (`commands.test_affected`) or every test file the red run named. A
+   * `check` of `true`, or a Bash run of some other test file, is no green run of the criterion.
    */
-  red_before_green(outcome) {
+  red_before_green(outcome, task = {}) {
     const tests = testRuns(outcome);
     const firstGreen = tests.findIndex((e) => e.result === 'ok');
     const firstRed = tests.findIndex((e) => e.result === 'fail');
-    const setupRed = (outcome.setup_events ?? []).filter((e) => e.event === 'check' && e.criterion && e.result === 'fail');
     if (firstGreen < 0) return { ok: false, why: tests.length ? 'no green test run in the session' : 'no test run in the session' };
-    if (setupRed.length) return { ok: true, why: `red run of ${setupRed.map((e) => e.criterion).join(', ')} recorded by the setup (${setupRed[0].ref ?? 'kit lane check'}), green at session run ${firstGreen}` };
+    const setupRed = task.expected?.red_from_setup
+      ? (outcome.setup_events ?? []).filter((e) => e.event === 'check' && e.criterion && e.result === 'fail' && testCommandIn(e.command, outcome.test_commands) === 'run')
+      : [];
+    if (setupRed.length) {
+      // the whole suite and the affected tests: the recorded commands that take no {file}
+      const suite = new Set((outcome.test_commands ?? []).filter((c) => !String(c).includes('{')).map((c) => String(c).trim()));
+      const runsRedTest = (cmd) => setupRed.some((e) => {
+        const want = testFiles(e.command);
+        return want.length > 0 && want.every((f) => testFiles(cmd).includes(f));
+      });
+      const green = tests.findIndex((r) => r.result === 'ok' && (r.via === 'test'
+        || (r.via === 'check' && setupRed.some((e) => e.criterion === r.criterion))
+        || (r.via === 'bash' && (suite.has(r.command) || runsRedTest(r.command)))));
+      if (green < 0) return { ok: false, why: `red run of ${setupRed.map((e) => e.criterion).join(', ')} recorded by the setup, but no session green run of that test (a check of the criterion, the post-edit hook's run, or a Bash run of the suite or of that test)` };
+      return { ok: true, why: `red run of ${setupRed.map((e) => e.criterion).join(', ')} recorded by the setup (${setupRed[0].ref ?? 'kit lane check'}), green at session run ${green} (${tests[green].via})` };
+    }
     if (firstRed < 0 || firstRed > firstGreen) return { ok: false, why: 'green run recorded without a red run before it' };
     return { ok: true, why: `red at session run ${firstRed}, green at session run ${firstGreen}` };
   },
