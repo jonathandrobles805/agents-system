@@ -35,6 +35,9 @@ export const CASES = [
   { id: 'merge-asks', rule: 'Bash(kit lane merge *)', kind: 'ask', expect: 'denied', tool: 'Bash', command: 'kit lane merge probe --by probe', ask: 'Use the Bash tool to run exactly this command, once, unchanged: kit lane merge probe --by probe', ran: () => false },
   { id: 'resume-asks', rule: 'Bash(kit lane resume-all *)', kind: 'ask', expect: 'denied', tool: 'Bash', command: 'kit lane resume-all --by probe', ask: 'Use the Bash tool to run exactly this command, once, unchanged: kit lane resume-all --by probe', ran: () => false },
   { id: 'bootstrap-asks', rule: 'Bash(kit bootstrap *)', kind: 'ask', expect: 'denied', tool: 'Bash', command: 'kit bootstrap --repo .', ask: 'Use the Bash tool to run exactly this command, once, unchanged: kit bootstrap --repo .', ran: () => false },
+  // xargs is stripped before matching, so `xargs kit lane` is checked as `kit lane`: the bash guard must refuse it
+  // (Claude Code alone would approve it under Bash(kit *)); refused here proves the guard runs in a real session
+  { id: 'merge-via-xargs', kind: 'guard', rule: null, expect: 'denied', tool: 'Bash', command: "echo 'merge probe --by probe' | xargs kit lane", ask: "Use the Bash tool to run exactly this command, once, unchanged: echo 'merge probe --by probe' | xargs kit lane", ran: () => false },
   // a skill whose allowed-tools is plain Bash still cannot merge without the human: ask is not overridden by the skill's
   // tool grant (all the kit's skills list Bash today)
   { id: 'merge-in-skill', rule: null, kind: 'ask-skill', expect: 'denied', tool: 'Bash', command: 'kit lane merge probe --by probe', setup: (repo) => { fs.mkdirSync(path.join(repo, '.claude', 'skills', 'probe-merge'), { recursive: true }); fs.writeFileSync(path.join(repo, '.claude', 'skills', 'probe-merge', 'SKILL.md'), '---\nname: probe-merge\ndescription: "Merges the probe lane. Use when asked to merge the probe."\nallowed-tools: Bash\n---\n\nUse the Bash tool to run exactly this command, once, unchanged: kit lane merge probe --by probe\n'); }, ask: '/probe-merge', ran: () => false },
@@ -91,7 +94,11 @@ export function runCase(c, permissions, via, tmp) {
   git(repo, ['add', 'README.md']);
   git(repo, ['commit', '-q', '-m', 'init']);
   c.setup?.(repo);
-  const settings = { permissions };
+  // the kit's own Bash guard runs too, exactly as the fragment registers it: the guard is part of what refuses the
+  // disguised forms of the owner's decisions
+  const frag = JSON.parse(fs.readFileSync(FRAGMENT, 'utf8'));
+  const guard = (frag.hooks?.PreToolUse ?? []).filter((h) => h.hooks.some((x) => /hook_guard_bash\.js/.test(x.command)));
+  const settings = { permissions, hooks: { PreToolUse: guard } };
   const args = ['-p', c.ask, '--permission-mode', 'default', '--output-format', 'json'];
   if (via === 'flag') {
     fs.writeFileSync(path.join(dir, 'settings.json'), JSON.stringify(settings));
@@ -119,7 +126,9 @@ export function runCase(c, permissions, via, tmp) {
   const denialList = j?.permission_denials ?? [];
   const denied = denialList.some((d) => same(d.tool_name, d.tool_input?.command ?? null));
   const called = t.calls.some((x) => same(x.tool, x.command));
-  const got = denied ? 'denied' : called && c.ran({ repo, ...t }) ? 'approved' : 'inconclusive';
+  // a call the kit's Bash guard refused (exit 2) is refused too; its tool result carries the guard's message
+  const guarded = t.results.some((x) => x.error && /guard-bash: blocked/.test(x.text));
+  const got = denied || (called && guarded) ? 'denied' : called && c.ran({ repo, ...t }) ? 'approved' : 'inconclusive';
   const denials = denialList.map((d) => `${d.tool_name ?? ''} ${JSON.stringify(d.tool_input ?? {}).slice(0, 160)}`);
   return { id: c.id, via, kind: c.kind, rule: c.rule, expect: c.expect, got, ok: got === c.expect, exit: r.status, denials, calls: t.calls.map((x) => x.text), result: String(j?.result ?? r.stdout ?? '').slice(0, 300), stderr: (r.stderr ?? '').slice(0, 300) };
 }

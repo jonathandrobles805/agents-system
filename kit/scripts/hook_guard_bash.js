@@ -123,27 +123,29 @@ export function shellCommands(line) {
 /**
  * The owner's decisions run through `kit` behind permission ask rules (`Bash(kit lane merge *)`,
  * `Bash(kit lane resume-all *)`, `Bash(kit bootstrap *)`). Claude Code matches those rules against the command as
- * written, so `kit lane -- merge`, `kit lane 'merge'` or `kit  lane merge` would slip past the prompt and match only
- * `Bash(kit *)`. Such a command must be written in the plain form, or it is refused here (#106 review).
+ * written, after stripping wrappers (`timeout`, `stdbuf`, `xargs`, …) and checking loop and group bodies on their own,
+ * so a computed or disguised word (`kit lane -- merge`, `kit lane 'merge'`, `kit lane $(echo merge)`,
+ * `echo merge | xargs kit lane`) would match only `Bash(kit *)` and run without asking (#106 review). Rather than
+ * chase every wrapper, any `kit` word anywhere in a command must be followed by plain words: the script name, and
+ * for `lane` the subcommand, written as typed (lowercase letters, digits, `_`/`-`, no quotes, `$`, backticks,
+ * backslashes or globs). `xargs … kit` is refused outright: its arguments come from stdin, where nothing can see
+ * them, and no agent needs it. A guardrail, not a wall (Step 8 is the wall).
  */
-const WRAPPERS = new Set(['timeout', 'nice', 'nohup', 'command', 'exec', 'time']);
 export function kitDecisionDisguised(line) {
+  if (/kit[^\n]*\\\n/.test(line) && /(^|[\s;&|(`])kit\b/.test(line)) return 'a kit command continued over a backslash-newline; write it on one line';
   for (const words of shellCommands(line)) {
-    let k = 0;
-    while (k < words.length && /^[A-Za-z_][A-Za-z0-9_]*=/.test(words[k].value)) k++; // leading assignments
-    while (k < words.length && WRAPPERS.has(words[k].value)) {
-      k++;
-      while (k < words.length && (/^-/.test(words[k].value) || /^\d+[smhd]?$/.test(words[k].value))) k++; // wrapper options
-    }
-    if (words[k]?.value !== 'kit') continue;
-    const rest = words.slice(k);
-    const plain = (n) => rest.slice(0, n).every((w) => w.raw === w.value);
-    const decision = rest[1]?.value === 'bootstrap' ? 2 : rest[1]?.value === 'lane' && rest.slice(2).some((w) => w.value === 'merge' || w.value === 'resume-all') ? 3 : 0;
-    if (!decision) continue;
-    const ok = decision === 2 ? plain(2) : plain(3) && (rest[2].value === 'merge' || rest[2].value === 'resume-all');
-    // the words must also be separated by exactly one space in the original text
-    const head = rest.slice(0, decision).map((w) => w.raw).join(' ');
-    if (!ok || !line.includes(head)) return `the owner's decision (${rest.slice(1, decision).map((w) => w.value).join(' ')}) written in a form the permission prompt does not match; write it plainly as \`kit ${decision === 2 ? 'bootstrap' : `lane ${rest.find((w, j) => j >= 2 && (w.value === 'merge' || w.value === 'resume-all')).value}`} …\` so Claude Code asks the owner`;
+    const k = words.findIndex((w) => w.value === 'kit' || w.raw === 'kit');
+    if (k < 0) continue;
+    const plainWord = (w, re) => w !== undefined && w.raw === w.value && re.test(w.value);
+    if (words.slice(0, k).some((w) => w.value === 'xargs')) return 'running kit through xargs (its arguments are not visible to the permission prompt); run the kit command directly';
+    const [kitWord, script, sub] = [words[k], words[k + 1], words[k + 2]];
+    if (kitWord.raw !== 'kit') return 'the kit launcher written in a quoted or escaped form; write it plainly as `kit <script> …`';
+    if (script === undefined) continue;
+    if (!plainWord(script, /^[a-z0-9_]+$/)) return `a kit script name written in a computed or quoted form (${script.raw}); write it plainly as \`kit <script> …\``;
+    if (script.value === 'lane' && sub !== undefined && !plainWord(sub, /^[a-z][a-z0-9-]*$/)) return `a kit lane subcommand written in a computed or quoted form (${sub.raw}); write it plainly as \`kit lane <subcommand> …\` so a decision such as merge reaches the owner's prompt`;
+    // a decision written plainly must also be spelt with single spaces, which is what the ask rule matches
+    const decision = script.value === 'bootstrap' ? ['kit', 'bootstrap'] : script.value === 'lane' && sub && ['merge', 'resume-all'].includes(sub.value) ? ['kit', 'lane', sub.value] : null;
+    if (decision && !line.includes(decision.join(' '))) return `the owner's decision (${decision.slice(1).join(' ')}) written in a form the permission prompt does not match; write it plainly as \`${decision.join(' ')} …\``;
   }
   return null;
 }

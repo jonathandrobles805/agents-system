@@ -393,6 +393,8 @@ test('the permission probe has a case for every allow rule the kit ships, plus c
   assert.deepEqual(caseFor('allow'), [...perms.allow].sort());
   assert.deepEqual(caseFor('ask'), [...perms.ask].sort());
   assert.ok(P.CASES.every((c) => (c.kind === 'allow' ? c.expect === 'approved' : c.expect === 'denied')), 'allow cases expect approved, all others denied');
+  // the xargs form, which Claude Code checks as `kit lane`, is probed against the real guard
+  assert.ok(P.CASES.some((c) => c.kind === 'guard' && /xargs kit lane/.test(c.command)));
   // merging stays the human's: an ask rule covers it, it beats Bash(kit *), and a skill granting plain Bash is probed too
   assert.ok(perms.ask.includes('Bash(kit lane merge *)') && perms.allow.includes('Bash(kit *)'));
   assert.ok(P.CASES.some((c) => c.kind === 'ask-skill' && c.command.startsWith('kit lane merge')));
