@@ -55,6 +55,11 @@ test('hard checks fail for the right reasons', () => {
   assert.equal(rbg({ setup_events: [setupRed], events: [bashRun('npx vitest run tests/format.test.ts')] }), false, 'a Bash run of an unrelated test file');
   assert.equal(rbg({ setup_events: [setupRed], events: [check('D2', 'npx vitest run tests/other.test.ts')] }), false, 'a check of another criterion');
   assert.equal(rbg({ setup_events: [setupRed], events: [check('D1', 'npx vitest run --reporter=tap tests/truncate.test.ts')] }), true);
+  // a check of the criterion counts only when it ran the suite or the red test: `kit lane check D1 -- npx vitest run
+  // tests/format.test.ts` with no edit was a green run of D1
+  assert.equal(rbg({ setup_events: [setupRed], events: [check('D1', 'npx vitest run tests/format.test.ts')] }), false, 'a check of D1 that ran another test file');
+  assert.equal(rbg({ setup_events: [setupRed], events: [check('D2', 'npx vitest run tests/truncate.test.ts')] }), false, 'the red test, checked as another criterion');
+  assert.equal(rbg({ setup_events: [setupRed], events: [check('D1', 'npx vitest run')] }), true, 'a check of D1 that ran the suite');
   assert.equal(rbg({ setup_events: [setupRed], events: [bashRun('npx vitest run')] }), true, 'the whole suite');
   assert.equal(rbg({ setup_events: [setupRed], events: [bashRun('npx vitest run --changed HEAD')] }), true, 'the affected tests');
   assert.equal(rbg({ setup_events: [setupRed], events: [bashRun('cd /w && npx vitest run tests/truncate.test.ts')] }), true, 'the red run\'s own test file');

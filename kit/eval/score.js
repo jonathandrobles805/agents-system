@@ -106,10 +106,10 @@ export const CHECKS = {
    * for a task that declares it (`expected.red_from_setup`: the implementer, told not to re-run the tester's red run,
    * kit/agents/implementer.md "Order of work"), the red run the setup recorded for a done-criterion with
    * `kit lane check`. The green run must be the session's: the setup's events (`outcome.setup_events`, all before the
-   * session) never count as one. Credited with the setup's red, the session's green must be a run of that test: a
-   * `check` of the same criterion running a recorded test command, the post-edit hook's `test` run, or a Bash run of the
-   * whole suite (`commands.test`), the affected tests (`commands.test_affected`) or every test file the red run named. A
-   * `check` of `true`, or a Bash run of some other test file, is no green run of the criterion.
+   * session) never count as one. Credited with the setup's red, the session's green must be a run of that test: the
+   * post-edit hook's `test` run, or a run of the whole suite (`commands.test`), the affected tests
+   * (`commands.test_affected`) or every test file the red run named, by Bash or by a `check` of the same criterion. A
+   * `check` of `true`, or a check or Bash run of some other test file, is no green run of the criterion.
    */
   red_before_green(outcome, task = {}) {
     const tests = testRuns(outcome);
@@ -127,9 +127,8 @@ export const CHECKS = {
         return want.length > 0 && want.every((f) => testFiles(cmd).includes(f));
       });
       const green = tests.findIndex((r) => r.result === 'ok' && (r.via === 'test'
-        || (r.via === 'check' && setupRed.some((e) => e.criterion === r.criterion))
-        || (r.via === 'bash' && (suite.has(r.command) || runsRedTest(r.command)))));
-      if (green < 0) return { ok: false, why: `red run of ${setupRed.map((e) => e.criterion).join(', ')} recorded by the setup, but no session green run of that test (a check of the criterion, the post-edit hook's run, or a Bash run of the suite or of that test)` };
+        || ((r.via === 'check' || r.via === 'bash') && (suite.has(r.command) || runsRedTest(r.command)) && (r.via === 'bash' || setupRed.some((e) => e.criterion === r.criterion)))));
+      if (green < 0) return { ok: false, why: `red run of ${setupRed.map((e) => e.criterion).join(', ')} recorded by the setup, but no session green run of that test (the post-edit hook's run, or a Bash run or a check of the criterion running the suite or that test)` };
       return { ok: true, why: `red run of ${setupRed.map((e) => e.criterion).join(', ')} recorded by the setup (${setupRed[0].ref ?? 'kit lane check'}), green at session run ${green} (${tests[green].via})` };
     }
     if (firstRed < 0 || firstRed > firstGreen) return { ok: false, why: 'green run recorded without a red run before it' };
