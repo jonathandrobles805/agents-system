@@ -178,18 +178,46 @@ export function substitutionBodies(line) {
   return out;
 }
 
-/** The line with each here-doc's body removed (text such as a commit message, not commands; a known miss when fed to a shell). */
+/** The here-doc delimiters a line opens: `<<` outside quotes, comments and `((…))`, and not part of `<<<`. */
+function heredocDelims(text) {
+  const out = [];
+  let q = null;
+  let arith = 0;
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i];
+    if (q) {
+      if (c === '\\' && q === '"') i++;
+      else if (c === q) q = null;
+      continue;
+    }
+    if (c === '\\') { i++; continue; }
+    if (c === "'" || c === '"') { q = c; continue; }
+    if (c === '#' && (i === 0 || /\s/.test(text[i - 1]))) break;
+    if (c === '(' && text[i + 1] === '(') { arith++; i++; continue; }
+    if (c === ')' && text[i + 1] === ')' && arith) { arith--; i++; continue; }
+    if (c === '<' && text[i + 1] === '<' && text[i + 2] !== '<' && text[i - 1] !== '<' && !arith) {
+      const m = /^<<-?\s*(['"]?)([A-Za-z_][A-Za-z0-9_]*)\1/.exec(text.slice(i));
+      if (m) { out.push(m[2]); i += m[0].length - 1; }
+    }
+  }
+  return out;
+}
+
+/**
+ * The line with each here-doc's body removed (text such as a commit message, not commands; a known miss when one is
+ * fed to a shell). A body is removed only when its closing delimiter is found; otherwise every line is kept.
+ */
 export function withoutHeredocBodies(line) {
   const lines = line.split('\n');
   const out = [];
   for (let i = 0; i < lines.length; i++) {
     out.push(lines[i]);
-    const delims = [...lines[i].matchAll(/<<-?\s*(['"]?)([A-Za-z_][A-Za-z0-9_]*)\1/g)].map((m) => m[2]);
-    for (const d of delims) {
+    for (const d of heredocDelims(lines[i])) {
       let j = i + 1;
       while (j < lines.length && lines[j].replace(/^\t+/, '') !== d) j++;
-      i = Math.min(j, lines.length - 1);
-      if (j < lines.length) out.push(lines[j]);
+      if (j >= lines.length) continue; // no closing line: keep the rest as commands
+      out.push(lines[j]);
+      i = j;
     }
   }
   return out.join('\n');

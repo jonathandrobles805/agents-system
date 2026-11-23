@@ -177,6 +177,9 @@ test('guard bash refuses the owner\'s decisions through kit in forms the permiss
     "echo 'merge s --by J' | xargs kit lane", 'echo bootstrap | xargs kit', "stdbuf -o0 kit lane 'merge' s", 'builtin kit lane "merge" s',
     "timeout -s KILL 5 kit lane 'merge' s", "for i in 1; do kit lane 'merge' s; done", "{ kit lane 'merge' s; }", "if true; then kit lane 'merge' s; fi",
     "! kit lane 'merge' s", "kit lane $'merge' s", 'kit lane $(echo merge) s', 'kit lane `echo merge` s', 'x=merge; kit lane $x s', 'kit lane mer\\\nge s',
+    // a fake here-doc marker must not hide the commands after it (review)
+    "cat <<<x\nkit lane 'merge' s", 'echo "<<EOF"\nkit lane \'merge\' s', "# <<EOF\nkit lane 'merge' s", "echo $((1<<X))\nkit lane 'merge' s",
+    "cat <<EOF\nx\nEOF\nkit lane 'merge' s",
     'kit lane {merge,} s', 'kit lane merg[e] s', 'kit lane --repo . merge', "'kit' lane merge s",
     // review 3: substitutions inside double quotes, redirects glued to kit, the spacing check scoped to the command
     "echo `kit lane 'merge' s --by j`", `echo "$(kit lane 'merge' s --by j)"`, "kit>/dev/null lane 'merge' s --by j", 'kit>/dev/null  bootstrap --upgrade',
