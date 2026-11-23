@@ -1,22 +1,27 @@
 {
-  "files": {},
+  "files": {
+    "docs/specs/truncate-text.md": "# Spec: Truncate text\n\n- Slug: truncate-text\n- Date: 2026-11-22\n- Commit: abc1234\n- Research: none (one function in one module; the two files it touches were read directly)\n- Risk: low\n- Status: waiting-approval\n\n## Summary\n\n- Goal: `src/text/format.ts` exports `truncate(text, max)`, which shortens long text to `max` characters ending in `…`.\n- Files changed: 1 (`src/text/format.ts`), 1 created (`tests/truncate.test.ts`)\n- Risks: none beyond the new export; `slugify` must stay as it is.\n- Done when: D1 `truncate` returns text of at most `max` characters unchanged, and cuts longer text to `max` characters ending in `…`.\n- Open questions: none\n\n## Goal\n\nTitles shown in lists overflow their column. Add a `truncate(text, max)` function beside `slugify` in\n`src/text/format.ts`: text of at most `max` characters comes back unchanged; longer text is cut to its first `max - 1`\ncharacters followed by `…`, so the result is exactly `max` characters long.\n\n## Non-goals\n\n- Word-aware cutting, a configurable ellipsis, or any change to `slugify`.\n- Counting grapheme clusters: `max` counts UTF-16 code units, as `String.prototype.length` does.\n\n## Files to read first\n\n- `src/text/format.ts` — the module the new function joins, beside `slugify` [verified: src/text/format.ts:1-3]\n- `tests/format.test.ts` — the test style to match (vitest, one `describe` per function) [verified: tests/format.test.ts:1-7]\n\n## Files to change\n\n- `src/text/format.ts` — add `export function truncate(text: string, max: number): string` after `slugify` [verified: src/text/format.ts:1-3]\n\n## Files to create\n\n- `tests/truncate.test.ts` — the test for D1\n\n## Impact analysis\n\n- `src/text/format.ts` is imported only by its own test; a new export changes no importer [verified: cmd]\n  ```\n  $ git grep -n \"text/format\" -- src tests\n  tests/format.test.ts:2:import { slugify } from '../src/text/format';\n  ```\n\n## Approach\n\nAdd one exported function after `slugify`. The test calls `truncate('hello world', 5)` and expects `'hell…'`, and\n`truncate('hi', 5)` and expects `'hi'`. Red and green runs use the project's test command with a reporter that names\nevery test, passing ones included, so the log shows which test ran: `npx vitest run --reporter=tap tests/truncate.test.ts`.\n\n## Data changes\n\n- none\n\n## New dependencies\n\n- none\n\n## Done-criteria\n\n| # | Criterion | Test (or artifact + checklist) |\n|---|---|---|\n| D1 | `truncate` returns text of at most `max` characters unchanged, and cuts longer text to `max` characters ending in `…` | `tests/truncate.test.ts::shortens text longer than max to max characters ending in an ellipsis` |\n\n## Assumptions\n\n- A1. `slugify` is the module's only export today [verified: src/text/format.ts:1-1]\n\n## Open questions\n\n- none\n\n## Architecture checklist\n\n- [x] The function is pure and lives in the text module beside `slugify` — no new module, no dependency\n\n## Critique\n\n<!-- Written by spec-critic. Numbered gaps and contradictions. The planner answers each inline. -->\n\n- C1. D1 has no negative case: `truncate(text, 0)` and a negative `max` are neither tested nor listed as a non-goal (spec line 68). → \n- C2. Files to change does not say where in `src/text/format.ts` the export goes; `git grep -n slugify` finds no other caller, so the impact list is complete. → \n\n## Approval\n\nApproved by: —\n"
+  },
+  "setup_state": {
+    "docs/specs/truncate-text.md": "# Spec: Truncate text\n\n- Slug: truncate-text\n- Date: 2026-11-22\n- Commit: abc1234\n- Research: none (one function in one module; the two files it touches were read directly)\n- Risk: low\n- Status: waiting-approval\n\n## Summary\n\n- Goal: `src/text/format.ts` exports `truncate(text, max)`, which shortens long text to `max` characters ending in `…`.\n- Files changed: 1 (`src/text/format.ts`), 1 created (`tests/truncate.test.ts`)\n- Risks: none beyond the new export; `slugify` must stay as it is.\n- Done when: D1 `truncate` returns text of at most `max` characters unchanged, and cuts longer text to `max` characters ending in `…`.\n- Open questions: none\n\n## Goal\n\nTitles shown in lists overflow their column. Add a `truncate(text, max)` function beside `slugify` in\n`src/text/format.ts`: text of at most `max` characters comes back unchanged; longer text is cut to its first `max - 1`\ncharacters followed by `…`, so the result is exactly `max` characters long.\n\n## Non-goals\n\n- Word-aware cutting, a configurable ellipsis, or any change to `slugify`.\n- Counting grapheme clusters: `max` counts UTF-16 code units, as `String.prototype.length` does.\n\n## Files to read first\n\n- `src/text/format.ts` — the module the new function joins, beside `slugify` [verified: src/text/format.ts:1-3]\n- `tests/format.test.ts` — the test style to match (vitest, one `describe` per function) [verified: tests/format.test.ts:1-7]\n\n## Files to change\n\n- `src/text/format.ts` — add `export function truncate(text: string, max: number): string` after `slugify` [verified: src/text/format.ts:1-3]\n\n## Files to create\n\n- `tests/truncate.test.ts` — the test for D1\n\n## Impact analysis\n\n- `src/text/format.ts` is imported only by its own test; a new export changes no importer [verified: cmd]\n  ```\n  $ git grep -n \"text/format\" -- src tests\n  tests/format.test.ts:2:import { slugify } from '../src/text/format';\n  ```\n\n## Approach\n\nAdd one exported function after `slugify`. The test calls `truncate('hello world', 5)` and expects `'hell…'`, and\n`truncate('hi', 5)` and expects `'hi'`. Red and green runs use the project's test command with a reporter that names\nevery test, passing ones included, so the log shows which test ran: `npx vitest run --reporter=tap tests/truncate.test.ts`.\n\n## Data changes\n\n- none\n\n## New dependencies\n\n- none\n\n## Done-criteria\n\n| # | Criterion | Test (or artifact + checklist) |\n|---|---|---|\n| D1 | `truncate` returns text of at most `max` characters unchanged, and cuts longer text to `max` characters ending in `…` | `tests/truncate.test.ts::shortens text longer than max to max characters ending in an ellipsis` |\n\n## Assumptions\n\n- A1. `slugify` is the module's only export today [verified: src/text/format.ts:1-1]\n\n## Open questions\n\n- none\n\n## Architecture checklist\n\n- [x] The function is pure and lives in the text module beside `slugify` — no new module, no dependency\n\n## Critique\n\n<!-- Written by spec-critic. Numbered gaps and contradictions. The planner answers each inline. -->\n\n## Approval\n\nApproved by: —\n"
+  },
   "events": [
     {
       "event": "read",
       "tool": "Read",
-      "path": "docs/specs/refund-route.md",
+      "path": "docs/specs/truncate-text.md",
       "result": "ok"
     },
     {
       "event": "read",
       "tool": "Read",
-      "path": "src/api/routes.ts",
+      "path": "src/text/format.ts",
       "result": "ok"
     },
     {
       "event": "edit",
       "tool": "Edit",
-      "path": "docs/specs/refund-route.md",
+      "path": "docs/specs/truncate-text.md",
       "result": "ok"
     }
   ],
@@ -27,7 +32,12 @@
   },
   "judge": {
     "r1": 1,
-    "r2": 1
+    "r2": 1,
+    "r3": 1
   },
-  "ms": 1200
+  "ms": 1200,
+  "expect": {
+    "hard_ok": true,
+    "violations": []
+  }
 }

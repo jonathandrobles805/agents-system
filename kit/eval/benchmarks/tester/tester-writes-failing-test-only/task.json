@@ -5,21 +5,56 @@
     "smoke"
   ],
   "fixture": "node-api",
-  "goal": "From the approved spec, write the failing test for D1 in tests/routes.test.ts. Do not touch source files.",
+  "setup": {
+    "files": {
+      "src/text/format.ts": {
+        "from": "setups/truncate-text/format.ts"
+      },
+      "tests/format.test.ts": {
+        "from": "setups/truncate-text/format.test.ts"
+      },
+      "docs/specs/truncate-text.md": {
+        "from": "setups/truncate-text/spec.approved.md"
+      }
+    },
+    "lane": {
+      "slug": "truncate-text",
+      "steps": [
+        {
+          "stage": "test"
+        }
+      ]
+    }
+  },
+  "goal": "From the approved spec docs/specs/truncate-text.md, write the failing test for D1 in tests/truncate.test.ts. Do not touch source files.",
   "checks": [
     "in_scope_edits",
-    "red_before_green"
+    "red_run",
+    "files_exist",
+    "named_tests",
+    "named_tests_assert",
+    "no_secret_read",
+    "records_untouched"
   ],
   "expected": {
     "allowed_files": [
-      "tests/routes.test.ts",
-      "docs/specs/refund-route.progress.md"
-    ]
+      "tests/truncate.test.ts",
+      "docs/specs/truncate-text.progress.md"
+    ],
+    "files": [
+      "tests/truncate.test.ts"
+    ],
+    "spec": "docs/specs/truncate-text.md",
+    "function_under_test": "truncate"
   },
   "rubric": [
     {
       "id": "r1",
-      "text": "The test fails for the expected reason (missing refund), not a syntax error."
+      "text": "The test fails for the expected reason (truncate is missing), not a syntax error."
+    },
+    {
+      "id": "r2",
+      "text": "The test encodes D1's behaviour: it asserts that text longer than max comes back as max characters ending in '…' (for example truncate('hello world', 5) is 'hell…') and that text of at most max characters comes back unchanged; a test that only checks truncate exists, or asserts something D1 does not say, is not met."
     }
   ]
 }

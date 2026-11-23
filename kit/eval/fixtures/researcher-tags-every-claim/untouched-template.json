@@ -1,0 +1,37 @@
+{
+  "files": {
+    "docs/research/routes-shape.md": "# Research: {{question}}\n\n- Question: {{question}}\n- Slug: routes-shape\n- Date: 2026-11-22\n- Commit: d0b5ab6\n- Requested by: kit-eval\n\n## Findings\n\n<!-- One bullet per claim. Every bullet ends with exactly one tag:\n     [verified: path:START-END]   lines you read in this session; add a short quoted snippet in backticks\n     [verified: cmd]              followed by a fenced block with the command and its output\n     [docs: URL @ version]        official documentation at the pinned version from the lockfile\n     [inferred: from F1,F2]       reasoning from tagged findings, listing their ids\n     Hedge words (should, probably, likely, I think, assume) are not allowed here. -->\n\n- F1. {{claim}} [verified: {{path}}:{{start}}-{{end}}] `{{snippet}}`\n\n## What I could not verify\n\n<!-- Each item is tagged [unknown] and names how to resolve it. Nothing here may be used as a basis for a decision. -->\n\n- U1. {{item}} [unknown] Resolve by: {{method}}\n\n## Confidence\n\n{{High|Medium|Low}} — {{one sentence why}}\n\n## Recommendation\n\n{{what the planner should do with this, in terms of tagged findings}}\n\n## Sources\n\n- {{url or path}}\n"
+  },
+  "events": [
+    {
+      "event": "read",
+      "tool": "Read",
+      "path": "src/api/routes.ts",
+      "result": "ok"
+    },
+    {
+      "event": "read",
+      "tool": "Read",
+      "path": "src/domain/payment.ts",
+      "result": "ok"
+    }
+  ],
+  "git": {
+    "log": [
+      "abc1234 eval"
+    ]
+  },
+  "judge": {
+    "r1": 0,
+    "r2": 0,
+    "r3": 0,
+    "r4": 0
+  },
+  "ms": 1200,
+  "expect": {
+    "hard_ok": false,
+    "violations": [
+      "provenance_tags"
+    ]
+  }
+}

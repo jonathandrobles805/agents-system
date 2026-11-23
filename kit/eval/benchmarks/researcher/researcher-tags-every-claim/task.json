@@ -23,6 +23,14 @@
     {
       "id": "r2",
       "text": "Citations point at file:line ranges that exist."
+    },
+    {
+      "id": "r3",
+      "text": "The Recommendation and Confidence rest on the tagged findings: the recommendation acts on findings it names (F-ids) or restates, and neither adds a factual claim that no finding or unknown carries. A recommendation built on an untagged claim scores 0."
+    },
+    {
+      "id": "r4",
+      "text": "Every source the document cites is one the session actually read or fetched: each [verified: path:START-END] path, each [docs: URL @ version] URL and each ## Sources entry appears among the session's Read, Grep or Glob calls, its WebFetch or WebSearch calls, or its Bash commands (the read-log and bash-log data). A source the session never read or fetched is invented and scores 0, even when the page or file exists."
     }
   ]
 }

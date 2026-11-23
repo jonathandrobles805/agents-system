@@ -6,9 +6,11 @@
 //   node kit/eval/harness.js baseline --from <results dir> --out kit/eval/baselines/<version>.json   (fixture results are refused)
 //   node kit/eval/harness.js list
 //
-// Smoke: one task per core role plus one per workflow kind whose files the change touched (--touched), N=1, hard
-// metrics only. Full: every task, N=3; a regression is a mean drop beyond the baseline's standard deviation on any
-// metric. Every result is written with the runner that produced it.
+// Smoke: one task per core role plus one per workflow kind whose files the change touched (--touched), N=1: it fails on
+// a hard-metric violation or on a rubric item the judge clearly failed (scored 0). Full: every task, N=3; a regression
+// is a mean drop beyond the baseline's standard deviation on any metric. In both, a rubric item the judge did not grade
+// (the judge did not run, or gave no 0/1 for it) fails the run: an ungraded rubric is never reported as a pass. Every
+// result is written with the runner that produced it.
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -115,22 +117,37 @@ export async function runSet({ set, runner = 'fixture', n = set === 'full' ? 3 :
   fs.mkdirSync(outDir, { recursive: true });
   const results = {};
   const violations = [];
+  // rubric items the judge failed (gate the smoke set) or did not grade (gate every set)
+  const rubricFails = [];
+  const ungraded = [];
   for (const task of tasks) {
     const attempts = [];
     for (let i = 0; i < n; i++) {
-      const outcome = await R.run(task, { attempt: i, ...(variant ? { variant } : {}) });
+      // a real session's transcripts are kept beside the report (redacted), so a verdict can be traced to what the agent did
+      const transcripts = path.join(outDir, 'transcripts', task.id, `attempt-${i}`);
+      const outcome = await R.run(task, { attempt: i, transcripts, ...(variant ? { variant } : {}) });
       const scored = score(task, outcome);
       // the worker session's exit status and the tail of its stderr travel with the attempt: a session that never
       // started (no sandbox, no credential, a refused token) must be diagnosable from the report alone
       const worker = { status: outcome.worker_status ?? null, signal: outcome.worker_signal ?? null, error: outcome.worker_error ?? null, stderr: String(outcome.worker_stderr ?? '').slice(-2000) };
-      attempts.push({ attempt: i, runner: outcome.runner, variant: outcome.variant ?? null, ms: outcome.ms, worker, judge_session: outcome.judge_session ?? null, scored });
+      if (outcome.worker_command) worker.command = outcome.worker_command;
+      if ('worker_agent' in outcome) worker.agent = outcome.worker_agent;
+      const warnings = outcome.warnings ?? [];
+      const rel = (files) => (files ?? []).map((f) => path.relative(outDir, f));
+      const kept = outcome.transcripts ? { transcripts: { worker: rel(outcome.transcripts.worker), judge: rel(outcome.transcripts.judge) } } : {};
+      attempts.push({ attempt: i, runner: outcome.runner, variant: outcome.variant ?? null, ms: outcome.ms, worker, judge_session: outcome.judge_session ?? null, ...kept, ...(warnings.length ? { warnings } : {}), scored });
       if (!scored.hard_ok) violations.push({ task: task.id, attempt: i, checks: scored.violations, why: scored.violations.map((v) => `${v}: ${scored.hard[v].why}`) });
+      if (scored.rubric.failed.length) rubricFails.push({ task: task.id, attempt: i, items: scored.rubric.failed });
+      if (scored.rubric.ungraded.length) ungraded.push({ task: task.id, attempt: i, items: scored.rubric.ungraded, judge_ran: outcome.judge_session ? outcome.judge_session.status === 0 : outcome.runner === 'fixture' });
     }
     results[task.id] = { role: task.role ?? null, kind: task.kind ?? null, runner, attempts, summary: summarize(attempts) };
   }
   const base = baseline ? JSON.parse(fs.readFileSync(baseline, 'utf8')) : null;
   const regressions = set === 'full' && base ? compare(results, base) : [];
-  const report = { run_id: runId, set, runner, n, tasks: tasks.length, touched, baseline: baseline ? path.basename(baseline) : null, violations, regressions, results, ok: violations.length === 0 && regressions.length === 0 };
+  // a check's `why` quotes the session's files and output (provenance_tags quotes a line, a worker's stderr is kept):
+  // every string in the report is redacted, decoded (redactDeep, never the serialized text, where an escaped newline
+  // hides a token from the patterns), before it is written or returned
+  const report = claudeRunner.redactDeep(JSON.parse(K.jsonDumps({ run_id: runId, set, runner, n, tasks: tasks.length, touched, baseline: baseline ? path.basename(baseline) : null, violations, regressions, rubric_fails: rubricFails, ungraded, results, ok: violations.length === 0 && regressions.length === 0 && ungraded.length === 0 && (set !== 'smoke' || rubricFails.length === 0) })));
   fs.writeFileSync(path.join(outDir, 'report.json'), K.jsonDumps(report, { indent: 2 }) + '\n');
   return { ...report, out: outDir };
 }
@@ -152,6 +169,8 @@ export function fmt(rep) {
   const lines = [`eval ${rep.set} (${rep.runner}, n=${rep.n}): ${rep.tasks} task(s)`];
   for (const [id, r] of Object.entries(rep.results)) lines.push(`  ${id.padEnd(34)} score ${r.summary.score.mean.toFixed(2)} ±${r.summary.score.std.toFixed(2)}  hard ${r.summary.hard_ok.mean === 1 ? 'ok' : 'VIOLATION'}`);
   for (const v of rep.violations) lines.push(`  VIOLATION ${v.task} attempt ${v.attempt}: ${v.why.join('; ')}`);
+  for (const f of rep.rubric_fails ?? []) lines.push(`  RUBRIC ${f.task} attempt ${f.attempt}: the judge failed ${f.items.join(', ')}${rep.set === 'smoke' ? '' : ' (reported; the full set gates on regressions against the baseline)'}`);
+  for (const u of rep.ungraded ?? []) lines.push(`  NOT GRADED ${u.task} attempt ${u.attempt}: ${u.judge_ran ? 'the judge gave no 0/1 for' : 'the judge did not run; ungraded:'} ${u.items.join(', ')}`);
   for (const r of rep.regressions) lines.push(`  REGRESSION ${r.task} ${r.metric}: ${r.run.toFixed(2)} < ${r.baseline.toFixed(2)} − ${r.allowed.toFixed(2)}`);
   // a real session that did not exit 0 (non-zero, timed out, or never spawned) is the first thing to read when
   // every task violates; the fixture runner has no session and prints nothing here
@@ -161,6 +180,7 @@ export function fmt(rep) {
     for (const a of r.attempts ?? []) {
       if (a.runner === 'claude' && a.worker && a.worker.status !== 0) lines.push(`  WORKER ${id} attempt ${a.attempt}: ${how(a.worker)}; stderr: ${tail(a.worker.stderr)}`);
       if (a.runner === 'claude' && a.judge_session && a.judge_session.status !== 0) lines.push(`  JUDGE ${id} attempt ${a.attempt}: ${how(a.judge_session)}; stderr: ${tail(a.judge_session.stderr)}`);
+      for (const w of a.warnings ?? []) lines.push(`  WARN ${id} attempt ${a.attempt}: ${w}`);
     }
   }
   lines.push(rep.ok ? 'eval: PASS' : 'eval: FAIL');

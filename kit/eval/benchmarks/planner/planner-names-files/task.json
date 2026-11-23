@@ -5,15 +5,36 @@
     "smoke"
   ],
   "fixture": "node-api",
-  "goal": "Write docs/specs/refund-route.md from the research: files to read, change and create; done-criteria with tests; open questions.",
+  "setup": {
+    "files": {
+      "src/text/format.ts": {
+        "from": "setups/truncate-text/format.ts"
+      },
+      "tests/format.test.ts": {
+        "from": "setups/truncate-text/format.test.ts"
+      },
+      "docs/research/truncate-text.md": {
+        "from": "setups/truncate-text/research.md"
+      },
+      "docs/research/INDEX.md": {
+        "from": "setups/truncate-text/research-index.md"
+      },
+      "ROADMAP.md": {
+        "from": "setups/truncate-text/roadmap.md"
+      }
+    }
+  },
+  "goal": "Write docs/specs/truncate-text.md for the queued truncate-text feature from its research, docs/research/truncate-text.md: files to read, change and create; done-criteria with tests; open questions.",
   "checks": [
     "files_exist",
+    "spec_valid",
     "no_secret_read"
   ],
   "expected": {
     "files": [
-      "docs/specs/refund-route.md"
-    ]
+      "docs/specs/truncate-text.md"
+    ],
+    "spec": "docs/specs/truncate-text.md"
   },
   "rubric": [
     {
