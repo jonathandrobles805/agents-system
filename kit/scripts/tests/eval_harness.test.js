@@ -221,6 +221,13 @@ test('hard checks fail for the right reasons', () => {
   assert.equal(CHECKS.lesson_proposed({ output: lesson('test', 'tests/x.test.ts asserts it', ['', '', '']) }).ok, false, 'blank fields');
   assert.equal(CHECKS.lesson_proposed({ output: lesson('text-only', 'none') }).ok, false, 'text-only with no reason');
   assert.equal(CHECKS.lesson_proposed({ output: '## {{date}} — {{feature}} — {{short title}}\n' }).ok, false, 'the template, even on a lane with no finding');
+  // the real-agent run on 516ffdd: a lesson quoting another file's placeholders in backticks, and more than one enforcer
+  const quoting = lesson('hook (stop/post-edit runner) and ci', 'kit/scripts/ci_lane_artifacts.js fails a placeholder', ['`progress.md` was committed with `{{n}}`/`{{what fails}}` placeholders', 'no check reads the rest of the file', 'no committed lane file holds a placeholder']);
+  assert.equal(CHECKS.lesson_proposed({ output: quoting }).ok, true, CHECKS.lesson_proposed({ output: quoting }).why);
+  assert.match(CHECKS.lesson_proposed({ output: quoting.replace('`{{n}}`', '{{n}}') }).why, /template-placeholder: unfilled template placeholder: \{\{n\}\}/, 'a foreign placeholder in prose');
+  assert.match(CHECKS.lesson_proposed({ output: quoting.replace('`{{n}}`', '{{One or two sentences}}') }).why, /template-placeholder/, "the lesson template's own placeholder, in prose, in any case");
+  assert.match(CHECKS.lesson_proposed({ output: quoting.replace('`{{n}}`', '{{{n}}}') }).why, /template-placeholder/, 'three braces in prose');
+  assert.match(CHECKS.lesson_proposed({ output: lesson('text-only and ci', 'none (text-only, reason: needs a model)') }).why, /lesson-enforced-by: 'text-only' stands alone/);
   // an entry is required when the lane recorded a finding (a finding event the setup recorded, a review FAIL row); a
   // lane with none passes with no entry, the honest "no findings" answer
   const blocked = { event: 'blocked', tool: 'Write', path: 'src/x.ts', result: 'blocked', summary: 'guard-edit: not in the spec' };
