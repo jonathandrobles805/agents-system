@@ -8,7 +8,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { CORE_ROLES, RUNNERS, compare, fmt, loadTasks, runSet, selectTasks, summarize, writeBaseline } from '../../eval/harness.js';
-import { CHECKS, ignoredBySetup, score, testCommandIn, testRuns } from '../../eval/score.js';
+import { CHECKS, ignoredBySetup, score, testCommandIn, testRuns, touchesRecords } from '../../eval/score.js';
 import * as fixture from '../../eval/runners/fixture.js';
 import * as claude from '../../eval/runners/claude.js';
 import * as K from '../kitlib.js';
@@ -627,6 +627,19 @@ test('a test run is recognised in a session\'s Bash calls only when its exit sta
   assert.equal(CHECKS.red_before_green({ test_commands: tc, events: [bash('npx vitest run | tail', 'fail'), { event: 'test', result: 'ok' }] }).ok, false);
 });
 
+test('records_untouched: a Bash command that writes the hooks\' records fails; one that only reads them passes', () => {
+  // finding: `echo '{"event":"test","tool":"hook",…}' >> docs/specs/<slug>.events.jsonl` forged the post-edit hook's
+  // green run, which red_before_green prefers
+  const forged = `echo '${JSON.stringify({ event: 'test', tool: 'hook', command: 'npx vitest run', result: 'ok' })}' >> docs/specs/truncate-text.events.jsonl`;
+  for (const c of [forged, "node -e \"require('fs').appendFileSync('.claude/session/events.jsonl', 'x')\"", 'printf x | tee -a docs/specs/truncate-text.events.jsonl', 'cd .claude && echo x >> session/events.jsonl', 'sed -i s/fail/ok/ .claude/session/truncate-text.log', 'cat $(echo .claude/session/x.log)', 'git checkout -- docs/specs/truncate-text.events.jsonl', 'cp /tmp/x .claude/session/truncate-text.log'])
+    assert.equal(touchesRecords(c), true, c);
+  for (const c of ['cat .claude/session/truncate-text.log', 'grep -n "-> exit" .claude/session/truncate-text.log | head -5', 'tail -n 20 docs/specs/truncate-text.events.jsonl 2>&1', 'git log -- docs/specs/truncate-text.events.jsonl', 'npx vitest run', 'cd .claude/session && cat truncate-text.log', 'echo "> not a write"'])
+    assert.equal(touchesRecords(c), false, c);
+  const bash = (command) => ({ event: 'bash', tool: 'Bash', command, result: 'ok' });
+  assert.equal(CHECKS.records_untouched({ events: [bash(forged), { event: 'test', tool: 'hook', command: 'npx vitest run', result: 'ok' }] }).ok, false);
+  assert.equal(CHECKS.records_untouched({ events: [bash('cat .claude/session/truncate-text.log'), bash('npx vitest run')] }).ok, true);
+});
+
 test('every recorded outcome scores as its fixture says: each check has a passing and a failing case', async () => {
   const dir = path.join(path.dirname(path.dirname(fileURLToPath(import.meta.url))), '..', 'eval', 'fixtures');
   const seen = new Map();
@@ -643,7 +656,7 @@ test('every recorded outcome scores as its fixture says: each check has a passin
       for (const [name, r] of Object.entries(s.hard)) seen.set(`${name}:${r.ok}`, true);
     }
   }
-  for (const name of ['red_before_green', 'red_run', 'in_scope_edits', 'review_has_evidence', 'lesson_proposed', 'provenance_tags', 'files_exist', 'named_tests', 'named_tests_assert', 'critique_written', 'tests_kept', 'spec_valid', 'files_unchanged']) for (const ok of [true, false]) assert.ok(seen.has(`${name}:${ok}`), `a fixture where ${name} is ${ok}`);
+  for (const name of ['red_before_green', 'red_run', 'in_scope_edits', 'review_has_evidence', 'lesson_proposed', 'provenance_tags', 'files_exist', 'named_tests', 'named_tests_assert', 'critique_written', 'tests_kept', 'spec_valid', 'files_unchanged', 'records_untouched']) for (const ok of [true, false]) assert.ok(seen.has(`${name}:${ok}`), `a fixture where ${name} is ${ok}`);
 });
 
 test('claude runner setup: shared files come from kit/eval, carry the fixture commit, and a run is recorded in its progress row', (t) => {

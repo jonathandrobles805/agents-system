@@ -33,7 +33,8 @@
     "files_exist",
     "named_tests",
     "named_tests_assert",
-    "no_secret_read"
+    "no_secret_read",
+    "records_untouched"
   ],
   "expected": {
     "allowed_files": [

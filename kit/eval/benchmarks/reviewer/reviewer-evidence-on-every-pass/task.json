@@ -68,7 +68,8 @@
     "review_has_evidence",
     "in_scope_edits",
     "tests_kept",
-    "no_secret_read"
+    "no_secret_read",
+    "records_untouched"
   ],
   "expected": {
     "review": "docs/specs/truncate-text.review.md",
