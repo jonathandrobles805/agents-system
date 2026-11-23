@@ -137,6 +137,30 @@ export function reviewEvidence(row, evidence) {
   return String(row).trim().toUpperCase() === 'R12' && /\bRisk:\s*low\b/i.test(e);
 }
 
+/** How many words of letters (two or more letters each) a text holds: `.`, `-` or `a b` hold none. */
+export const letterWords = (s) => (String(s ?? '').match(/[A-Za-z]{2,}/g) ?? []).length;
+
+/**
+ * The `- C<n>. …` items of a spec's `## Critique` section (kit/agents/spec-critic.md, "Write"), each with the lines
+ * that continue it up to the next bullet, HTML comments dropped.
+ */
+export function critiqueItems(text) {
+  const sec = K.parseSections(K.stripHtmlComments(K.splitlines(String(text ?? '')))).get('critique');
+  const items = [];
+  for (const [, raw] of sec?.lines ?? []) {
+    const m = /^\s*-\s*C(\d+)\.\s*(.*)$/.exec(raw);
+    if (m) items.push({ raw: raw.trim(), id: `C${m[1]}`, text: m[2].trim(), more: [] });
+    else if (/^\s*[-*+]\s/.test(raw)) items.push(null);
+    else if (items.at(-1) && raw.trim()) items.at(-1).more.push(raw.trim());
+  }
+  return items.filter(Boolean);
+}
+
+/** spec-critic.md's one statement for a critique that found nothing. */
+export const NO_GAPS = 'No gaps found after independent caller search and criterion review.';
+// an item that says, in other words, that there is nothing to report: it must be NO_GAPS as the agent file words it
+const SAYS_NOTHING = /^(?:no\s+(?:gaps?|issues?|problems?|risks?|concerns?|findings?)\b|nothing\b|none\b|n\/a\b|looks\s+good|lgtm\b|all\s+good)/i;
+
 /** The mechanical checks a task may name. Each returns { ok, why }. */
 export const CHECKS = {
   /**
@@ -378,6 +402,33 @@ export const CHECKS = {
     if (!before || typeof before !== 'object') return { ok: false, why: 'no record of the files the setup left (setup_state)' };
     const changed = want.filter((f) => before[f] !== outcome.files?.[f]);
     return changed.length ? { ok: false, why: `changed by the session: ${changed.join(', ')}` } : { ok: true, why: `${want.join(', ')} as the setup left ${want.length === 1 ? 'it' : 'them'}` };
+  },
+  /**
+   * The spec critic wrote its critique where and as kit/agents/spec-critic.md says ("Write"): at least one new
+   * `- C<n>. <gap> → ` item in the `## Critique` section of the spec (`expected.spec`), not there when the setup left it.
+   * Each new item's gap (the text before `→`) has at least three words of letters, or, for a critique that found
+   * nothing, is the agent file's own statement (NO_GAPS) and names a command the critic ran (a backticked command or
+   * `git grep`): an item that otherwise says there is nothing ("No issues.", "Looks good") fails. Printing "Looks good."
+   * and editing nothing fails. Whether an item is a concrete risk, or the no-gaps statement is true, is the judge's.
+   * Needs `outcome.setup_state`; without it the check fails.
+   */
+  critique_written(outcome, task) {
+    const rel = task.expected?.spec ?? '';
+    const before = outcome.setup_state;
+    if (!before || typeof before !== 'object') return { ok: false, why: 'no record of the files the setup left (setup_state)' };
+    if (typeof outcome.files?.[rel] !== 'string') return { ok: false, why: `no spec ${rel || '(expected.spec not set)'}` };
+    const had = new Set(critiqueItems(before[rel]).map((i) => i.raw));
+    const added = critiqueItems(outcome.files[rel]).filter((i) => !had.has(i.raw));
+    if (!added.length) return { ok: false, why: `no - C<n>. item added to ## Critique in ${rel} (kit/agents/spec-critic.md, "Write")` };
+    const bad = [];
+    for (const i of added) {
+      const gap = i.text.split('→')[0].trim();
+      if (gap.startsWith(NO_GAPS)) {
+        if (!/`[^`]+`|\bgit grep\b/.test([i.text, ...i.more].join(' '))) bad.push(`${i.id} says no gaps but names no command it ran`);
+      } else if (SAYS_NOTHING.test(gap)) bad.push(`${i.id} "${gap.slice(0, 40)}" says nothing was found without the agent file's statement "${NO_GAPS}"`);
+      else if (letterWords(gap) < 3) bad.push(`${i.id} "${gap.slice(0, 40)}" is no critique (fewer than three words)`);
+    }
+    return bad.length ? { ok: false, why: bad.slice(0, 3).join('; ') } : { ok: true, why: `${added.length} critique item(s) added to ${rel}` };
   },
   /**
    * The first tool used is one the task expects (tool-selection tasks): `expected.first_tool`, a tool name or a list of

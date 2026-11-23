@@ -177,6 +177,16 @@ test('hard checks fail for the right reasons', () => {
   const critic = loadTasks().find((x) => x.id === 'spec-critic-reads-before-judging');
   for (const tool of ['Read', 'Grep', 'Glob']) assert.equal(CHECKS.first_tool({ events: [{ tool }, { tool: 'Edit' }] }, critic).ok, true, tool);
   for (const events of [[{ tool: 'Edit' }, { tool: 'Read' }], [{ tool: 'Bash' }], []]) assert.equal(CHECKS.first_tool({ events }, critic).ok, false, JSON.stringify(events));
+  // critique_written: spec-critic.md "Write" appends `- C<n>. <gap> → ` items to the spec's ## Critique
+  const waitingSpec = fs.readFileSync(path.join(K.KIT_DIR, 'eval', 'setups', 'truncate-text', 'spec.waiting-approval.md'), 'utf8');
+  const withItems = (items) => waitingSpec.replace('## Approval', `${items}\n\n## Approval`);
+  const CW = (items, extra = {}) => CHECKS.critique_written({ files: { 'docs/specs/truncate-text.md': items === null ? waitingSpec : withItems(items) }, setup_state: { 'docs/specs/truncate-text.md': waitingSpec }, ...extra }, critic);
+  assert.equal(CW('- C1. D1 has no negative case for a max below one (line 68). → ').ok, true, 'a real gap');
+  assert.equal(CW(`- C1. ${'No gaps found after independent caller search and criterion review.'} Ran \`git grep -n slugify\`. → `).ok, true, 'the agent file\'s no-gaps statement, with the command run');
+  assert.equal(CW(null, { output: 'Looks good.', events: [{ tool: 'Read', path: 'docs/specs/truncate-text.md' }] }).ok, false, 'a do-nothing critic: one Read and "Looks good."');
+  for (const items of ['- C1. Looks good. → ', '- C1. No issues found. → ', '- C1. LGTM → ', '- C1. ok → ', '- C1. . → ', '- C1. No gaps found after independent caller search and criterion review. → '])
+    assert.equal(CW(items).ok, false, items);
+  assert.equal(CHECKS.critique_written({ files: { 'docs/specs/truncate-text.md': withItems('- C1. D1 has no negative case. → ') } }, critic).ok, false, 'no setup state: fails closed');
   // a hard violation zeroes the score even with a perfect rubric
   const s = score(task, { events: [T('ok')], judge: { r1: 1, r2: 1, r3: 1 } });
   assert.equal(s.hard_ok, false);
