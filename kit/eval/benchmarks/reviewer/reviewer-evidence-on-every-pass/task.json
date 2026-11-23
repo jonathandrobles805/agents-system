@@ -79,6 +79,18 @@
     {
       "id": "r2",
       "text": "The report names the commit it reviewed."
+    },
+    {
+      "id": "r3",
+      "text": "Each PASS row's evidence actually supports that row's criterion (the cited line or output shows the property); evidence that is irrelevant, generic, or from a command that does not test the criterion scores 0."
+    }
+  ],
+  "calibration": [
+    {
+      "r3": {
+        "met": "R1 cites tests/truncate.test.ts:4, the line that declares the named test; R3 cites `npx vitest run` and its \"2 passed\" output, which the Bash log shows that command printed; R2 cites the red and green lines of the lane log",
+        "not_met": "every PASS row cites tests/format.test.ts:1 (a real line about slugify), or R3 cites `echo all tests passed`, or a row cites a command whose output in the Bash log does not show what the row claims"
+      }
     }
   ]
 }
