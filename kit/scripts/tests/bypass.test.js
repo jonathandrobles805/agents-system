@@ -205,15 +205,22 @@ test('post-edit-check never inspects .claude/, by instruction [inverts at Step 3
     'This line is correct while hooks write their own state into the repo; it can only be deleted once they do not.');
 });
 
-test('post-edit-check exits before its scope check for an interpreter write [inverts at Step 3]', async (t) => {
+test('post-edit-check catches an interpreter write it cannot recognise from the command text (was: exits before its scope check)', async (t) => {
   const { wt } = laneProject(t);
-  // SHELL_WRITES names >, sed -i, tee, mv, cp, rm, package installs and some git subcommands. An interpreter is not
-  // in it, so the hook returns 0 at the "read-only shell command" line and shellScopeViolations never runs.
+  // SHELL_WRITES names >, sed -i, tee, mv, cp, rm, package installs and some git subcommands; an interpreter is not in
+  // it. The scope check no longer depends on it: it compares the worktree before and after the call
+  // (shell_changes.js), so the write is caught although the command still runs no project checks.
   const { SHELL_WRITES } = await import('../hook_post_edit_check.js');
   assert.doesNotMatch(String(SHELL_WRITES), /node|python|perl/);
-  const r = hook('hook_post_edit_check.js', { cwd: wt, tool: 'Bash', input: { command: 'node -e "require(\'fs\').writeFileSync(\'evidence.txt\',\'x\')"' } });
-  assert.equal(r.out, '', 'DEFECT: a write through an interpreter is treated as a read-only command');
+  const command = 'node -e "require(\'fs\').writeFileSync(\'evidence.txt\',\'x\')"';
+  const extra = { tool_use_id: 'toolu_interp' };
+  assert.equal(hook('hook_guard_bash.js', { cwd: wt, tool: 'Bash', input: { command }, extra }).code, 0);
+  spawnSync('bash', ['-c', command], { cwd: wt });
+  const r = hook('hook_post_edit_check.js', { cwd: wt, tool: 'Bash', input: { command }, extra });
   assert.equal(r.code, 0);
+  const reason = JSON.parse(r.out).reason;
+  assert.match(reason, /\[scope\].*evidence\.txt/);
+  assert.match(reason, /rm -- evidence\.txt/);
 });
 
 // ===========================================================================================================
@@ -775,11 +782,11 @@ test('ci_test_count reports success when it cannot read the base [inverts at Ste
 // Documents that have drifted from the code they describe.
 // ===========================================================================================================
 
-test('README counts 19 planted faults; the suite runs 53 [inverts at Step 7]', () => {
+test('README counts 19 planted faults; the suite runs 54 [inverts at Step 7]', () => {
   assert.match(read(REPO, 'README.md'), /the 19 faults from the spec/, 'DEFECT: the count is written by hand');
   const run = read(REPO, 'planted-faults', 'run.js');
   const ids = new Set([...run.matchAll(/\brecord\((\d+),/g)].map((m) => Number(m[1])));
-  assert.equal(ids.size, 53, 'the suite defines 53 (S0 added #46; #68 added #47, #48; 0016 E.11 added #49; 0016 E.7 added #50; hardening plan D3 added #51; #57-#59 added #52; #106 added #53)');
+  assert.equal(ids.size, 54, 'the suite defines 54 (S0 added #46; #68 added #47, #48; 0016 E.11 added #49; 0016 E.7 added #50; hardening plan D3 added #51; #57-#59 added #52; #106 added #53; the shell scope fix added #54)');
 });
 
 test('the generated audit names a commit that is not HEAD [inverts at Step 7]', () => {

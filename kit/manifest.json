@@ -64,6 +64,7 @@
     "ci:boundaries_simple": { "purpose": "Checks import boundaries from the architecture layers table when no dedicated tool is installed." },
 
     "script:kitlib": { "purpose": "Shared foundation: git, JSON, paths, lane files and the block/feedback conventions every hook and script uses." },
+    "script:shell_changes": { "purpose": "Works out which files a Bash call changed in a lane's worktree: a snapshot before the call (guard-bash) against one after (post-edit-check), regular files and symlinks only, so sandbox masks and files that were already there are never blamed on it." },
     "script:args": { "purpose": "Command-line argument parser shared by the scripts." },
     "script:metrics": { "purpose": "Reports cost, tokens, API and tool activity per lane and project from the telemetry store alone; null and flagged when the store has nothing, never estimated." },
     "script:eval/harness": { "purpose": "Runs the benchmark tasks through a runner, scores them, compares with the committed baseline, and fails on a hard-metric violation or a regression." },

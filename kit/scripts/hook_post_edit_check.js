@@ -11,6 +11,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import * as K from './kitlib.js';
+import * as S from './shell_changes.js';
 
 // Python's \b is Unicode-aware, JS's is not, so word boundaries are spelled out.
 const B = '(?<![\\p{L}\\p{N}_])';
@@ -114,18 +115,40 @@ function git(args, cwd) {
   return spawnSync('git', args, { cwd, encoding: 'utf8', timeout: 20000, maxBuffer: 1 << 28 }).stdout ?? '';
 }
 
-/** After a Bash command: any modified or new file outside the spec allow-list (catches sed -i, redirects, cp, mv). */
-function shellScopeViolations(lane) {
+/**
+ * After a Bash command: the files THIS call changed (shell_changes.js: a snapshot before the call against one after
+ * it; only regular files and symlinks) that are outside the spec's allow-list. Catches sed -i, redirects, heredocs,
+ * cp, mv and interpreter writes, new untracked files included. Each entry: { rel, xy, kind }.
+ */
+export function shellScopeViolations(lane, changed) {
   const [, change, create] = K.specFileLists(lane.specPath);
   const allowed = [...change, ...create, ...lane.alwaysAllowed(), 'ROADMAP.md'];
   const bad = [];
-  for (const line of K.splitlines(git(['status', '--porcelain', '--untracked-files=all'], lane.root))) {
-    let rel = line.slice(3).trim();
-    if (rel.includes(' -> ')) rel = rel.split(' -> ').slice(1).join(' -> ');
+  for (const c of changed) {
+    const rel = c.rel;
     if (rel.startsWith('.claude/')) continue;
-    if (!K.globMatch(rel, allowed)) bad.push(rel);
+    if (!K.globMatch(rel, allowed)) bad.push(c);
   }
   return bad;
+}
+
+const shq = (s) => (/^[A-Za-z0-9_./@%+=:,-]+$/.test(s) ? s : `'${s.replaceAll("'", `'\\''`)}'`);
+
+/**
+ * How to undo each change: a path HEAD has is restored from HEAD (index and worktree), a path HEAD does not have is
+ * removed. `git checkout -- <path>` was the old advice for every path, and it cannot undo a new untracked file.
+ */
+export function undoCommand(c) {
+  const p = shq(c.rel);
+  if (c.xy === '??') return `rm -- ${p}`;
+  if ('ARC'.includes(c.xy[0])) return `git rm -f -- ${p}`;
+  return `git restore --source=HEAD --staged --worktree -- ${p}`;
+}
+
+export function scopeMessage(bad) {
+  return "[scope] this shell command changed files outside the spec's allow-list: " + bad.map((c) => c.rel).join(', ') +
+    '\nUndo each one:\n' + bad.map((c) => '  ' + undoCommand(c)).join('\n') +
+    '\nor, if the spec is what is wrong, leave them and stop: record under Escalation that the spec needs amending.';
 }
 
 /** Run a shell command: [exit code, stdout + stderr]. 124 on timeout. */
@@ -175,16 +198,52 @@ export function main() {
   const root = lane ? lane.root : K.projectRoot(cwd);
   const kit = K.loadKitJson(root) ?? {};
   if (!lane && !kit.always_check) return 0;
-  const cmds = kit.commands ?? {};
   const seconds = Math.trunc(Number(kit.timeouts?.check ?? 180));
   const timeout = Number.isFinite(seconds) ? seconds : 180;
+  const rel = fp0 ? K.relTo(root, path.isAbsolute(fp0) ? fp0 : path.join(cwd, fp0)) : null;
+  const events = lane ? lane.eventsPath : path.join(root, '.claude', 'session', 'events.jsonl');
+
+  // What this Bash call changed is measured before any check runs, so a file the checks themselves write (coverage,
+  // build info) is never blamed on the command, and on every Bash call, not only those SHELL_WRITES recognises: an
+  // interpreter or a formatter writes without a redirect. After the run, the lane's state is recorded again as the
+  // baseline for a later call that has no before-snapshot (shell_changes.js).
+  let scopeBad = [];
+  let after = null;
+  if (lane && d.tool_name === 'Bash') {
+    try {
+      const r = S.changedByCall(lane, d);
+      after = r.after;
+      scopeBad = shellScopeViolations(lane, r.changed);
+    } catch (e) {
+      K.appendEvent(events, { event: 'scope_unchecked', tool: 'Bash', result: 'fail', summary: `shell scope check could not run: ${clip(String(e?.message ?? e), 200)}` });
+    }
+    if (scopeBad.length) {
+      K.appendEvent(events, { event: 'blocked', tool: 'Bash', result: 'blocked', summary: 'shell edit outside spec: ' + scopeBad.slice(0, 5).map((c) => c.rel).join(', ') });
+    }
+  }
+  try {
+    return checkCall({ d, lane, root, kit, timeout, rel, events, scopeBad });
+  } finally {
+    if (lane) {
+      try {
+        S.saveLast(lane, after);
+      } catch {
+        // the next call falls back to the session start; nothing to block on
+      }
+    }
+  }
+}
+
+function checkCall({ d, lane, root, kit, timeout, rel, events, scopeBad }) {
+  const cmds = kit.commands ?? {};
   const ti = d.tool_input && typeof d.tool_input === 'object' ? d.tool_input : {};
-  const fp = text(ti.file_path) || text(ti.notebook_path);
-  const rel = fp ? K.relTo(root, path.isAbsolute(fp) ? fp : path.join(cwd, fp)) : null;
-  if (d.tool_name === 'Bash' && !SHELL_WRITES.test(text(ti.command))) return 0; // read-only shell command; nothing to check
+  if (d.tool_name === 'Bash' && !SHELL_WRITES.test(text(ti.command))) {
+    // A command that does not look like a write runs no checks; what it changed was still measured above.
+    if (scopeBad.length) return K.feedbackBlock('post-edit-check found problems. Fix them before continuing.\n\n' + scopeMessage(scopeBad));
+    return 0;
+  }
 
   const log = lane ? lane.logPath : path.join(root, '.claude', 'session', 'checks.log');
-  const events = lane ? lane.eventsPath : path.join(root, '.claude', 'session', 'events.jsonl');
   const failures = [];
   const sid = text(d.session_id) || 's';
 
@@ -231,15 +290,8 @@ export function main() {
     failures.push('[tests weakened] ' + weak.join('; ') + '\nRemoving assertions or skipping tests is not a fix. Restore them, or record why in progress.md under Uncertainties and let the reviewer decide.');
   }
 
-  // Shell edits outside the spec (sed -i, >, cp, mv) are invisible to the pre-edit hook; catch them here.
-  if (lane && d.tool_name === 'Bash') {
-    const extras = shellScopeViolations(lane);
-    if (extras.length) {
-      K.appendEvent(events, { event: 'blocked', tool: 'Bash', result: 'blocked', summary: 'shell edit outside spec: ' + extras.slice(0, 5).join(', ') });
-      failures.push("[scope] files changed outside the spec's allow-list via shell: " + extras.join(', ') +
-        '\nRevert them (git checkout -- <file>) or stop and record under Escalation that the spec needs amending.');
-    }
-  }
+  // Shell edits outside the spec are invisible to the pre-edit hook; they were measured in main().
+  if (scopeBad.length) failures.push(scopeMessage(scopeBad));
 
   // Attempt counter: the same failure red N times in a row is an escalation, not a fourth try. Only in build: while
   // reproducing, planning or writing tests, red is the expected result, not a failed fix (field test #36).
