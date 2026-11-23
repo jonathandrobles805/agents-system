@@ -18,7 +18,7 @@ kit lane start $slug --repo "$PWD"
 
 Then sync and record the clock:
 ```
-cd <worktree> && bash scripts/sync.sh && kit lane stage $slug test --repo <main repo>
+cd <worktree> && bash scripts/sync.sh && kit lane advance $slug test --repo <main repo>
 ```
 The stage is `test`, not `build`: the tester is about to make tests fail on purpose, and in `build` every one of
 those red runs is counted against the three-strikes counter as a failed attempt to fix something (#32).
@@ -30,8 +30,9 @@ Spawn the `tester` agent with working directory = the worktree: "Lane `$slug`. W
 ## Step 3: build
 Move the lane to the stage where red counts as a failed fix, now that the tests are meant to pass:
 ```
-kit lane stage $slug build --repo <main repo>
+kit lane advance $slug build --repo <main repo>
 ```
+It refuses until every criterion cites a logged red run of its test; give the tester its reasons and send it back.
 Then have the implementer commit a stub for every file in Files to create before writing any logic -- one that
 throws or returns nothing, so the tester's red runs fail on an assertion rather than on a missing module. A run
 that cannot load the code under test proves nothing about the test, and done-check now refuses it as a red run
@@ -48,8 +49,9 @@ Read `docs/specs/$slug.progress.md` in the worktree.
 ```
 kit lane publish $slug --repo <main repo>
 kit lane roadmap-set $slug in-review --repo <main repo> --pr <PR url it printed>
-kit lane stage $slug review --repo <main repo>
+kit lane advance $slug review --repo <main repo>
 ```
+It refuses until every criterion cites a logged green run of its test; give the implementer its reasons.
 Then run `/zi-review $slug`.
 
 Never edit code yourself in this command. Never mark anything done that the Stop hook did not accept.

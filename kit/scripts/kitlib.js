@@ -715,6 +715,49 @@ export function testKey(s) {
   return (quoted ? quoted[1] : t).toLowerCase().replace(/\s+/g, ' ').trim();
 }
 
+/** The body of the log entry whose `=== … -> exit N` header is at 1-based line `at`: up to the next entry. */
+export function logEntry(lines, at) {
+  const out = [];
+  for (let i = at; i < lines.length; i++) {
+    if (/^=== \d{4}-\d\d-\d\d/.test(lines[i])) break;
+    out.push(lines[i]);
+  }
+  return out;
+}
+
+/**
+ * Why a progress row's red or green cell does not prove its run, or null when it does. The cell must name a line of
+ * the lane's check log that is a logged run (`=== … -> exit N`) whose exit agrees with the column, and whose output
+ * reports this row's test failing (red) or passing (green). A cell that merely contains `#` proves nothing (#56).
+ * Shared by done-check (inside the lane) and by lane.js advance and next-step (in the main checkout).
+ */
+export function runRefProblem(lane, logLines, cells, label) {
+  const rid = cells[0];
+  const ref = label === 'red' ? cells[3] : cells[4];
+  const logName = path.basename(lane.logPath);
+  const m = /#(\d+)/.exec(ref);
+  if (!m) return `${rid}: no ${label} run reference (expected ${logName}#<line>)`;
+  const at = Number(m[1]);
+  if (at > logLines.length) return `${rid}: ${label} run ref ${ref} points past the end of ${logName} (${logLines.length} lines)`;
+  // The reference must point at a logged run whose exit code says what the cell claims: red failed, green passed.
+  const ex = /-> exit (-?\d+)\s*$/.exec(logLines[at - 1] ?? '');
+  if (!ex) return `${rid}: ${label} run ref ${ref} is not a logged run (=== … -> exit N); log it with post-edit-check or kit lane check`;
+  if (label === 'red' && Number(ex[1]) === 0) return `${rid}: red run ref ${ref} passed (exit 0); a red run must fail`;
+  if (label === 'green' && Number(ex[1]) !== 0) return `${rid}: green run ref ${ref} failed (exit ${ex[1]}); a green run must pass`;
+  // ...and the run must have actually tested THIS row's test. An exit code says only that a process ended: in
+  // the field run 33 of 36 red runs crashed on a missing module before any assertion, and one was npm unable to
+  // find package.json, yet every one of them satisfied this gate.
+  const want = testKey(cells[2]);
+  const results = resultLines(logEntry(logLines, at), resultPatterns(lane.root));
+  if (!results.length) {
+    return `${rid}: ${label} run ref ${ref} logged no test result at all (exit ${ex[1]}), so nothing in it says whether '${cells[2].trim()}' ran; a runner that fails to start is not a ${label} run. If this project's runner reports results in a form the kit does not know, add a {"fail": "...", "pass": "..."} pair to "results" in .claude/kit.json`;
+  }
+  const hit = results.find((x) => want && (testKey(x.name).includes(want) || want.includes(testKey(x.name))));
+  if (!hit) return `${rid}: ${label} run ref ${ref} has no result for '${cells[2].trim()}'; it reported ${results.map((x) => `${x.ok ? 'ok' : 'not ok'} ${x.name}`).slice(0, 3).join(', ')}`;
+  if (hit.ok !== (label === 'green')) return `${rid}: ${label} run ref ${ref} reports '${hit.name}' as ${hit.ok ? 'passing' : 'failing'}; a ${label} run must have it ${label === 'green' ? 'pass' : 'fail'}`;
+  return null;
+}
+
 export function appendLog(p, title, body) {
   fs.mkdirSync(path.dirname(p), { recursive: true });
   const existing = isFile(p) ? (fs.readFileSync(p, 'utf8').match(/\n/g) || []).length : 0;

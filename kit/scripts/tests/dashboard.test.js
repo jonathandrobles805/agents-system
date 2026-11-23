@@ -184,3 +184,9 @@ test('index html is self contained', () => {
   assert.ok(html.includes('status.json') && html.includes('/api/stream') && html.includes('/api/open/'));
   assert.ok(html.includes('/api/architecture') && html.includes("import('./model.js')"));
 });
+
+test('the dashboard watches the lane store, so a stage move refreshes it (hardening plan Step 2)', (t) => {
+  const { root } = project(t);
+  assert.equal(runScript('lane.js', ['start', 'refund-route', '--repo', root]).returncode, 0);
+  assert.ok(S.watchedFiles([root]).includes(path.join(root, '.claude', 'session', 'lanes', 'refund-route.json')));
+});

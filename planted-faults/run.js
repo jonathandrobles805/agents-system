@@ -746,6 +746,31 @@ process.stderr.write('fake gh 52: merge reached GitHub'); process.exit(9);
     const tokenKept = laneSrc.includes("GIT_ASKPASS") && laneSrc.includes("GH_TOKEN: tok.token") && laneSrc.includes("'credential.helper='") && !/x-access-token:\$\{/.test(laneSrc);
     const refuses50 = /\^\(wt\|spec\)\\\//.test(laneSrc);
     record(50, 'a skill pushes or opens the PR with the owner\'s login instead of as the App', 'lane.js publish: the only push path the skills name; App token minted on the host, scoped to one repository, passed through the environment only', rawPush === 0 && named && tokenKept && refuses50, `raw git push / gh pr create in skills: ${rawPush}; skills name publish: ${named}; token through GIT_ASKPASS/GH_TOKEN, helpers off, never in a URL: ${tokenKept}; refuses branches outside wt/* and spec/*: ${refuses50}`, 'tool-level');
+
+    // 55 a lane's stage moves on a progress cell that merely contains `#` (#56), or by a move the table does not allow
+    //    (hardening plan Step 2) -> next-step keeps the lane at test, and lane.js stage (the old name of advance)
+    //    refuses test -> build and test -> review; the store keeps the stage
+    const r55 = path.join(tmp, 'node-api-55');
+    F.nodeApi(r55);
+    run('bootstrap.js', ['--repo', r55]);
+    write(path.join(r55, 'ROADMAP.md'), read(path.join(r55, 'ROADMAP.md')).replaceAll('| TODO(bootstrap: ROADMAP.md — feature) | TODO(bootstrap: ROADMAP.md — slug) | M1 | queued | — | — | — |', '| Refund route | refund-route | M1 | queued | — | — | — |'));
+    const kj55 = path.join(r55, '.claude', 'kit.json');
+    write(kj55, K.jsonDumps({ ...JSON.parse(read(kj55)), local_only: true }));
+    writeP(path.join(r55, 'docs', 'goals', 'refund-route.md'), '# Goal: refund route\n\n- Status: running\n- Agreed by: Jonathan Robles on 2026-11-23\n- Work type: feature\n- Risk: high\n- Size: S\n- Domain: api\n\n## Outcome\n\nA refund route.\n');
+    const c55 = F.commitAll(r55, 'goal');
+    write(path.join(r55, 'docs', 'specs', 'refund-route.md'), SPEC({ commit: c55.slice(0, 7) }));
+    F.commitAll(r55, 'spec');
+    const wt55 = JSON.parse(run('lane.js', ['start', 'refund-route', '--repo', r55]).stdout || '{}').worktree;
+    const test55 = run('lane.js', ['stage', 'refund-route', 'test', '--repo', r55]);
+    const prog55 = path.join(wt55, 'docs', 'specs', 'refund-route.progress.md');
+    write(prog55, read(prog55).replaceAll('| — | — |', '| see #3 | #4 |'));
+    const ns55 = JSON.parse(run('lane.js', ['next-step', 'refund-route', '--repo', r55]).stdout || '{}');
+    const build55 = run('lane.js', ['stage', 'refund-route', 'build', '--repo', r55]);
+    const review55 = run('lane.js', ['stage', 'refund-route', 'review', '--repo', r55]);
+    const store55 = path.join(r55, '.claude', 'session', 'lanes', 'refund-route.json');
+    const kept55 = fs.existsSync(store55) && JSON.parse(read(store55)).stage === 'test';
+    const caught55 = test55.returncode === 0 && ns55.stage === 'test' && build55.returncode === 2 && /test → build refused/.test(build55.stderr) && review55.returncode === 2 && /not an allowed move/.test(review55.stderr) && kept55;
+    record(55, 'a lane\'s stage moves on a progress cell that merely contains #, or by a move the table does not allow', 'lane.js next-step counts only logged runs of the row\'s test; lane.js advance (and stage, its old name) checks the table and the runs (hardening plan Step 2, #56)', caught55, `next-step -> ${ns55.stage}; test -> build: exit ${build55.returncode} (${(build55.stderr || '').trim().split('\n')[0]}); test -> review: exit ${review55.returncode} (${(review55.stderr || '').trim().split('\n')[0]}); store kept at test: ${kept55}`);
   } finally {
     if (a.keep) process.stderr.write(`fixtures kept at ${tmp}\n`);
     else fs.rmSync(tmp, { recursive: true, force: true });

@@ -146,8 +146,10 @@ test('stage and finish', (t) => {
   const { root } = project(t);
   const out = JSON.parse(lane('start', 'refund-route', '--repo', root).stdout);
   const wt = out.worktree;
-  assert.equal(lane('stage', 'refund-route', 'review', '--repo', root).returncode, 0);
-  assert.equal(JSON.parse(read(wt, '.claude', 'lane.json')).stage, 'review');
+  // lane.js stage is the old name of advance: the same table, the same store
+  assert.equal(lane('stage', 'refund-route', 'test', '--repo', root).returncode, 0);
+  assert.equal(JSON.parse(read(wt, '.claude', 'lane.json')).stage, 'test');
+  assert.equal(JSON.parse(read(root, '.claude', 'session', 'lanes', 'refund-route.json')).stage, 'test');
   const r = lane('finish', 'refund-route', '--repo', root);
   assert.equal(r.returncode, 0, r.stderr);
   assert.ok(!fs.existsSync(wt));
@@ -156,21 +158,114 @@ test('stage and finish', (t) => {
   assert.ok(!('refund-route' in JSON.parse(read(root, '.claude', 'kit.json')).lanes));
 });
 
-test('#41 a raised review budget survives lane.js stage review', (t) => {
+test('#41 a raised budget survives a stage change', (t) => {
   // A human raised the review budget to 400/4h; the next lane.js stage review put it back to the default and the
   // budget hook stopped the lane again at 250 calls. A raise recorded in budget_override.<stage> outlives the stage change.
   const { root } = project(t);
   const wt = JSON.parse(lane('start', 'refund-route', '--repo', root).stdout).worktree;
   const lf = path.join(wt, '.claude', 'lane.json');
   const d = JSON.parse(fs.readFileSync(lf, 'utf8'));
-  d.budget_override = { review: { tool_calls: 400, hours: 4 } };
+  d.budget_override = { test: { tool_calls: 400, hours: 4 } };
   fs.writeFileSync(lf, JSON.stringify(d, null, 2));
-  assert.equal(lane('stage', 'refund-route', 'review', '--repo', root).returncode, 0);
+  assert.equal(lane('advance', 'refund-route', 'test', '--repo', root).returncode, 0);
   const after = JSON.parse(fs.readFileSync(lf, 'utf8'));
-  assert.equal(after.stage, 'review');
+  assert.equal(after.stage, 'test');
   assert.equal(after.budget.tool_calls, 400, JSON.stringify(after.budget));
   assert.equal(after.budget.hours, 4, JSON.stringify(after.budget));
-  assert.deepEqual(after.budget_override, { review: { tool_calls: 400, hours: 4 } }, 'the override itself is kept');
+  assert.deepEqual(after.budget_override, { test: { tool_calls: 400, hours: 4 } }, 'the override itself is kept');
+});
+
+// hardening plan Step 2: lane.js advance is the only writer of the lane store, through one table of allowed moves
+const storeOf = (root) => JSON.parse(read(root, '.claude', 'session', 'lanes', 'refund-route.json'));
+const LOG_RED = '=== 2026-11-11T10:00:00 test: npx vitest run -> exit 1\nnot ok 1 - exposes refund\n\n';
+const LOG_GREEN = '=== 2026-11-11T10:05:00 test: npx vitest run -> exit 0\nok 1 - exposes refund\n\n';
+
+test('advance: start writes the store; an illegal move is refused with a reason; each legal move is recorded with its commit', (t) => {
+  setEnv(t, 'KIT_STATUS_NO_GH', '1');
+  const { root } = project(t);
+  const wt = JSON.parse(lane('start', 'refund-route', '--repo', root).stdout).worktree;
+  assert.equal(storeOf(root).stage, 'build');
+  assert.deepEqual(storeOf(root).moves.map((m) => [m.from, m.to]), [[null, 'build']]);
+  // the store is in the main checkout, ignored by git, and not in the lane
+  assert.equal(git(['status', '--porcelain'], root).includes('.claude/session'), false);
+  assert.ok(!fs.existsSync(path.join(wt, '.claude', 'session', 'lanes')));
+  let r = lane('advance', 'refund-route', 'retro', '--repo', root);
+  assert.ok(r.returncode === 2 && r.stderr.includes('not merged'), r.stderr);
+  assert.equal(lane('advance', 'refund-route', 'test', '--repo', root).returncode, 0);
+  r = lane('advance', 'refund-route', 'review', '--repo', root);
+  assert.ok(r.returncode === 2 && r.stderr.includes('test → review is not an allowed move') && r.stderr.includes('may go to test, build, retro'), r.stderr);
+  r = lane('advance', 'refund-route', 'plan', '--repo', root);
+  assert.notEqual(r.returncode, 0, 'a stage outside the table is not even accepted as an argument');
+  // the lane's own lane.json is a copy for the in-lane hooks; the store wins where they differ
+  const lf = path.join(wt, '.claude', 'lane.json');
+  assert.equal(JSON.parse(read(lf)).stage, 'test');
+  write(lf, read(lf).replace('"stage": "test"', '"stage": "review"'));
+  const st = JSON.parse(runScript('kit_status.js', ['--repo', root, '--json']).stdout).lanes.find((l) => l.slug === 'refund-route');
+  assert.ok(st.stage === 'test' && st.position === 'building', JSON.stringify({ stage: st.stage, position: st.position }));
+  r = lane('advance', 'refund-route', 'review', '--repo', root);
+  assert.ok(r.returncode === 2 && r.stderr.includes('test → review is not an allowed move'), 'a lane rewriting its lane.json does not move its stage');
+  // fields a later step adds to the record are kept by every move
+  const sp = path.join(root, '.claude', 'session', 'lanes', 'refund-route.json');
+  write(sp, JSON.stringify({ ...storeOf(root), approval: { by: 'Jonathan Robles' } }));
+  write(path.join(wt, '.claude/session/refund-route.log'), LOG_RED + LOG_GREEN);
+  const prog = path.join(wt, 'docs/specs/refund-route.progress.md');
+  write(prog, read(prog).replaceAll('| — | — |', '| refund-route.log#1 | — |'));
+  assert.equal(lane('advance', 'refund-route', 'build', '--repo', root).returncode, 0);
+  write(prog, read(prog).replaceAll('| refund-route.log#1 | — |', '| refund-route.log#1 | refund-route.log#4 |'));
+  assert.equal(lane('advance', 'refund-route', 'review', '--repo', root).returncode, 0);
+  assert.equal(lane('advance', 'refund-route', 'build', '--repo', root).returncode, 0, 'a review FAIL sends the work back');
+  assert.equal(lane('advance', 'refund-route', 'review', '--repo', root).returncode, 0);
+  const rec = storeOf(root);
+  assert.deepEqual(rec.moves.map((m) => m.to), ['build', 'test', 'build', 'review', 'build', 'review']);
+  assert.deepEqual(rec.approval, { by: 'Jonathan Robles' });
+  assert.ok(rec.moves.every((m) => /^[0-9a-f]{40}$/.test(m.commit)));
+  // merged in git: lane.js merged moves the lane to retro, where its evidence is sealed (#107 reads this)
+  write(path.join(wt, 'src', 'api', 'routes.ts'), '// built\n');
+  commitAll(wt, 'D1');
+  lane('evidence', 'refund-route', '--repo', root);
+  commitAll(wt, 'evidence');
+  git(['merge', '-q', '--no-ff', 'wt/refund-route', '-m', 'merge'], root);
+  r = lane('merged', 'refund-route', '--repo', root);
+  assert.equal(r.returncode, 0, r.stderr);
+  assert.equal(storeOf(root).stage, 'retro');
+  assert.equal(JSON.parse(read(lf)).stage, 'retro');
+  // the kill switch refuses every move
+  lane('stop', '--repo', root, '--by', 'Jonathan', '--reason', 'test');
+  r = lane('advance', 'refund-route', 'retro', '--repo', root);
+  assert.ok(r.returncode === 2 && r.stderr.includes('kill switch'), r.stderr);
+});
+
+test('advance (#56): a progress cell containing # moves no stage unless it names a logged run of its test', (t) => {
+  setEnv(t, 'KIT_STATUS_NO_GH', '1');
+  const { root } = project(t);
+  fs.mkdirSync(path.join(root, 'docs', 'goals'));
+  write(path.join(root, 'docs', 'goals', 'refund-route.md'), GOAL);
+  const wt = JSON.parse(lane('start', 'refund-route', '--repo', root).stdout).worktree;
+  assert.equal(lane('advance', 'refund-route', 'test', '--repo', root).returncode, 0);
+  const prog = path.join(wt, 'docs/specs/refund-route.progress.md');
+  write(prog, read(prog).replaceAll('| — | — |', '| see #3 | #4 |'));
+  let r = lane('advance', 'refund-route', 'build', '--repo', root);
+  assert.ok(r.returncode === 2 && r.stderr.includes('test → build refused') && r.stderr.includes('D1: red run ref see #3 points past the end'), r.stderr);
+  // a logged run of another test is no red run for this one
+  write(path.join(wt, '.claude/session/refund-route.log'), LOG_RED.replace('exposes refund', 'charges'));
+  write(prog, read(prog).replace('| see #3 | #4 |', '| refund-route.log#1 | — |'));
+  r = lane('advance', 'refund-route', 'build', '--repo', root);
+  assert.ok(r.returncode === 2 && r.stderr.includes("has no result for '`tests/routes.test.ts::exposes refund`'"), r.stderr);
+  assert.equal(JSON.parse(lane('next-step', 'refund-route', '--repo', root).stdout).stage, 'test', 'next-step agrees: tester first');
+  assert.equal(storeOf(root).stage, 'test');
+  write(path.join(wt, '.claude/session/refund-route.log'), LOG_RED);
+  assert.equal(JSON.parse(lane('next-step', 'refund-route', '--repo', root).stdout).stage, 'build');
+  assert.equal(lane('advance', 'refund-route', 'build', '--repo', root).returncode, 0);
+});
+
+test('advance: a lane started before the store keeps working; its lane.json stage is read until its first move', (t) => {
+  const { root } = project(t);
+  const wt = JSON.parse(lane('start', 'refund-route', '--repo', root).stdout).worktree;
+  fs.rmSync(path.join(root, '.claude', 'session', 'lanes'), { recursive: true });
+  const lf = path.join(wt, '.claude', 'lane.json');
+  write(lf, read(lf).replace('"stage": "build"', '"stage": "review"'));
+  assert.equal(lane('advance', 'refund-route', 'build', '--repo', root).returncode, 0);
+  assert.deepEqual(storeOf(root).moves.map((m) => [m.from, m.to]), [['review', 'build']]);
 });
 
 test('wip count comes from the lane worktrees, not from ROADMAP', (t) => {
@@ -300,8 +395,12 @@ test('next step walks the pipeline from facts', (t) => {
   // lane, no red runs -> test (tester first)
   assert.equal(stage().stage, 'test');
   const prog = path.join(wt, 'docs/specs/refund-route.progress.md');
+  // a cell containing `#` is not a run (#56): it must name a logged run of its own test
   write(path.join(wt, '.claude/session/refund-route.log'), '=== 2026-11-11T10:00:00 test: npm test -> exit 1\n1 failed\n\n=== 2026-11-11T10:05:00 test: npm test -> exit 0\n1 passed\n');
-  write(prog, read(prog).replaceAll('| — | — |', '| refund-route.log#1 | — |'));
+  write(prog, read(prog).replaceAll('| — | — |', '| refund-route.log#1 | refund-route.log#4 |'));
+  assert.equal(stage().stage, 'test');
+  write(path.join(wt, '.claude/session/refund-route.log'), '=== 2026-11-11T10:00:00 test: npx vitest run -> exit 1\nnot ok 1 - exposes refund\n\n=== 2026-11-11T10:05:00 test: npx vitest run -> exit 0\nok 1 - exposes refund\n');
+  write(prog, read(prog).replaceAll('| refund-route.log#1 | refund-route.log#4 |', '| refund-route.log#1 | — |'));
   assert.equal(stage().stage, 'build');
   write(prog, read(prog).replaceAll('| refund-route.log#1 | — |', '| refund-route.log#1 | refund-route.log#4 |'));
   assert.equal(stage().stage, 'review');
