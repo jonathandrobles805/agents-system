@@ -12,7 +12,7 @@
 
 ## Checklist
 
-<!-- Every row is PASS or FAIL with evidence (file:line, log line, or command output). A row with no evidence is invalid. -->
+<!-- Every row is PASS or FAIL with evidence (file:line, log line, or a command exactly as it was run, with its output). A row with no evidence is invalid. -->
 
 | # | Check | Result | Evidence |
 |---|---|---|---|
