@@ -119,6 +119,20 @@ function researchSections(lines) {
   return out;
 }
 
+/**
+ * Is a review row's evidence what kit/agents/reviewer.md asks for: a `file:line` (or `file:start-end`), a log line
+ * (`truncate-text.log#26`, `log#26`), or a backticked command followed by its output (`` `npx vitest run`: 2 passed ``)?
+ * R12 may also say `Risk: low` (reviewer.md, step 9). "verified", "looks fine to me" and a bare backticked name are not.
+ */
+export function reviewEvidence(row, evidence) {
+  const e = String(evidence ?? '');
+  if (/[\w.-]+\.[A-Za-z0-9]{1,5}:\d+/.test(e)) return true;
+  if (/[\w.-]#\d+/.test(e)) return true;
+  // a command: its first word a program (no `/`, `.` or `(`), an argument after it, then output after the backtick
+  if (/`[a-z][a-z0-9_-]*\s[^`]+`\W*\w/i.test(e)) return true;
+  return String(row).trim().toUpperCase() === 'R12' && /\bRisk:\s*low\b/i.test(e);
+}
+
 /** The mechanical checks a task may name. Each returns { ok, why }. */
 export const CHECKS = {
   /**
@@ -264,10 +278,11 @@ export const CHECKS = {
   },
   /**
    * The review report is filled in: the kit's own review checks (validate_docs.js `review`, REVIEW_RULES) find no
-   * `{{…}}` placeholder left and no checklist row without a Result of exactly PASS or FAIL and its evidence, and no
-   * PASS row's evidence is a bare "ok". The untouched template `kit lane template review` writes
-   * (`| {{PASS|FAIL}} | {{evidence}} |`) fails. Citations are not range-checked here (the scorer has the end state's
-   * text, not the repository); the judge reads them.
+   * `{{…}}` placeholder left and no checklist row without a Result of exactly PASS or FAIL and its evidence, and every
+   * PASS row's evidence is evidence as kit/agents/reviewer.md defines it: "`file:line`, `log#line`, or the command and
+   * its output. 'Looks fine' is not evidence" (reviewEvidence). The untouched template `kit lane template review`
+   * writes (`| {{PASS|FAIL}} | {{evidence}} |`) fails. Citations are not range-checked here (the scorer has the end
+   * state's text, not the repository); the judge reads them.
    */
   review_has_evidence(outcome, task) {
     const rel = task.expected?.review ?? '';
@@ -280,8 +295,10 @@ export const CHECKS = {
     if (bad.length) return { ok: false, why: `${bad.length} problem(s): ${bad.slice(0, 3).map((x) => `line ${x.line} ${x.rule}: ${x.message}`).join('; ')}` };
     const rows = K.parseSections(K.stripHtmlComments(K.splitlines(text))).get('checklist')?.tableRows() ?? [];
     if (!rows.length) return { ok: false, why: 'no checklist rows' };
-    const thin = rows.filter(([, c]) => c[2].toUpperCase() === 'PASS' && /^(ok|fine|good|done|yes|looks good)\.?$/i.test(c[3]));
-    return thin.length ? { ok: false, why: `${thin.length} PASS row(s) without evidence` } : { ok: true, why: `${rows.length} rows, each PASS or FAIL with evidence` };
+    const thin = rows.filter(([, c]) => c[2].toUpperCase() === 'PASS' && !reviewEvidence(c[0], c[3]));
+    return thin.length
+      ? { ok: false, why: `${thin.length} PASS row(s) without file:line, log#line or a command and its output: ${thin.slice(0, 3).map(([, c]) => `${c[0]} "${c[3].slice(0, 40)}"`).join('; ')}` }
+      : { ok: true, why: `${rows.length} rows, each PASS or FAIL, every PASS with evidence` };
   },
   /**
    * The first tool used is one the task expects (tool-selection tasks): `expected.first_tool`, a tool name or a list of

@@ -104,6 +104,11 @@ test('hard checks fail for the right reasons', () => {
   assert.equal(CHECKS.review_has_evidence(rv('| R1 | Named test | PASS | tests/x.ts:2 asserts it |\n| R2 | Red run | FAIL | progress.md D1 has no red run |\n'), R).ok, true);
   assert.equal(CHECKS.review_has_evidence(rv('| R1 | Named test | PASS | ok |\n'), R).ok, false);
   assert.equal(CHECKS.review_has_evidence(rv('| R1 | Named test | PASS | looks good |\n'), R).ok, false, 'long enough for the validator, still no evidence');
+  // reviewer.md: evidence is `file:line`, `log#line`, or the command and its output; "Looks fine is not evidence"
+  for (const e of ['looks fine to me', 'verified', 'Verified by running the tests, all good', '`npx vitest run`', '`tests/truncate.test.ts::name` exists']) assert.equal(CHECKS.review_has_evidence(rv(`| R1 | Named test | PASS | ${e} |\n`), R).ok, false, e);
+  for (const e of ['tests/x.ts:2-4 asserts it', 'progress.md D1 green truncate-text.log#26', '`npx vitest run`: 2 passed']) assert.equal(CHECKS.review_has_evidence(rv(`| R1 | Named test | PASS | ${e} |\n`), R).ok, true, e);
+  assert.equal(CHECKS.review_has_evidence(rv('| R12 | High-risk behind a flag | PASS | spec header `- Risk: low` |\n'), R).ok, true, 'R12 with Risk: low, as reviewer.md step 9 says');
+  assert.equal(CHECKS.review_has_evidence(rv('| R1 | Named test | PASS | Risk: low |\n'), R).ok, false, 'Risk: low is evidence for R12 only');
   assert.equal(CHECKS.review_has_evidence(rv('| R1 | Named test | {{PASS|FAIL}} | {{evidence}} |\n'), R).ok, false, 'the template row');
   assert.equal(CHECKS.review_has_evidence(rv('| R1 | Named test | PASS? | tests/x.ts:2 asserts it |\n'), R).ok, false, 'a Result that is not exactly PASS or FAIL');
   assert.equal(CHECKS.review_has_evidence({ files: { 'r.md': rv('| R1 | Named test | PASS | tests/x.ts:2 asserts it |\n').files['r.md'].replace('# Review: x', '# Review: {{feature}}') } }, R).ok, false, 'a placeholder left anywhere');
