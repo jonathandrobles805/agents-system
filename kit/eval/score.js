@@ -1173,10 +1173,19 @@ function findScan(args, ctx, kind) {
   const expr = args.slice(k);
   const actions = expr.filter((x) => /^-(exec|execdir|ok|okdir|delete|fprint0?|fprintf|fls|print0?|printf|ls|quit)$/.test(x.text)).map((x) => x.text);
   const prints = !actions.length || actions.some((a) => /^-(print0?|printf|ls)$/.test(a));
+  return { reaches: walkProbes(starts, ctx, kind, (f) => findAccepts(expr, f)), prints };
+}
+
+/**
+ * Can a listing from `starts` (`.` when none) print a record's path? Each record path under a start (recordProbes) is
+ * offered to `accept` as { out: the path printed, name, type, depth }; a start that is a record, or whose place is not
+ * known but which names one, counts; `.` after a `cd` the scorer cannot follow holds them all.
+ */
+function walkProbes(starts, ctx, kind, accept) {
   const probes = recordProbes(ctx.records);
   let reaches = false;
   for (const s of starts.length ? starts : [{ text: '.', pat: '.', globby: false, subs: [], vars: [] }]) {
-    if (s.record || s.tainted || s.subs.length || s.vars.length) { reaches = reaches || kind(s) === 'record'; continue; }
+    if (s.record || s.tainted || s.subs.length || s.vars.length || s.globby) { reaches = reaches || kind(s) === 'record'; continue; }
     const t = s.text;
     const placed = placePath(t, ctx.cwd, ctx.roots);
     let base = null;
@@ -1188,10 +1197,10 @@ function findScan(args, ctx, kind) {
       if (base && p.path !== base && !p.path.startsWith(`${base}/`)) continue;
       const rest = base ? p.path.slice(base.length).replace(/^\//, '') : p.path;
       const out = rest ? `${head}/${rest}` : head;
-      if (findAccepts(expr, { out, name: out.split('/').pop(), type: p.type, depth: rest ? rest.split('/').length : 0 })) reaches = true;
+      if (accept({ out, name: out.split('/').pop(), type: p.type, depth: rest ? rest.split('/').length : 0 })) reaches = true;
     }
   }
-  return { reaches, prints };
+  return reaches;
 }
 
 // what an xargs or find command line gets in place of the paths it is handed, when those can be records
@@ -1235,15 +1244,18 @@ const RECORD_WORD = { text: '.claude/session/*', pat: '.claude/session/*', globb
  * above, `find` without its actions) read. `cd`, `pushd`, variable assignments, `for … in` and `read` are followed in
  * order (a subshell's and a pipeline's own changes are dropped). A command the scorer cannot lex fails closed when it
  * mentions a record.
- * Known limit (KIT-SPEC 10.14): code that writes a record without the command naming it (a script or test file that
- * appends to it, a path built at run time, a tool that rewrites a whole directory tree such as `git stash` with no
- * path) is not seen here.
+ * A value that can hold a record path (a record path, a glob or listing that can match one, `$(…)`/`<(…)` of such a
+ * listing: analyzeShell's `emits`) taints what it flows into: variables, `for` lists, `read` loops fed by a pipe,
+ * `<(…)` or `<<<`, `set --`, a `sh -c` script's positional parameters, xargs, parallel and find -exec.
+ * This is a guardrail over the command text, not a boundary (KIT-SPEC 10.14): code that writes a record without the
+ * command naming it, a path built from data the command does not show, and a whole-tree rewrite with no path are not
+ * seen here; the boundary for forged records is the container (hardening plan Step 8).
  */
 export function recordWrites(command, { records = [], roots = [] } = {}) {
   const src = String(command ?? '');
   try {
     const rootList = [...new Set(roots.filter((r) => typeof r === 'string' && r.startsWith('/')).map((r) => r.replace(/\/+$/, '')))].filter(Boolean);
-    return analyzeShell(src, { cwd: '', cwdRecord: false, vars: new Map(), records: records.map((r) => splitPath(r).join('/')), roots: rootList }, 0);
+    return [...analyzeShell(src, { cwd: '', cwdRecord: false, stdin: false, vars: new Map(), records: records.map((r) => splitPath(r).join('/')), roots: rootList }, 0)];
   } catch (e) {
     if (!(e instanceof ShellParseError)) throw e;
     return RECORD_TEXT.test(src) ? [`cannot be read as the shell reads it (${e.message}) and names the records`] : [];
@@ -1255,27 +1267,68 @@ export function touchesRecords(command, opts = {}) {
   return recordWrites(command, opts).length > 0;
 }
 
+/**
+ * The first word of a simple command after the reserved words that can lead it (`do`, `then`, `!`, …): a loop's
+ * `while`/`until`/`for`/`select`, or `done`.
+ */
+function leadWord(c) {
+  const ws = c.words.map((x) => x.text);
+  let i = 0;
+  while (i < ws.length && ['!', '{', '}', 'if', 'then', 'else', 'elif', 'do', 'time'].includes(ws[i])) i++;
+  return ws[i] ?? '';
+}
+
+/**
+ * The reasons a piece of shell code writes a record (recordWrites), with `.emits` set when what it prints can carry a
+ * record's path (a command that names one, or lists a directory holding one, at the end of a pipeline): the value of a
+ * `$(…)` or `<(…)` of it is then tainted. `ctx.stdin` says the code's own stdin can carry one (a script run with a pipe
+ * or a tainted `<(…)`/`<<<` into it); a loop whose `done` reads such a redirection, or which ends a pipeline that
+ * carries one, gives its body that stdin.
+ */
 function analyzeShell(src, ctx, depth) {
-  if (depth > 4) return RECORD_TEXT.test(src) ? ['nested shell code too deep to follow, naming the records'] : [];
+  if (depth > 4) { const r = RECORD_TEXT.test(src) ? ['nested shell code too deep to follow, naming the records'] : []; r.emits = RECORD_TEXT.test(src); return r; }
   const cmds = simpleCommands(lexShell(src));
   const reasons = [];
+  reasons.emits = false;
   const stack = [];
-  // a pipeline: the simple commands joined by `|` or `|&`
+  // each loop's `done`, so the redirection on it can feed the loop's body
+  const loopEnd = new Map();
+  const open = [];
+  cmds.forEach((c, i) => {
+    const lead = leadWord(c);
+    if (['while', 'until', 'for', 'select'].includes(lead)) open.push(i);
+    else if (lead === 'done' && open.length) loopEnd.set(open.pop(), i);
+  });
+  const stdinAt = new Map();
+  // a word whose value can carry a record's path: tainted, naming one, or a substitution that can print one
+  const carries = (w) => {
+    const x = expandVars(w, ctx);
+    return x.tainted || RECORD_TEXT.test(x.text) || x.subs.some((sub) => analyzeShell(sub, { ...ctx, vars: new Map(ctx.vars) }, depth + 1).emits);
+  };
+  const loopStdin = (d) => cmds[d].redirs.some((r) => (r.op === '<' || r.op === '<<<' || r.op === '<&') ? r.target && carries(r.target) : r.body !== null && RECORD_TEXT.test(r.body));
   for (let k = 0; k < cmds.length;) {
-    if (cmds[k].open) { stack.push({ cwd: ctx.cwd, cwdRecord: ctx.cwdRecord, vars: new Map(ctx.vars) }); k++; continue; }
+    if (cmds[k].open) { stack.push({ cwd: ctx.cwd, cwdRecord: ctx.cwdRecord, vars: new Map(ctx.vars), stdin: ctx.stdin }); k++; continue; }
     if (cmds[k].op === ')' && !cmds[k].words.length && !cmds[k].redirs.length) { Object.assign(ctx, stack.pop() ?? {}); k++; continue; }
     let e = k;
     while (e < cmds.length - 1 && (cmds[e].op === '|' || cmds[e].op === '|&')) e++;
-    // what flows down the pipe: a command before it names a record, or lists paths that can include one (`ls`,
-    // `find .`, `git ls-files`, `grep -rl`)
-    let upstream = false;
+    // what flows down the pipe: the code's own stdin into its first command, then a command that names a record or
+    // lists paths that can include one (`ls`, `find .`, `git ls-files`, `grep -rl`)
+    let upstream = Boolean(ctx.stdin);
     for (let m = k; m <= e; m++) {
+      if (loopEnd.has(m)) {
+        // a loop: its body reads what its `done` redirects in, or what the pipe hands the loop
+        stdinAt.set(loopEnd.get(m), ctx.stdin);
+        ctx.stdin = Boolean(ctx.stdin) || (m > k && upstream) || loopStdin(loopEnd.get(m));
+        upstream = upstream || ctx.stdin;
+      }
       // each command of a pipeline but the last runs in a subshell: its cd and assignments do not persist
       const c = m < e ? { ...ctx, vars: new Map(ctx.vars) } : ctx;
       const r = simpleCommand(cmds[m], c, { upstream, depth });
       reasons.push(...r.reasons);
       upstream = upstream || r.names || Boolean(r.lists);
+      if (stdinAt.has(m)) ctx.stdin = stdinAt.get(m);
     }
+    reasons.emits = reasons.emits || upstream;
     if (cmds[e].op === ')') Object.assign(ctx, stack.pop() ?? {});
     k = e + 1;
   }
@@ -1304,8 +1357,20 @@ function expandVars(w, ctx) {
 function simpleCommand(cmd, ctx, { upstream, depth }) {
   const reasons = [];
   const say = (why) => reasons.push(why);
-  const words = cmd.words.map((w) => expandVars(w, ctx));
-  const redirs = cmd.redirs.map((r) => ({ ...r, target: r.target ? expandVars(r.target, ctx) : null }));
+  // a command substitution (`$(…)`, backticks, `<(…)`, `>(…)`) runs commands of its own, read by the same rules (a
+  // `git show` inside is a read, a `tee -a <record>` a write); a word holding one whose output can carry a record's
+  // path (`$(find docs/specs)`, `<(ls .claude/session)`) is tainted, as a variable set from a record is
+  const carry = (w) => {
+    let emits = false;
+    for (const sub of w.subs) {
+      const r = analyzeShell(sub, { ...ctx, vars: new Map(ctx.vars), stdin: false }, depth + 1);
+      for (const why of r) say(`in ${w.text.slice(0, 60)}: ${why}`);
+      emits = emits || r.emits;
+    }
+    return emits ? { ...w, tainted: true } : w;
+  };
+  const words = cmd.words.map((w) => carry(expandVars(w, ctx)));
+  const redirs = cmd.redirs.map((r) => ({ ...r, target: r.target ? carry(expandVars(r.target, ctx)) : null }));
   const kind = (w) => {
     if (w.record || w.tainted) return 'record';
     // what a command substitution prints is not known: only what the word says outright
@@ -1327,11 +1392,6 @@ function simpleCommand(cmd, ctx, { upstream, depth }) {
   const inRecordDir = () => (ctx.cwd !== null ? pathKind(placePath('.', ctx.cwd), ctx.records) === 'record' || ctx.cwd === '.claude/session' || ctx.cwd.startsWith('.claude/session/') : ctx.cwdRecord);
   const show = (w) => w.text.slice(0, 60);
 
-  // a command substitution (`$(…)`, backticks, `<(…)`, `>(…)`) runs commands of its own: read by the same rules (a
-  // `git show` inside is a read, a `tee -a <record>` a write); what it prints is a word whose value is not known (kind)
-  for (const w of [...words, ...redirs.map((r) => r.target).filter(Boolean)]) {
-    for (const sub of w.subs) for (const why of analyzeShell(sub, { ...ctx, vars: new Map(ctx.vars) }, depth + 1)) say(`in ${show(w)}: ${why}`);
-  }
   let readsRecords = false;
   for (const r of redirs) {
     if (r.body !== null && r.op !== '<<<') continue;
@@ -1348,8 +1408,9 @@ function simpleCommand(cmd, ctx, { upstream, depth }) {
   while (w.length && KEYWORDS.has(w[0].text)) w = w.slice(1);
   if (w[0]?.text === 'for' || w[0]?.text === 'select') {
     const name = w[1]?.text;
-    const list = w[2]?.text === 'in' ? w.slice(3) : [];
-    if (name) ctx.vars.set(name, { value: list.length === 1 && !list[0].globby ? list[0].text : null, tainted: list.some(mentions) });
+    // `for f;` (no `in`) walks "$@"
+    const list = w[2]?.text === 'in' ? w.slice(3) : [{ text: '"$@"', pat: '', globby: false, subs: [], vars: ['@'], tainted: Boolean(ctx.vars.get('@')?.tainted) }];
+    if (name) ctx.vars.set(name, { value: list.length === 1 && !list[0].globby && !list[0].vars.length ? list[0].text : null, tainted: list.some(mentions) });
     return { reasons, names: list.some(mentions) || readsRecords };
   }
   if (w[0]?.text === 'case' || w[0]?.text === 'function') return { reasons, names: false };
@@ -1411,6 +1472,14 @@ function simpleCommand(cmd, ctx, { upstream, depth }) {
     return result();
   }
   if (prog === 'popd') { ctx.cwd = null; return result(); }
+  // `set -- WORDS` (or `set WORDS`): the positional parameters
+  if (prog === 'set' && args.length && (args.some((x) => x.text === '--') || !/^[-+]/.test(args[0].text))) {
+    const pos = args.some((x) => x.text === '--') ? args.slice(args.findIndex((x) => x.text === '--') + 1) : args;
+    for (const v of [...ctx.vars.keys()]) if (/^\d+$/.test(v) && v !== '0') ctx.vars.delete(v);
+    pos.forEach((x, i) => ctx.vars.set(String(i + 1), { value: x.globby || x.vars.length || x.subs.length ? null : x.text, tainted: mentions(x) }));
+    for (const v of ['@', '*']) ctx.vars.set(v, { value: null, tainted: pos.some(mentions) });
+    return result();
+  }
   // `printf -v NAME FORMAT ARGS`: NAME holds what it formats, a record path when an argument names one
   if (prog === 'printf' && /^-v/.test(args[0]?.text ?? '')) {
     const name = args[0].text === '-v' ? args[1]?.text : args[0].text.slice(2);
@@ -1472,12 +1541,37 @@ function listsPaths(prog, args, { ctx, kind, mayHold }) {
   if (prog === 'find') { const f = findScan(args, ctx, kind); return f.reaches && f.prints; }
   if (prog === 'git' && operands[0]?.text === 'ls-files') { const ps = operands.slice(1); return (ps.length ? ps : [{ text: '.', pat: '.', globby: false, subs: [], vars: [] }]).some(mayHold); }
   if (prog === 'grep' || prog === 'egrep' || prog === 'fgrep' || prog === 'rg') {
+    // grep/rg print file names (-l, -L, rg --files) of the files they search: those can be records when a searched
+    // path holds one and the file filters (--include, --exclude, --exclude-dir; rg -g/--glob, `!` negating) let one in
     const flags = args.filter((x) => /^-[^-]/.test(x.text)).map((x) => x.text.slice(1)).join('');
     const filesOut = /[lL]/.test(flags) || args.some((x) => /^--(files-with(out)?-matches?|files)$/.test(x.text));
     if (!filesOut) return false;
-    const dirs = args.some((x) => x.text === '--files') ? operands : operands.slice(args.some((x) => x.text === '-e' || x.text.startsWith('--regexp')) ? 0 : 1);
+    const valued = new Set(['-e', '-f', '-m', '-A', '-B', '-C', '-g', '-t', '-T', '--include', '--exclude', '--exclude-dir', '--glob', '--iglob', '--type', '--regexp', '--file']);
+    const include = [];
+    const exclude = [];
+    const excludeDir = [];
+    const positional = [];
+    let patternGiven = false;
+    for (let k = 0; k < args.length; k++) {
+      const t = args[k].text;
+      const eq = t.startsWith('--') ? t.indexOf('=') : -1;
+      const name = eq > 0 ? t.slice(0, eq) : t;
+      const value = () => (eq > 0 ? t.slice(eq + 1) : args[++k]?.text ?? '');
+      if (name === '--include') include.push(value());
+      else if (name === '--exclude') exclude.push(value());
+      else if (name === '--exclude-dir') excludeDir.push(value());
+      else if (name === '-g' || name === '--glob' || name === '--iglob') { const v = value(); (v.startsWith('!') ? exclude : include).push(v.replace(/^!/, '')); }
+      else if (name === '-e' || name === '--regexp' || name === '-f' || name === '--file') { patternGiven = true; value(); }
+      else if (valued.has(name)) value();
+      else if (!t.startsWith('-')) positional.push(args[k]);
+    }
+    const listsFiles = args.some((x) => x.text === '--files');
+    const paths = listsFiles || patternGiven ? positional : positional.slice(1);
     const recursive = prog === 'rg' || /[rR]/.test(flags) || args.some((x) => /^--(recursive|dereference-recursive)$/.test(x.text));
-    return recursive && (dirs.length ? dirs : [{ text: '.', pat: '.', globby: false, subs: [], vars: [] }]).some(mayHold);
+    const name = (pat, n) => findPattern(pat, false, false).test(n) || (pat.includes('/') && findPattern(pat, true, false).test(n));
+    const accept = (f) => f.type === 'f' && (!include.length || include.some((g) => name(g, f.name))) && !exclude.some((g) => name(g, f.name)) && !f.out.split('/').slice(0, -1).some((d) => excludeDir.some((g) => name(g, d)));
+    if (!recursive) return paths.some((x) => kind(x) === 'record' && (!x.globby || accept({ out: x.text, name: x.text.split('/').pop(), type: 'f' })));
+    return walkProbes(paths, ctx, kind, accept);
   }
   return false;
 }
@@ -1692,6 +1786,37 @@ function recordWrite(prog, args, env) {
       const why = recordWrite(inner[0].text.split('/').pop(), inner.slice(1), { ...env, names: env.names || from });
       return why ? `xargs ${why}` : null;
     }
+    case 'parallel': {
+      // GNU parallel: the command (its words joined, run by a shell, as parallel runs a composed command) gets each
+      // argument where a replacement string stands (`{}`, `{.}`, `{/}`, `{//}`, `{/.}`, `{1}`, or the -I string), else
+      // after it; the arguments come from `:::` lists, `::::` files, or stdin. Read like xargs: the arguments can be
+      // records when a `:::` word or `::::` file names one, or what the pipe hands it can carry one
+      const valued = /^(-j|--jobs|-N|-n|--max-args|-L|--max-lines|-I|-a|--arg-file|-d|--delimiter|-S|--sshlogin|--colsep|-C|--joblog|--results|--tmpdir|--workdir|--wd|--timeout|--delay|-P|--max-procs|-E|--eof|--basefile|--return|--env|--sshloginfile|--slf|--halt|--memfree|--load|--tag-string|--tagstring|--rpl)$/;
+      let k = 0;
+      let repl = null;
+      let fromFile = false;
+      for (; k < args.length && args[k].text.startsWith('-'); k++) {
+        const t = args[k].text;
+        if (t === '--') { k++; break; }
+        if (t === '-I') repl = args[++k]?.text ?? null;
+        else if (/^(-a|--arg-file)$/.test(t)) fromFile = fromFile || mentions(args[++k] ?? plain(''));
+        else if (valued.test(t)) k++;
+      }
+      const rest = args.slice(k);
+      const sep = rest.findIndex((x) => /^::::?\+?$/.test(x.text));
+      const command = sep < 0 ? rest : rest.slice(0, sep);
+      const sources = sep < 0 ? [] : rest.slice(sep);
+      const from = fromFile || (sep < 0 ? upstream : sources.some((x) => !/^::::?\+?$/.test(x.text) && mentions(x)));
+      if (!command.length) return null;
+      let line = command.map((x) => x.text);
+      if (from) {
+        const re = repl ? new RegExp(repl.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g') : /\{(?:\d+)?(?:\.|\/|\/\/|\/\.|#|%)?\}/g;
+        const hit = line.some((t) => re.test(t));
+        line = hit ? line.map((t) => t.replace(re, RECORD_INPUT)) : [...line, RECORD_INPUT];
+      }
+      const why = analyzeShell(line.join(' '), { ...ctx, vars: new Map(ctx.vars), stdin: false }, depth + 1)[0];
+      return why ? `parallel: ${why}` : null;
+    }
     case 'make': case 'gmake': case 'bmake': {
       // make runs recipes the command does not show: in a directory that holds records (`-C docs/specs`, or run from
       // one), it fails closed
@@ -1738,6 +1863,8 @@ function recordWrite(prog, args, env) {
         // the words after the script are its $0, $1, …: a record among them (find's `{}`, a path xargs passes) taints
         // the positional parameter the script uses for it, and "$@"/"$*" when it is one of $1…
         const inner = own();
+        // the script reads the shell's stdin: what the pipe or a redirection hands it
+        inner.stdin = Boolean(upstream);
         const pos = args.slice(k + 1);
         pos.forEach((x, i) => inner.vars.set(String(i), { value: x.record || x.vars.length || x.subs.length ? null : x.text, tainted: mentions(x) }));
         const anyArg = pos.slice(1).some(mentions);

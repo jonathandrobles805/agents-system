@@ -815,6 +815,31 @@ test('records_untouched: xargs options as GNU and BSD xargs read them, substitut
   for (const [c, w] of cases) assert.equal(recordWrites(c, { records }).length > 0, w, c);
 });
 
+test('records_untouched taint: a value that can hold a record path flows through pipes, loops, substitutions, set -- and positional parameters into a writer', () => {
+  // findings (last review of #111): a path list naming records fed a loop variable or a positional parameter that a
+  // writer then used; each form fails, and its twin over a scope that holds no record (src, --include, -name) passes
+  const records = ['docs/specs/truncate-text.events.jsonl'];
+  const cases = [
+ ["while IFS= read -r f; do echo x >> \"$f\"; done < <(find docs/specs -name '*.jsonl')", true], ["while IFS= read -r f; do echo x >> \"$f\"; done < <(find src -name '*.ts')", false],
+ ["while read f; do echo x >> \"docs/specs/$f\"; done < <(ls docs/specs)", true], ["while read f; do echo x >> \"src/$f\"; done < <(ls src)", false],
+ ["while read f; do echo x >> \"$f\"; done <<< \"$(find docs/specs -type f)\"", true], ["while read f; do echo x >> \"$f\"; done <<< \"$(find src -type f)\"", false],
+ ["for f in $(ls docs/specs); do echo >> docs/specs/$f; done", true], ["for f in $(ls src); do echo >> src/$f; done", false],
+ ["for f in $(find docs/specs -type f); do echo x >> $f; done", true], ["for f in $(find docs/specs -name '*.md'); do echo x >> $f; done", false],
+ ["for f in $(ls docs/specs/*.jsonl); do echo x >> $f; done", true], ["for f in $(ls docs/specs/*.md); do echo x >> $f; done", false],
+ ["for f in $(git ls-files docs/specs); do echo x >> $f; done", true], ["for f in $(git ls-files src); do echo x >> $f; done", false],
+ ["ls docs/specs/*.jsonl | parallel sed -i s/a/b/ {}", true], ["ls src/*.ts | parallel sed -i s/a/b/ {}", false], ["find docs/specs -type f | parallel 'echo x >> {}'", true], ["find src -type f | parallel 'echo x >> {}'", false],
+ ["parallel sed -i s/a/b/ ::: docs/specs/*.jsonl", true], ["parallel sed -i s/a/b/ ::: src/*.ts", false], ["parallel 'echo x >> docs/specs/s.events.jsonl' ::: 1", true], ["find docs/specs -type f | parallel wc -l {}", false],
+ ["find docs/specs -type f -exec sh -c 'for f; do echo x >> \"$f\"; done' sh {} +", true], ["find src -type f -exec sh -c 'for f; do echo x >> \"$f\"; done' sh {} +", false], ["find docs/specs -type f -exec sh -c 'for f; do cat \"$f\"; done' sh {} +", false],
+ ["find docs/specs -type f | sh -c 'while read f; do echo >> $f; done'", true], ["find src -type f | sh -c 'while read f; do echo >> $f; done'", false],
+ ["set -- docs/specs/*.jsonl; echo x >> $1", true], ["set -- src/*.ts; echo x >> $1", false], ["set -- docs/specs/*.jsonl; cat \"$@\"", false],
+ ["f=$(ls docs/specs/*.jsonl | head -1); echo x >> \"$f\"", true], ["f=$(ls src/*.ts | head -1); echo x >> \"$f\"", false],
+ ["grep -rl foo docs --include='*.md' | xargs sed -i s/foo/bar/", false], ["grep -rl foo docs | xargs sed -i s/foo/bar/", true], ["grep -rl foo . --exclude='*.jsonl' --exclude-dir=.claude | xargs sed -i s/a/b/", false],
+ ["grep -rl foo . --exclude='*.jsonl' | xargs sed -i s/a/b/", true], ["rg -l foo -g '*.ts' | xargs sed -i s/a/b/", false], ["rg -l foo -g '!*.md' | xargs sed -i s/a/b/", true], ["grep -l foo docs/specs/* | xargs sed -i s/a/b/", true], ["grep -l foo src/*.ts | xargs sed -i s/a/b/", false],
+ ["find docs/specs -type f | while true; do read f || break; echo x >> \"$f\"; done", true],
+];
+  for (const [c, w] of cases) assert.equal(recordWrites(c, { records }).length > 0, w, c);
+});
+
 test('nits: `vitest --run` is a test run; a node_modules citation the runner found is real; a host:port is no file:line', (t) => {
   const tc = ['npx vitest run', 'npx vitest run --changed HEAD', 'npx vitest run {file}'];
   // `--run` is the `run` subcommand as an option (vitest CLI: "Disable watch mode")
