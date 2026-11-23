@@ -483,6 +483,31 @@ export function snapshot(root) {
   return files;
 }
 
+/**
+ * The files under `node_modules/` that the end state cites as `path:line` (a review's evidence may point at a
+ * dependency's source), with their line counts: the snapshot leaves `node_modules/` out, so the scorer could not tell
+ * a real citation of one from an invented one. Only files inside `root` (real path), not secret, under 512 KiB.
+ */
+export function nodeModulesLines(root, files) {
+  const out = {};
+  const realRoot = fs.realpathSync(root);
+  for (const text of Object.values(files ?? {})) {
+    if (typeof text !== 'string') continue;
+    for (const m of text.matchAll(/(?<![\w./-])(?:\.\/)?((?:[\w@.-]+\/)*node_modules\/[\w@./-]+\.[A-Za-z0-9]{1,5}):\d+/g)) {
+      const rel = m[1];
+      if (rel in out || rel.split('/').includes('..') || isSecretPath(rel)) continue;
+      try {
+        const real = fs.realpathSync(path.join(root, rel));
+        if (path.relative(realRoot, real).startsWith('..') || !fs.statSync(real).isFile() || fs.statSync(real).size >= 512 * 1024) continue;
+        out[rel] = K.splitlines(fs.readFileSync(real, 'utf8')).length;
+      } catch {
+        // no such file: the citation stays invented
+      }
+    }
+  }
+  return out;
+}
+
 /** A git diff without the parts for secret files (isSecretPath), for a diff that goes to the judge. */
 export function dropSecretFiles(diff) {
   return diff.split(/(?=^diff --git )/m).filter((part) => {
@@ -752,6 +777,7 @@ export async function run(task, { attempt = 0, timeoutMs = 20 * 60 * 1000, trans
     const work = headless(task.goal, cwd, env, settings, timeoutMs, agent);
     const kept = { worker: home && transcripts ? keepTranscripts(home.config, path.join(transcripts, 'worker')) : [], judge: [] };
     const files = snapshot(cwd);
+    const nodeModules = nodeModulesLines(cwd, files);
     const sessionDiff = dropSecretFiles(treeDiff(cwd, setupTree, workTree(cwd, path.join(dir, 'index.end'), notWork), notWork));
     const events = eventsSince(evFiles, before);
     // what the setup recorded before the session (the tester's red run in an implementer's lane): never the session's work
@@ -798,7 +824,7 @@ export async function run(task, { attempt = 0, timeoutMs = 20 * 60 * 1000, trans
     // `output`: what the worker printed (its final answer with `claude -p`), redacted; a check may read it (lesson_proposed)
     // `session_diff`, `setup_files`: what the judge was told the session and the setup changed
     // `transcript_commands`: the Bash commands from the worker's transcript (redacted), beside the hook's `bash` events
-    return { runner: name, variant: null, files, setup_state: setupState, events, setup_events: setupEvents, transcript_commands: bashCalls.map((c) => c.command), lane_log_lines: laneLogLines, not_work: notWork, session_diff: sessionDiff, setup_files: setupFiles, judge_prompt: judgeInput, git, judge, test_commands: testCommands, transcripts: kept, ms: Date.now() - started, worker_command: work.command, worker_status: work.status, worker_signal: work.signal, worker_error: work.error, worker_stderr: work.stderr.slice(-2000), output: redact(work.stdout).slice(-20000), worker_agent: agent, warnings, judge_session: judgeSession };
+    return { runner: name, variant: null, files, setup_state: setupState, events, setup_events: setupEvents, transcript_commands: bashCalls.map((c) => c.command), lane_log_lines: laneLogLines, node_modules_lines: nodeModules, not_work: notWork, session_diff: sessionDiff, setup_files: setupFiles, judge_prompt: judgeInput, git, judge, test_commands: testCommands, transcripts: kept, ms: Date.now() - started, worker_command: work.command, worker_status: work.status, worker_signal: work.signal, worker_error: work.error, worker_stderr: work.stderr.slice(-2000), output: redact(work.stdout).slice(-20000), worker_agent: agent, warnings, judge_session: judgeSession };
   } finally {
     if (!process.env.KIT_EVAL_KEEP) fs.rmSync(dir, { recursive: true, force: true });
   }

@@ -133,12 +133,24 @@ export function shellWords(command) {
   return words;
 }
 
+/**
+ * A vitest command written with the `--run` option (`npx vitest --run tests/x.test.ts`) read as the `run` subcommand
+ * it equals (`npx vitest run tests/x.test.ts`): vitest's `--run` disables watch mode, as `vitest run` does
+ * (https://v2.vitest.dev/guide/cli: "vitest run ... Perform a single run without watch mode", `--run`: "Disable watch
+ * mode"). Any other command is returned as it is.
+ */
+export function vitestRunForm(seg) {
+  const m = /^((?:npx\s+)?(?:\S*\/)?vitest)((?:\s+\S+)*)\s*$/.exec(seg);
+  if (!m || /^\s+run(?:\s|$)/.test(m[2]) || !/(?:^|\s)--run(?=\s|$)/.test(m[2])) return seg;
+  return `${m[1]} run${m[2].replace(/(^|\s)--run(?=\s|$)/, '')}`;
+}
+
 // `timeout [options] <duration> <command>`: GNU timeout's options, then a duration such as 60, 1.5m or 2h
 const TIMEOUT_PREFIX = /^timeout\s+(?:(?:-s\s+\S+|--signal=\S+|-k\s+\S+|--kill-after=\S+|--preserve-status|--foreground|-v|--verbose)\s+)*\d+(?:\.\d+)?[smhd]?\s+/;
 
 /**
  * testCommandIn's match: `{ how, run }`, where `run` is the matched segment with any leading `VAR=value` assignments
- * dropped (`npx vitest run --reporter=tap tests/truncate.test.ts`), so a caller can tell which test it ran; null when
+ * dropped and `vitest --run` read as `vitest run` (`npx vitest run --reporter=tap tests/truncate.test.ts`), so a caller can tell which test it ran; null when
  * no recorded test command runs. With the project's test script (`pkgTest`), `npm test -- <args>` is read as that
  * script (npmTestAsVitest) and `run` is the vitest command it stands for.
  */
@@ -149,7 +161,8 @@ export function testCommandMatch(command, testCommands = [], pkgTest = null) {
   for (let i = 0; i < parts.length; i += 2) {
     // leading `VAR=value` assignments and a `timeout <duration>` prefix (which exits with the command's own status, or
     // 124 when it kills it) are dropped
-    let seg = parts[i].trim().replace(/^(?:[A-Za-z_][A-Za-z0-9_]*=\S*\s+)+/, '').replace(TIMEOUT_PREFIX, '');
+    // `vitest --run` is read as `vitest run` (vitestRunForm)
+    let seg = vitestRunForm(parts[i].trim().replace(/^(?:[A-Za-z_][A-Za-z0-9_]*=\S*\s+)+/, '').replace(TIMEOUT_PREFIX, ''));
     const isKnown = (x) => known.some((k) => x === k || x.startsWith(`${k} `));
     if (!isKnown(seg)) {
       const npm = npmTestAsVitest(seg, pkgTest);
@@ -361,8 +374,19 @@ export function evidenceContext(outcome) {
     commands: (outcome.events ?? []).filter((e) => e.tool === 'Bash' && typeof e.command === 'string').map((e) => e.command.replace(/\s+/g, ' ')),
     refs: new Set(events.map((e) => e.ref).filter((r) => typeof r === 'string')),
     logLines: Number.isInteger(outcome.lane_log_lines) ? outcome.lane_log_lines : null,
+    // files the snapshot leaves out (node_modules/) that the end state cites, with their line counts (the runner
+    // reads them: `outcome.node_modules_lines`)
+    extraLines: outcome.node_modules_lines && typeof outcome.node_modules_lines === 'object' ? outcome.node_modules_lines : {},
   };
 }
+
+/**
+ * Is `name` (the part before `:N` in evidence) a host, so `name:N` is a host and port, not a file and line: an IPv4
+ * address (`127.0.0.1:3000`), or a dotted name with no `/` whose last label is a common top-level or local domain
+ * (`api.example.com:443`, `db.internal:5432`), a `user@` before it dropped. Only asked when no file of the end state has
+ * that name.
+ */
+export const isHost = (raw) => ((name) => /^\d{1,3}(?:\.\d{1,3}){3}$/.test(name) || (!name.includes('/') && /^[a-z0-9-]+(?:\.[a-z0-9-]+)*\.(?:com|org|net|io|dev|app|ai|co|cloud|sh|edu|gov|local|internal|localhost|lan|test|example|invalid)$/i.test(name)))(String(raw).replace(/^[^@/]*@/, ''));
 
 /**
  * Does a shell command only print or do nothing: every part of it (split on `&&`, `||`, `;`, `|`) is `echo`, `printf`,
@@ -376,8 +400,10 @@ export function printsOnly(cmd) {
 /**
  * Is a review row's evidence what kit/agents/reviewer.md asks for ("`file:line`, `log#line`, or the command and its
  * output"), and real? Returns { ok, why }. Each form counts only when it holds in the session (`ctx`, evidenceContext):
- * - `file:line` (or `file:start-end`): the file is in the end state (its path, or a unique path ending in it) and the
- *   lines are within its line count. One that is not names an invented place: the row fails, whatever else it cites.
+ * - `file:line` (or `file:start-end`): the file is in the end state (its path, or a unique path ending in it), or is a
+ *   file under `node_modules/` the runner found and counted (`node_modules_lines`), and the lines are within its line
+ *   count. One that is not names an invented place: the row fails, whatever else it cites. A `host:port`
+ *   (`127.0.0.1:3000`, `api.example.com:443`; isHost) names no file and is neither.
  * - `log#line` (`truncate-text.log#26`, `log#26`, and the lane log by the path reviewer.md gives it,
  *   `.claude/session/truncate-text.log#26` or `…log:26`): a ref the lane's events carry, or a line within the lane log's
  *   length. One that is neither is invented: the row fails.
@@ -400,12 +426,18 @@ export function reviewEvidence(row, evidence, ctx = evidenceContext({})) {
     if (logRef(m[1].split('/').pop(), Number(m[2]))) real++;
     else invented.push(`${m[0]} (no such log line)`);
   }
-  for (const m of e.matchAll(/(?<![\w./:-])([\w./-]+\.[A-Za-z0-9]{1,5}):(\d+)(?:-(\d+))?\b/g)) {
+  // a path may hold `@` (a scoped package, `node_modules/@vitest/runner/…`)
+  for (const m of e.matchAll(/(?<![\w@./:-])([\w@./-]+\.[A-Za-z0-9]{1,5}):(\d+)(?:-(\d+))?\b/g)) {
     if (/\.log$/.test(m[1])) continue;
     const rel = m[1].replace(/^\.\//, '');
-    const hits = Object.keys(ctx.files).filter((f) => typeof ctx.files[f] === 'string' && (f === rel || f.endsWith(`/${rel}`)));
+    const named = (f) => f === rel || f.endsWith(`/${rel}`);
+    const hits = Object.keys(ctx.files).filter((f) => typeof ctx.files[f] === 'string' && named(f));
+    // a file under node_modules/ the session cited (the snapshot leaves node_modules/ out; the runner counts its lines)
+    const extra = Object.entries(ctx.extraLines ?? {}).filter(([f, n]) => Number.isInteger(n) && named(f));
+    // `host:port` names no file: neither evidence nor invented
+    if (!hits.length && !extra.length && isHost(rel)) continue;
     const [a, b] = [Number(m[2]), Number(m[3] ?? m[2])];
-    if (hits.some((f) => a >= 1 && a <= b && b <= lineCount(f))) real++;
+    if (hits.some((f) => a >= 1 && a <= b && b <= lineCount(f)) || extra.some(([, n]) => a >= 1 && a <= b && b <= n)) real++;
     else invented.push(hits.length ? `${m[0]} (past the end of ${hits[0]})` : `${m[0]} (no such file in the end state)`);
   }
   // a command: its first word a program (no `/`, `.` or `(`), an argument after it, then output after the backtick
@@ -648,7 +680,6 @@ export const CHECKS = {
         const why = tests.filter((r) => r.result === 'ok' && r.command).map((r) => `${r.command}: ${sel(r.command).why ?? 'not a run of the red criterion'}`).slice(0, 2).join('; ');
         return { ok: false, why: `red run of ${setupRed.map((e) => e.criterion).join(', ')} recorded by the setup, but no session green run of that test (the post-edit hook's run, or a Bash run or a check of the criterion running the suite or that test)${why ? `: ${why}` : ''}` };
       }
-      if (green < 0) return { ok: false, why: `red run of ${setupRed.map((e) => e.criterion).join(', ')} recorded by the setup, but no session green run of that test (the post-edit hook's run, or a Bash run or a check of the criterion running the suite or that test)` };
       return { ok: true, why: `red run of ${setupRed.map((e) => e.criterion).join(', ')} recorded by the setup (${setupRed[0].ref ?? 'kit lane check'}), green at session run ${green} (${tests[green].via})` };
     }
     if (firstRed < 0 || firstRed > firstGreen) return { ok: false, why: 'green run recorded without a red run before it' };

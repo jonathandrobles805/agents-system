@@ -8,7 +8,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { CORE_ROLES, RUNNERS, compare, fmt, loadTasks, runSet, selectTasks, summarize, writeBaseline } from '../../eval/harness.js';
-import { CHECKS, ignoredBySetup, score, testCommandIn, testRuns, touchesRecords } from '../../eval/score.js';
+import { CHECKS, evidenceContext, ignoredBySetup, reviewEvidence, score, testCommandIn, testRuns, touchesRecords } from '../../eval/score.js';
 import * as fixture from '../../eval/runners/fixture.js';
 import * as claude from '../../eval/runners/claude.js';
 import * as K from '../kitlib.js';
@@ -673,6 +673,33 @@ test('records_untouched: a Bash command that writes the hooks\' records fails; o
   assert.equal(CHECKS.records_untouched({ events: [bash('cat .claude/session/truncate-text.log'), bash('npx vitest run')] }).ok, true);
   // the transcript's Bash commands count too: a session that also removed the hook's record of its command is seen
   assert.equal(CHECKS.records_untouched({ events: [], transcript_commands: [forged] }).ok, false);
+});
+
+test('nits: `vitest --run` is a test run; a node_modules citation the runner found is real; a host:port is no file:line', (t) => {
+  const tc = ['npx vitest run', 'npx vitest run --changed HEAD', 'npx vitest run {file}'];
+  // `--run` is the `run` subcommand as an option (vitest CLI: "Disable watch mode")
+  assert.equal(testCommandIn('npx vitest --run tests/truncate.test.ts', tc), 'run');
+  assert.equal(testCommandIn('npx vitest tests/truncate.test.ts --run', tc), 'run');
+  assert.equal(testCommandIn('npx vitest tests/truncate.test.ts', tc), null, 'watch mode is no run');
+  assert.deepEqual(testRuns({ test_commands: tc, events: [{ event: 'bash', tool: 'Bash', command: 'npx vitest --run tests/truncate.test.ts', result: 'fail' }] }).map((r) => r.command), ['npx vitest run tests/truncate.test.ts']);
+  // review evidence: a node_modules file is not in the snapshot; the runner counts the lines of one the end state cites
+  const ctx = (extra) => evidenceContext({ files: { 'src/a.ts': 'x\n' }, ...extra });
+  const nm = 'node_modules/vitest/dist/index.js:10 exports it';
+  assert.equal(reviewEvidence('R6', nm, ctx({ node_modules_lines: { 'node_modules/vitest/dist/index.js': 18 } })).ok, true);
+  assert.equal(reviewEvidence('R6', 'node_modules/@vitest/runner/dist/index.js:3 runs it', ctx({ node_modules_lines: { 'node_modules/@vitest/runner/dist/index.js': 5 } })).ok, true, 'a scoped package');
+  assert.equal(reviewEvidence('R6', nm, ctx({ node_modules_lines: { 'node_modules/vitest/dist/index.js': 5 } })).ok, false, 'past its end');
+  assert.equal(reviewEvidence('R6', nm, ctx({})).ok, false, 'a node_modules file the runner did not find');
+  // a host:port is neither evidence nor an invented file:line
+  for (const host of ['127.0.0.1:3000', 'api.example.com:443', 'db.internal:5432', 'git@github.com:22']) {
+    assert.equal(reviewEvidence('R6', `src/a.ts:1 binds ${host}`, ctx({})).ok, true, host);
+    assert.match(reviewEvidence('R6', `binds ${host}`, ctx({})).why, /no file:line/, host);
+  }
+  assert.equal(reviewEvidence('R6', 'src/b.ts:1 binds', ctx({})).ok, false, 'a missing file is still invented');
+  // the runner finds the cited node_modules files inside the repository, with their line counts
+  const root = tmpPath(t);
+  fs.mkdirSync(path.join(root, 'node_modules', 'vitest', 'dist'), { recursive: true });
+  fs.writeFileSync(path.join(root, 'node_modules', 'vitest', 'dist', 'index.js'), 'a\nb\nc\n');
+  assert.deepEqual(claude.nodeModulesLines(root, { 'r.md': `${nm}; node_modules/nope/x.js:1; ../node_modules/vitest/dist/index.js:1` }), { 'node_modules/vitest/dist/index.js': 3 });
 });
 
 test('every recorded outcome scores as its fixture says: each check has a passing and a failing case', async () => {
