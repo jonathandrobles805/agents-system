@@ -1,24 +1,24 @@
 {
   "files": {
-    "tests/routes.test.ts": "it('exposes refund', ...)\n"
+    "tests/truncate.test.ts": "it('shortens text longer than max to max characters ending in an ellipsis', ...)\n"
   },
   "events": [
     {
       "event": "read",
       "tool": "Read",
-      "path": "docs/specs/refund-route.md",
+      "path": "docs/specs/truncate-text.md",
       "result": "ok"
     },
     {
       "event": "read",
       "tool": "Read",
-      "path": "tests/payment.test.ts",
+      "path": "tests/format.test.ts",
       "result": "ok"
     },
     {
       "event": "write",
       "tool": "Write",
-      "path": "tests/routes.test.ts",
+      "path": "tests/truncate.test.ts",
       "result": "ok"
     },
     {
@@ -30,13 +30,13 @@
     {
       "event": "bash",
       "tool": "Bash",
-      "command": "npx vitest run --reporter=tap tests/routes.test.ts",
+      "command": "npx vitest run --reporter=tap tests/truncate.test.ts",
       "result": "fail"
     },
     {
       "event": "edit",
       "tool": "Edit",
-      "path": "docs/specs/refund-route.progress.md",
+      "path": "docs/specs/truncate-text.progress.md",
       "result": "ok"
     }
   ],

@@ -1,25 +1,25 @@
 {
   "files": {
-    "tests/routes.test.ts": "it('exposes refund', ...)\n",
-    "src/api/routes.ts": "export function routes(s) { return { charge: s.charge, refund: (id) => s.refund(id) }; }\n"
+    "tests/truncate.test.ts": "it('shortens text longer than max to max characters ending in an ellipsis', ...)\n",
+    "src/text/format.ts": "export function truncate(text, max) { return text.length <= max ? text : `${text.slice(0, max - 1)}\u2026`; }\n"
   },
   "events": [
     {
       "event": "read",
       "tool": "Read",
-      "path": "docs/specs/refund-route.md",
+      "path": "docs/specs/truncate-text.md",
       "result": "ok"
     },
     {
       "event": "read",
       "tool": "Read",
-      "path": "src/api/routes.ts",
+      "path": "src/text/format.ts",
       "result": "ok"
     },
     {
       "event": "write",
       "tool": "Write",
-      "path": "tests/routes.test.ts",
+      "path": "tests/truncate.test.ts",
       "result": "ok"
     },
     {
@@ -31,13 +31,13 @@
     {
       "event": "edit",
       "tool": "Edit",
-      "path": "src/api/routes.ts",
+      "path": "src/text/format.ts",
       "result": "ok"
     },
     {
       "event": "edit",
       "tool": "Edit",
-      "path": "docs/specs/refund-route.progress.md",
+      "path": "docs/specs/truncate-text.progress.md",
       "result": "ok"
     }
   ],

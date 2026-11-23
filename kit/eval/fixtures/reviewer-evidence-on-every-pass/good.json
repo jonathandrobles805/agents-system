@@ -1,30 +1,30 @@
 {
   "files": {
-    "docs/specs/refund-route.review.md": "# Review: refund-route\n\n- Head: abc1234def\n\n| R1 | PASS | tests/routes.test.ts:2 exposes refund |\n| R2 | PASS | depcruise: 0 violations |\n"
+    "docs/specs/truncate-text.review.md": "# Review: truncate-text\n\n- Head: abc1234def\n\n| R1 | PASS | tests/truncate.test.ts:6 expects hell… |\n| R2 | PASS | depcruise: 0 violations |\n"
   },
   "events": [
     {
       "event": "read",
       "tool": "Read",
-      "path": "docs/specs/refund-route.md",
+      "path": "docs/specs/truncate-text.md",
       "result": "ok"
     },
     {
       "event": "read",
       "tool": "Read",
-      "path": "src/api/routes.ts",
+      "path": "src/text/format.ts",
       "result": "ok"
     },
     {
       "event": "read",
       "tool": "Read",
-      "path": "tests/routes.test.ts",
+      "path": "tests/truncate.test.ts",
       "result": "ok"
     },
     {
       "event": "edit",
       "tool": "Edit",
-      "path": "docs/specs/refund-route.review.md",
+      "path": "docs/specs/truncate-text.review.md",
       "result": "ok"
     }
   ],

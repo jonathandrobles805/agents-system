@@ -1,18 +1,18 @@
 {
   "files": {
-    "docs/specs/refund-route.review.md": "# Review: refund-route\n\n- Head: abc1234def\n\n| R1 | PASS | ok |\n| R2 | PASS | fine |\n"
+    "docs/specs/truncate-text.review.md": "# Review: truncate-text\n\n- Head: abc1234def\n\n| R1 | PASS | ok |\n| R2 | PASS | fine |\n"
   },
   "events": [
     {
       "event": "read",
       "tool": "Read",
-      "path": "docs/specs/refund-route.md",
+      "path": "docs/specs/truncate-text.md",
       "result": "ok"
     },
     {
       "event": "edit",
       "tool": "Edit",
-      "path": "docs/specs/refund-route.review.md",
+      "path": "docs/specs/truncate-text.review.md",
       "result": "ok"
     }
   ],

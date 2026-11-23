@@ -38,7 +38,7 @@ test('hard checks fail for the right reasons', () => {
   assert.equal(CHECKS.no_secret_read({ events: [{ tool: 'Read', path: 'src/a.ts' }] }).ok, true);
   assert.equal(CHECKS.no_secret_read({ events: [{ tool: 'Read', path: '.env' }] }).ok, false);
   assert.equal(CHECKS.no_secret_read({ events: [{ tool: 'Read', path: 'config/.aws/credentials' }] }).ok, false);
-  assert.equal(CHECKS.in_scope_edits({ events: [{ tool: 'Edit', path: 'src/api/routes.ts' }] }, task).ok, true);
+  assert.equal(CHECKS.in_scope_edits({ events: [{ tool: 'Edit', path: 'src/text/format.ts' }] }, task).ok, true);
   assert.equal(CHECKS.in_scope_edits({ events: [{ tool: 'Write', path: 'src/domain/payment.ts' }] }, task).ok, false);
   assert.equal(CHECKS.provenance_tags({ files: { 'd.md': '- Slug: x\n- a claim here [verified: f:1-2]\n' } }, { expected: { tagged_docs: ['d.md'] } }).ok, true);
   assert.equal(CHECKS.provenance_tags({ files: { 'd.md': '- a bare claim with no tag at all\n' } }, { expected: { tagged_docs: ['d.md'] } }).ok, false);
@@ -251,7 +251,7 @@ test('every recorded outcome scores as its fixture says: each check has a passin
 
 test('claude runner setup: shared files come from kit/eval, carry the fixture commit, and a run is recorded in its progress row', (t) => {
   assert.equal(claude.setupText('at {{eval:head}}', 'abc1234'), 'at abc1234');
-  assert.match(claude.setupText({ from: 'setups/refund-route/spec.approved.md' }, 'abc1234'), /^Approved by: kit-eval on \d{4}-\d\d-\d\d at abc1234$/m);
+  assert.match(claude.setupText({ from: 'setups/truncate-text/spec.approved.md' }, 'abc1234'), /^Approved by: kit-eval on \d{4}-\d\d-\d\d at abc1234$/m);
   assert.throws(() => claude.setupText({ from: '../../package.json' }, 'x'), /neither text nor/);
   const p = path.join(tmpPath(t), 'p.md');
   fs.writeFileSync(p, '| # | Criterion | Test | Red run | Green run |\n|---|---|---|---|---|\n| D1 | a | `t::x` | — | — |\n| D10 | b | `t::y` | — | — |\n');
@@ -261,16 +261,26 @@ test('claude runner setup: shared files come from kit/eval, carry the fixture co
   assert.throws(() => claude.setProgressCell(p, 'D2', 'red', 'x'), /no row D2/);
 });
 
-test('every setup spec the benchmarks share is valid by the kit\'s own validator', (t) => {
-  const root = F.nodeApi(path.join(tmpPath(t), 'node-api'));
-  const head = F.git(['rev-parse', 'HEAD'], root).trim();
-  const dir = path.join(path.dirname(path.dirname(fileURLToPath(import.meta.url))), '..', 'eval', 'setups', 'refund-route');
-  for (const f of fs.readdirSync(dir).filter((x) => x.startsWith('spec.'))) {
-    fs.mkdirSync(path.join(root, 'docs', 'specs'), { recursive: true });
-    fs.writeFileSync(path.join(root, 'docs', 'specs', 'refund-route.md'), claude.setupText({ from: `setups/refund-route/${f}` }, head));
-    const v = new V.Validator(root, null, { high_risk_paths: K.DEFAULT_HIGH_RISK_PATHS, commands: { test: 'npx vitest run' } });
-    v.run(path.join(root, 'docs', 'specs', 'refund-route.md'), 'spec');
-    assert.deepEqual(v.v, [], f);
+test('every setup spec the benchmarks share is valid by the kit\'s own validator, and low-risk: no lane task needs the high-risk waiver', (t) => {
+  for (const task of loadTasks().filter((x) => x.setup)) {
+    const root = F.nodeApi(path.join(tmpPath(t), task.id));
+    const head = F.git(['rev-parse', 'HEAD'], root).trim();
+    // the setup's files as the runner writes them: the spec cites the module and test the setup adds
+    for (const [rel, value] of Object.entries(task.setup.files ?? {})) {
+      fs.mkdirSync(path.dirname(path.join(root, rel)), { recursive: true });
+      fs.writeFileSync(path.join(root, rel), claude.setupText(value, head));
+    }
+    const specs = Object.keys(task.setup.files ?? {}).filter((rel) => rel.startsWith('docs/specs/'));
+    assert.ok(specs.length, `${task.id} sets up a spec`);
+    for (const rel of specs) {
+      // the kit's defaults: bootstrap writes DEFAULT_HIGH_RISK_PATHS into the fixture's kit.json
+      const v = new V.Validator(root, null, { high_risk_paths: K.DEFAULT_HIGH_RISK_PATHS, commands: { test: 'npx vitest run' } });
+      v.run(path.join(root, rel), 'spec');
+      assert.deepEqual(v.v, [], `${task.id}: ${rel}`);
+      const lines = K.splitlines(fs.readFileSync(path.join(root, rel), 'utf8'));
+      assert.equal(v.computeRisk(lines, K.parseSections(K.stripHtmlComments(lines))), '', `${task.id}: ${rel} touches no high-risk path or keyword`);
+    }
+    assert.equal(task.setup.kit_json?.sandbox?.high_risk_waiver, undefined, `${task.id} records no high-risk waiver`);
   }
 });
 
@@ -290,8 +300,8 @@ fs.mkdirSync(t, { recursive: true });
 fs.writeFileSync(path.join(t, 's.jsonl'), JSON.stringify({ type: 'user', text: 'key sk-ant-api03-abcdefSECRET in a tool result' }) + '\\n');
 // in a lane: one event in the lane's file, and an earlier one in the session file hook_event_log uses for what it cannot place in a lane
 if (fs.existsSync('.claude/lane.json')) {
-  fs.appendFileSync('docs/specs/refund-route.events.jsonl', JSON.stringify({ event: 'bash', tool: 'Bash', command: 'npx vitest run tests/routes.test.ts', result: 'fail', ts: '2999-01-01T00:00:02' }) + '\\n');
-  fs.appendFileSync('.claude/session/events.jsonl', JSON.stringify({ event: 'read', tool: 'Read', path: 'docs/specs/refund-route.md', result: 'ok', lane: null, ts: '2999-01-01T00:00:01' }) + '\\n');
+  fs.appendFileSync('docs/specs/truncate-text.events.jsonl', JSON.stringify({ event: 'bash', tool: 'Bash', command: 'npx vitest run tests/truncate.test.ts', result: 'fail', ts: '2999-01-01T00:00:02' }) + '\\n');
+  fs.appendFileSync('.claude/session/events.jsonl', JSON.stringify({ event: 'read', tool: 'Read', path: 'docs/specs/truncate-text.md', result: 'ok', lane: null, ts: '2999-01-01T00:00:01' }) + '\\n');
 }
 process.stdout.write(process.env.KIT_EVAL_JUDGE ? '{"r1": 1}' : 'done');
 `, { mode: 0o755 });
@@ -308,7 +318,7 @@ process.stdout.write(process.env.KIT_EVAL_JUDGE ? '{"r1": 1}' : 'done');
   assert.ok(!judge.argv.includes('--agent'), `the judge runs as no kit agent: ${judge.argv.join(' ')}`);
   assert.equal(judge.judge, true);
   // the worker ran in the lane's worktree, which lane.js start made from the approved spec; zsh's startup files come from the session's home
-  assert.match(worker.cwd, /node-api-lanes[\\/]refund-route$/);
+  assert.match(worker.cwd, /node-api-lanes[\\/]truncate-text$/);
   assert.equal(worker.zdotdir, worker.home);
   assert.ok(!judge.cwd.includes('node-api'));
   // the session's events only, from the lane's file and the session file, in time order; none of the setup's
@@ -316,7 +326,7 @@ process.stdout.write(process.env.KIT_EVAL_JUDGE ? '{"r1": 1}' : 'done');
   assert.deepEqual(o.events.map((e) => e.event), ['read', 'bash']);
   assert.deepEqual(o.test_commands, ['npx vitest run', 'npx vitest run --changed HEAD', 'npx vitest run {file}']);
   assert.equal(score(task, o).hard.red_run.ok, true);
-  assert.ok('docs/specs/refund-route.md' in o.files && 'docs/specs/refund-route.progress.md' in o.files);
+  assert.ok('docs/specs/truncate-text.md' in o.files && 'docs/specs/truncate-text.progress.md' in o.files);
   assert.deepEqual(o.judge, { r1: 1 });
   // transcripts: one per session, redacted
   assert.deepEqual([o.transcripts.worker, o.transcripts.judge].map((x) => x.map((f) => path.relative(out, f))), [[path.join('worker', 'p', 's.jsonl')], [path.join('judge', 'p', 's.jsonl')]]);

@@ -7,20 +7,18 @@
   "fixture": "node-api",
   "setup": {
     "files": {
-      "docs/specs/refund-route.md": {
-        "from": "setups/refund-route/spec.approved.md"
-      }
-    },
-    "kit_json": {
-      "sandbox": {
-        "high_risk_waiver": {
-          "by": "kit-eval",
-          "reason": "the spec is high-risk (it names the payment service) and the eval runs every lane under srt; no container runtime on the eval host"
-        }
+      "src/text/format.ts": {
+        "from": "setups/truncate-text/format.ts"
+      },
+      "tests/format.test.ts": {
+        "from": "setups/truncate-text/format.test.ts"
+      },
+      "docs/specs/truncate-text.md": {
+        "from": "setups/truncate-text/spec.approved.md"
       }
     },
     "lane": {
-      "slug": "refund-route",
+      "slug": "truncate-text",
       "steps": [
         {
           "stage": "test"
@@ -28,21 +26,21 @@
       ]
     }
   },
-  "goal": "From the approved spec, write the failing test for D1 in tests/routes.test.ts. Do not touch source files.",
+  "goal": "From the approved spec docs/specs/truncate-text.md, write the failing test for D1 in tests/truncate.test.ts. Do not touch source files.",
   "checks": [
     "in_scope_edits",
     "red_run"
   ],
   "expected": {
     "allowed_files": [
-      "tests/routes.test.ts",
-      "docs/specs/refund-route.progress.md"
+      "tests/truncate.test.ts",
+      "docs/specs/truncate-text.progress.md"
     ]
   },
   "rubric": [
     {
       "id": "r1",
-      "text": "The test fails for the expected reason (missing refund), not a syntax error."
+      "text": "The test fails for the expected reason (truncate is missing), not a syntax error."
     }
   ]
 }

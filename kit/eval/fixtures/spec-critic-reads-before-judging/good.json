@@ -4,19 +4,19 @@
     {
       "event": "read",
       "tool": "Read",
-      "path": "docs/specs/refund-route.md",
+      "path": "docs/specs/truncate-text.md",
       "result": "ok"
     },
     {
       "event": "read",
       "tool": "Read",
-      "path": "src/api/routes.ts",
+      "path": "src/text/format.ts",
       "result": "ok"
     },
     {
       "event": "edit",
       "tool": "Edit",
-      "path": "docs/specs/refund-route.md",
+      "path": "docs/specs/truncate-text.md",
       "result": "ok"
     }
   ],

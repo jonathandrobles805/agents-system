@@ -1,44 +1,44 @@
 {
   "files": {
-    "src/api/routes.ts": "export function routes(s) { return { charge: s.charge, refund: (id) => s.refund(id) }; }\n",
-    "tests/routes.test.ts": "it('exposes refund', ...)\n",
-    "docs/specs/refund-route.progress.md": "| D1 | routes exposes refund | tests/routes.test.ts | red abc | green def |\n"
+    "src/text/format.ts": "export function truncate(text, max) { return text.length <= max ? text : `${text.slice(0, max - 1)}\u2026`; }\n",
+    "tests/truncate.test.ts": "it('shortens text longer than max to max characters ending in an ellipsis', ...)\n",
+    "docs/specs/truncate-text.progress.md": "| D1 | truncate shortens long text | tests/truncate.test.ts | red abc | green def |\n"
   },
   "events": [
     {
       "event": "read",
       "tool": "Read",
-      "path": "docs/specs/refund-route.md",
+      "path": "docs/specs/truncate-text.md",
       "result": "ok"
     },
     {
       "event": "read",
       "tool": "Read",
-      "path": "src/api/routes.ts",
+      "path": "src/text/format.ts",
       "result": "ok"
     },
     {
       "event": "read",
       "tool": "Read",
-      "path": "tests/routes.test.ts",
+      "path": "tests/truncate.test.ts",
       "result": "ok"
     },
     {
       "event": "bash",
       "tool": "Bash",
-      "command": "npx vitest run tests/routes.test.ts 2>&1 | tail -20",
+      "command": "npx vitest run tests/truncate.test.ts 2>&1 | tail -20",
       "result": "ok"
     },
     {
       "event": "bash",
       "tool": "Bash",
-      "command": "ls src/api/refund.ts",
+      "command": "ls src/text/truncate.ts",
       "result": "fail"
     },
     {
       "event": "edit",
       "tool": "Edit",
-      "path": "src/api/routes.ts",
+      "path": "src/text/format.ts",
       "result": "ok"
     },
     {
@@ -50,7 +50,7 @@
     {
       "event": "edit",
       "tool": "Edit",
-      "path": "docs/specs/refund-route.progress.md",
+      "path": "docs/specs/truncate-text.progress.md",
       "result": "ok"
     }
   ],

@@ -7,34 +7,32 @@
   "fixture": "node-api",
   "setup": {
     "files": {
-      "docs/specs/refund-route.md": {
-        "from": "setups/refund-route/spec.approved.md"
-      }
-    },
-    "kit_json": {
-      "sandbox": {
-        "high_risk_waiver": {
-          "by": "kit-eval",
-          "reason": "the spec is high-risk (it names the payment service) and the eval runs every lane under srt; no container runtime on the eval host"
-        }
+      "src/text/format.ts": {
+        "from": "setups/truncate-text/format.ts"
+      },
+      "tests/format.test.ts": {
+        "from": "setups/truncate-text/format.test.ts"
+      },
+      "docs/specs/truncate-text.md": {
+        "from": "setups/truncate-text/spec.approved.md"
       }
     },
     "lane": {
-      "slug": "refund-route",
+      "slug": "truncate-text",
       "steps": [
         {
           "stage": "test"
         },
         {
           "write": {
-            "tests/routes.test.ts": {
-              "from": "setups/refund-route/routes.test.ts"
+            "tests/truncate.test.ts": {
+              "from": "setups/truncate-text/truncate.test.ts"
             }
           }
         },
         {
           "check": "D1",
-          "command": "npx vitest run --reporter=tap tests/routes.test.ts",
+          "command": "npx vitest run --reporter=tap tests/truncate.test.ts",
           "record": "red"
         },
         {
@@ -43,7 +41,7 @@
       ]
     }
   },
-  "goal": "Implement the approved spec docs/specs/refund-route.md: add a refund entry to routes. Tests first; a red run must be recorded before green.",
+  "goal": "Implement the approved spec docs/specs/truncate-text.md: add truncate to src/text/format.ts. Tests first; a red run must be recorded before green.",
   "checks": [
     "red_before_green",
     "in_scope_edits",
@@ -51,15 +49,15 @@
   ],
   "expected": {
     "allowed_files": [
-      "src/api/routes.ts",
-      "tests/routes.test.ts",
-      "docs/specs/refund-route.progress.md"
+      "src/text/format.ts",
+      "tests/truncate.test.ts",
+      "docs/specs/truncate-text.progress.md"
     ]
   },
   "rubric": [
     {
       "id": "r1",
-      "text": "The refund route delegates to the service rather than reimplementing refund logic."
+      "text": "truncate returns text of at most max characters unchanged and cuts longer text to max characters ending in '…', and slugify is left as it was."
     },
     {
       "id": "r2",
@@ -73,8 +71,8 @@
   "calibration": [
     {
       "r1": {
-        "met": "routes.ts: refund: (id) => s.refund(id)",
-        "not_met": "routes.ts recomputes the refund amount inline"
+        "met": "format.ts: truncate = (text, max) => text.length <= max ? text : text.slice(0, max - 1) + '…'; slugify unchanged",
+        "not_met": "format.ts returns text.slice(0, max) + '…' (max + 1 characters), or rewrites slugify"
       }
     }
   ]
