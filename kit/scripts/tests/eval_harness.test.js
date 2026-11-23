@@ -326,6 +326,7 @@ fs.mkdirSync(t, { recursive: true });
 fs.writeFileSync(path.join(t, 's.jsonl'), JSON.stringify({ type: 'user', text: 'key sk-ant-api03-abcdefSECRET in a tool result' }) + '\\n');
 // in a lane: one event in the lane's file, and an earlier one in the session file hook_event_log uses for what it cannot place in a lane
 if (fs.existsSync('.claude/lane.json')) {
+  fs.writeFileSync('tests/truncate.test.ts', '// written by the session\\n');
   fs.appendFileSync('docs/specs/truncate-text.events.jsonl', JSON.stringify({ event: 'bash', tool: 'Bash', command: 'npx vitest run tests/truncate.test.ts', result: 'fail', ts: '2999-01-01T00:00:02' }) + '\\n');
   fs.appendFileSync('.claude/session/events.jsonl', JSON.stringify({ event: 'read', tool: 'Read', path: 'docs/specs/truncate-text.md', result: 'ok', lane: null, ts: '2999-01-01T00:00:01' }) + '\\n');
 }
@@ -357,6 +358,21 @@ process.stdout.write(process.env.KIT_EVAL_JUDGE ? '{"r1": 1}' : 'done');
   assert.equal(score(task, o).hard.red_run.ok, true);
   assert.ok('docs/specs/truncate-text.md' in o.files && 'docs/specs/truncate-text.progress.md' in o.files);
   assert.deepEqual(o.judge, { r1: 1 });
+  // the judge is told what the setup wrote and gets the session's own diff against the setup's state, labelled
+  const prompt = judge.argv[judge.argv.indexOf('-p') + 1];
+  assert.equal(prompt, o.judge_prompt);
+  const section = (title) => prompt.split('\n\n').slice(prompt.split('\n\n').findIndex((b) => b.startsWith(title))).join('\n\n').split(/\n\n(?=What the session printed|The SESSION|End state|Git log)/)[0];
+  const setupPart = section('Files written BEFORE the session');
+  assert.match(setupPart, /NOT the agent's work/);
+  for (const f of ['docs/specs/truncate-text.md', 'src/text/format.ts', 'tests/format.test.ts', 'docs/specs/truncate-text.progress.md']) assert.ok(setupPart.includes(f), `${f} in ${setupPart}`);
+  assert.ok(!setupPart.includes('tests/truncate.test.ts'), 'the session\'s file is not listed as the setup\'s');
+  const sessionPart = section('The SESSION\'s own changes');
+  assert.match(sessionPart, /diff --git a\/tests\/truncate\.test\.ts b\/tests\/truncate\.test\.ts\nnew file mode/);
+  assert.match(sessionPart, /\+\/\/ written by the session/);
+  // neither a setup file, nor .claude/, nor the lane's events file (the hooks' record, not the agent's work)
+  assert.deepEqual([...sessionPart.matchAll(/^diff --git a\/(\S+)/gm)].map((m) => m[1]), ['tests/truncate.test.ts'], sessionPart);
+  assert.match(prompt, /What the session printed \(its final answer\):\ndone/);
+  assert.equal(o.session_diff, sessionPart.slice(sessionPart.indexOf('\n') + 1) + '\n');
   // transcripts: one per session, redacted
   assert.deepEqual([o.transcripts.worker, o.transcripts.judge].map((x) => x.map((f) => path.relative(out, f))), [[path.join('worker', 'p', 's.jsonl')], [path.join('judge', 'p', 's.jsonl')]]);
   for (const f of [...o.transcripts.worker, ...o.transcripts.judge]) {
@@ -427,4 +443,19 @@ test('a role task the container runtime runs without --agent is reported as meas
   assert.deepEqual(JSON.parse(fs.readFileSync(path.join(dir, 'r', 'report.json'), 'utf8')).results[task.id].attempts[0].warnings, o.warnings);
   assert.match(fmt(rep), /WARN spec-critic-reads-before-judging attempt 0: ran without --agent spec-critic: the container runtime/);
   assert.equal(fmt(rep).match(/WARN/g).length, 1, 'only the attempt that ran without its agent');
+});
+
+test('workTree records a directory\'s working state, untracked files included, without touching its index or HEAD', (t) => {
+  const root = F.nodeApi(path.join(tmpPath(t), 'r'));
+  fs.writeFileSync(path.join(root, 'README.md'), '# changed\n');
+  fs.writeFileSync(path.join(root, 'new.ts'), 'export {};\n');
+  fs.mkdirSync(path.join(root, '.claude'), { recursive: true });
+  fs.writeFileSync(path.join(root, '.claude', 'lane.json'), '{}');
+  const status = F.git(['status', '--porcelain'], root);
+  const head = F.git(['rev-parse', 'HEAD'], root);
+  const tree = claude.workTree(root, path.join(tmpPath(t), 'idx'));
+  assert.equal(F.git(['status', '--porcelain'], root), status, 'the index is untouched');
+  assert.equal(F.git(['rev-parse', 'HEAD'], root), head);
+  assert.ok(!fs.existsSync(path.join(tmpPath(t), 'idx')), 'the scratch index is removed');
+  assert.deepEqual(F.git(['diff', '--name-status', 'HEAD', tree], root).trim().split('\n'), ['M\tREADME.md', 'A\tnew.ts'], '.claude/ and .gitignored files are left out');
 });

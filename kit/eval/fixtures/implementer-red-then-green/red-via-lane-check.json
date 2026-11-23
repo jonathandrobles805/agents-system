@@ -1,6 +1,6 @@
 {
   "files": {
-    "src/text/format.ts": "export function truncate(text, max) { return text.length <= max ? text : `${text.slice(0, max - 1)}\u2026`; }\n",
+    "src/text/format.ts": "export function truncate(text, max) { return text.length <= max ? text : `${text.slice(0, max - 1)}…`; }\n",
     "tests/truncate.test.ts": "it('shortens text longer than max to max characters ending in an ellipsis', ...)\n",
     "docs/specs/truncate-text.progress.md": "| D1 | truncate shortens long text | tests/truncate.test.ts | red abc | green def |\n"
   },
@@ -61,8 +61,7 @@
   },
   "judge": {
     "r1": 1,
-    "r2": 1,
-    "r3": 1
+    "r2": 1
   },
   "ms": 1200,
   "test_commands": [

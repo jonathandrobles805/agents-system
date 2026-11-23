@@ -1,7 +1,8 @@
 // Claude runner (KIT-SPEC 11A): runs a task as a headless Claude Code session in a sandboxed copy of its fixture
 // repository with the kit installed, then hands the end state back as an outcome: files, hook events, git, and the
-// judge's rubric verdicts. The judge is a second headless session that sees the rubric, the calibration examples and
-// the end state, never the worker's transcript.
+// judge's rubric verdicts. The judge is a second headless session that sees the rubric, the calibration examples, the
+// files the setup wrote, the session's own diff against the setup's state, the end state and the session's printed
+// answer, never the worker's transcript.
 //
 // Needs: `claude` on PATH, ANTHROPIC_API_KEY, and a sandbox runtime (srt or a container). Not runnable in the kit's
 // own unit tests, which use the fixture runner; the planted faults for the harness are proven with fixtures too.
@@ -337,6 +338,48 @@ function snapshot(root) {
   return files;
 }
 
+/**
+ * A tree object of `cwd`'s working state: tracked and untracked files (.gitignore applies), `.claude/` and the paths in
+ * `exclude` (relative to `cwd`) left out. Built in
+ * a scratch index (`GIT_INDEX_FILE`), so the repository's own index, HEAD and branches are untouched.
+ */
+export function workTree(cwd, scratch, exclude = []) {
+  const env = { ...process.env, GIT_INDEX_FILE: scratch };
+  const g = (args) => {
+    const r = spawnSync('git', args, { cwd, env, encoding: 'utf8' });
+    if (r.status !== 0) throw new Error(`git ${args.join(' ')}: ${r.stderr}`);
+    return r.stdout.trim();
+  };
+  try {
+    g(['read-tree', 'HEAD']);
+    g(['add', '-A', '--', '.', ':(exclude).claude', ...exclude.map((x) => `:(exclude)${x}`)]);
+    return g(['write-tree']);
+  } finally {
+    fs.rmSync(scratch, { force: true });
+  }
+}
+
+/**
+ * What the judge reads. It grades the session, so it is told which files were there before the session (written by
+ * the fixture's bootstrap and the task's setup, e.g. the spec, or the test the tester wrote for an implementer) and
+ * gets the session's own changes as a diff against the state the setup left, beside the end state and what the
+ * session printed. Never the worker's transcript.
+ */
+export function judgePrompt({ task, files, setupFiles, sessionDiff, output, gitLog }) {
+  const examples = task.calibration ? `\n\nCalibration examples:\n${JSON.stringify(task.calibration, null, 2)}` : '';
+  const clip = (t, n) => (t.length > n ? `${t.slice(0, n)}\n[... ${t.length - n} more characters]` : t);
+  return [
+    'You are grading what one agent session did in a repository, against a rubric. Answer ONLY with a JSON object mapping each criterion id to 1 (met) or 0 (not met).',
+    'Grade the session by its own changes and what it printed. Files the setup wrote before the session are context: a criterion that only setup-written content meets is not met by the session.',
+    `Rubric:\n${task.rubric.map((c) => `- ${c.id}: ${c.text}`).join('\n')}${examples}`,
+    `Files written BEFORE the session by the fixture's bootstrap and the task's setup (git name-status from the fixture's first commit to the state the session started from; NOT the agent's work):\n${setupFiles.trim() || '(none)'}`,
+    `The SESSION's own changes (git diff from the state the setup left to the end state, untracked files included; .claude/ and the lane's hook events file left out):\n${clip(sessionDiff.trim(), 30000) || '(none: the session changed no file)'}`,
+    `What the session printed (its final answer):\n${clip(String(output ?? '').trim(), 8000) || '(nothing)'}`,
+    `End state, for context (path then content; setup-written and session-written files alike):\n${Object.entries(files).slice(0, 60).map(([p, t]) => `--- ${p}\n${t.slice(0, 4000)}`).join('\n')}`,
+    `Git log:\n${gitLog.join('\n')}`,
+  ].join('\n\n');
+}
+
 export async function run(task, { attempt = 0, timeoutMs = 20 * 60 * 1000, transcripts = null } = {}) {
   const a = available();
   if (!a.ok) throw new Error(`claude runner unavailable: ${a.why}`);
@@ -362,6 +405,13 @@ export async function run(task, { attempt = 0, timeoutMs = 20 * 60 * 1000, trans
     const laneRec = slug ? K.findLane(cwd) : null;
     const evFiles = eventFiles(root, cwd, laneRec);
     const before = eventOffsets(evFiles);
+    // the state the setup left, so the judge can tell the session's changes from the setup's
+    const gitIn = (args) => spawnSync('git', args, { cwd, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 }).stdout ?? '';
+    // the lane's events file is the hooks' record of the session, not the agent's work: it stays out of the diff
+    const notWork = laneRec ? [K.relTo(cwd, laneRec.eventsPath)] : [];
+    const setupTree = workTree(cwd, path.join(dir, 'index.setup'), notWork);
+    const firstCommit = gitIn(['rev-list', '--max-parents=0', 'HEAD']).trim().split('\n').pop();
+    const setupFiles = gitIn(['diff', '--name-status', firstCommit, setupTree]);
     const base = { ...process.env, ...SB.telemetryEnv({ project: 'kit-eval', slug: task.id, stage: task.role ?? 'build' }), KIT_EVAL_ATTEMPT: String(attempt) };
     const env = { ...base, ...(home?.env ?? {}) };
     const agent = kitAgent(task, home);
@@ -370,6 +420,7 @@ export async function run(task, { attempt = 0, timeoutMs = 20 * 60 * 1000, trans
     const work = headless(task.goal, cwd, env, settings, timeoutMs, agent);
     const kept = { worker: home && transcripts ? keepTranscripts(home.config, path.join(transcripts, 'worker')) : [], judge: [] };
     const files = snapshot(cwd);
+    const sessionDiff = gitIn(['diff', setupTree, workTree(cwd, path.join(dir, 'index.end'), notWork)]);
     const events = eventsSince(evFiles, before);
     // what the setup recorded before the session (the tester's red run in an implementer's lane): never the session's work
     const setupEvents = eventsBefore(evFiles, before);
@@ -377,12 +428,14 @@ export async function run(task, { attempt = 0, timeoutMs = 20 * 60 * 1000, trans
     // the project's recorded test commands, so the scorer can tell a test run among the session's Bash calls
     const cmds = K.loadKitJson(cwd).commands ?? {};
     const testCommands = ['test', 'test_affected', 'test_file'].map((k) => cmds[k]).filter((c) => typeof c === 'string' && c.trim());
-    // the judge: rubric + calibration examples + end state, never the worker's transcript
+    // the judge: rubric + calibration examples + the session's diff against the setup's state + end state + output,
+    // never the worker's transcript
     let judge = {};
     let judgeSession = null;
+    let judgeInput = null;
     if ((task.rubric ?? []).length) {
-      const examples = task.calibration ? `\n\nCalibration examples:\n${JSON.stringify(task.calibration, null, 2)}` : '';
-      const prompt = `You are grading the end state of a repository against a rubric. Answer ONLY with a JSON object mapping each criterion id to 1 (met) or 0 (not met).\n\nRubric:\n${task.rubric.map((c) => `- ${c.id}: ${c.text}`).join('\n')}${examples}\n\nFiles (path then content):\n${Object.entries(files).slice(0, 60).map(([p, t]) => `--- ${p}\n${t.slice(0, 4000)}`).join('\n')}\n\nGit log:\n${git.log.join('\n')}`;
+      const prompt = judgePrompt({ task, files, setupFiles, sessionDiff, output: redact(work.stdout), gitLog: git.log });
+      judgeInput = prompt;
       // the judge has its own home and an empty working directory: nothing the worker left in its repo or home
       // (a CLAUDE.md, settings) reaches it; it sees the end state only through its prompt. It runs as no kit agent.
       const jdir = path.join(dir, 'judge');
@@ -403,7 +456,8 @@ export async function run(task, { attempt = 0, timeoutMs = 20 * 60 * 1000, trans
       }
     }
     // `output`: what the worker printed (its final answer with `claude -p`), redacted; a check may read it (lesson_proposed)
-    return { runner: name, variant: null, files, events, setup_events: setupEvents, git, judge, test_commands: testCommands, transcripts: kept, ms: Date.now() - started, worker_command: work.command, worker_status: work.status, worker_signal: work.signal, worker_error: work.error, worker_stderr: work.stderr.slice(-2000), output: redact(work.stdout).slice(-20000), worker_agent: agent, warnings, judge_session: judgeSession };
+    // `session_diff`, `setup_files`: what the judge was told the session and the setup changed
+    return { runner: name, variant: null, files, events, setup_events: setupEvents, session_diff: sessionDiff, setup_files: setupFiles, judge_prompt: judgeInput, git, judge, test_commands: testCommands, transcripts: kept, ms: Date.now() - started, worker_command: work.command, worker_status: work.status, worker_signal: work.signal, worker_error: work.error, worker_stderr: work.stderr.slice(-2000), output: redact(work.stdout).slice(-20000), worker_agent: agent, warnings, judge_session: judgeSession };
   } finally {
     if (!process.env.KIT_EVAL_KEEP) fs.rmSync(dir, { recursive: true, force: true });
   }

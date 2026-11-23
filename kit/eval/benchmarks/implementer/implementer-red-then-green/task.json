@@ -61,10 +61,6 @@
     },
     {
       "id": "r2",
-      "text": "The new test names the behaviour, not the implementation."
-    },
-    {
-      "id": "r3",
       "text": "progress.md records each done-criterion with its red and green run."
     }
   ],
