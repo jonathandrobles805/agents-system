@@ -209,6 +209,7 @@
     {"file": "kit/eval/runners/claude.js", "from": "script:eval/runners/claude", "kind": "imports", "to": "script:kitlib"},
     {"file": "kit/eval/runners/claude.js", "from": "script:eval/runners/claude", "kind": "imports", "to": "script:sandbox"},
     {"file": "kit/eval/score.js", "from": "script:eval/score", "kind": "imports", "to": "script:kitlib"},
+    {"file": "kit/eval/score.js", "from": "script:eval/score", "kind": "imports", "to": "script:validate_docs"},
     {"file": "kit/scripts/kit_status.js", "from": "script:kit_status", "kind": "imports", "to": "script:args"},
     {"file": "kit/scripts/kit_status.js", "from": "script:kit_status", "kind": "imports", "to": "script:kitlib"},
     {"file": "kit/scripts/kit_status.js", "from": "script:kit_status", "kind": "imports", "to": "script:lane"},
