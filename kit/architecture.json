@@ -466,6 +466,7 @@
     {"file": "kit/scripts/tests/eval_harness.test.js", "from": "test:eval_harness", "kind": "tests", "to": "script:lane"},
     {"file": "kit/scripts/tests/field_test_fixes.test.js", "from": "test:field_test_fixes", "kind": "tests", "to": "ci:audit"},
     {"file": "kit/scripts/tests/field_test_fixes.test.js", "from": "test:field_test_fixes", "kind": "tests", "to": "ci:guards_present"},
+    {"file": "kit/scripts/tests/field_test_fixes.test.js", "from": "test:field_test_fixes", "kind": "tests", "to": "ci:security_floor"},
     {"file": "kit/scripts/tests/field_test_fixes.test.js", "from": "test:field_test_fixes", "kind": "tests", "to": "script:bootstrap"},
     {"file": "kit/scripts/tests/hooks.test.js", "from": "test:hooks", "kind": "tests", "to": "hook:budget_check"},
     {"file": "kit/scripts/tests/hooks.test.js", "from": "test:hooks", "kind": "tests", "to": "hook:config_guard"},

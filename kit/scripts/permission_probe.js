@@ -1,5 +1,6 @@
 #!/usr/bin/env node
-// Proves, with Claude Code itself, that every allow rule the kit ships approves the command it is meant for, and that
+// Proves, with Claude Code itself, that every allow rule the kit ships approves the command it is meant for, that every
+// ask rule is refused in a headless session (nobody is there to answer), and that
 // the controls are refused (hardening plan Step 2: "every shipped permission rule matches its command, as proven by a
 // probe"; #63). A rule's text is never taken as proof: Claude Code did not approve `Bash(node "$HOME/...")` for the
 // identical command (probe on Claude Code 2.1.328, 2026-11-22).
@@ -25,13 +26,23 @@ export const FRAGMENT = path.join(KIT_DIR, 'hooks', 'settings.project.json');
  * `ask` is what the session is asked to do; `ran` tells from the repo and the tool results whether it happened.
  */
 export const CASES = [
-  { id: 'kit-launcher', rule: 'Bash(kit *)', expect: 'approved', tool: 'Bash', command: 'kit lane template goal --slug probe', ask: 'Use the Bash tool to run exactly this command, once, unchanged: kit lane template goal --slug probe', ran: (r) => r.results.some((x) => !x.error && /^# Goal: /m.test(x.text)) },
-  { id: 'git-add', rule: 'Bash(git add *)', expect: 'approved', tool: 'Bash', command: 'git add new.txt', setup: (repo) => fs.writeFileSync(path.join(repo, 'new.txt'), 'x\n'), ask: 'Use the Bash tool to run exactly this command, once, unchanged: git add new.txt', ran: (r) => /^A\s+new\.txt$/m.test(git(r.repo, ['status', '--short'])) },
-  { id: 'git-commit', rule: 'Bash(git commit *)', expect: 'approved', tool: 'Bash', command: 'git commit -m probe', setup: (repo) => { fs.writeFileSync(path.join(repo, 'new.txt'), 'x\n'); git(repo, ['add', 'new.txt']); }, ask: 'Use the Bash tool to run exactly this command, once, unchanged: git commit -m probe', ran: (r) => /probe/.test(git(r.repo, ['log', '--oneline', '-1'])) },
-  { id: 'edit', rule: 'Edit(/**)', expect: 'approved', tool: 'Edit', command: null, ask: 'Use the Read tool on README.md, then the Edit tool to replace the line "# probe" with "# probe edited". Nothing else.', ran: (r) => fs.readFileSync(path.join(r.repo, 'README.md'), 'utf8').includes('# probe edited') },
+  { id: 'kit-launcher', kind: 'allow', rule: 'Bash(kit *)', expect: 'approved', tool: 'Bash', command: 'kit lane template goal --slug probe', ask: 'Use the Bash tool to run exactly this command, once, unchanged: kit lane template goal --slug probe', ran: (r) => r.results.some((x) => !x.error && /^# Goal: /m.test(x.text)) },
+  { id: 'git-add', kind: 'allow', rule: 'Bash(git add *)', expect: 'approved', tool: 'Bash', command: 'git add new.txt', setup: (repo) => fs.writeFileSync(path.join(repo, 'new.txt'), 'x\n'), ask: 'Use the Bash tool to run exactly this command, once, unchanged: git add new.txt', ran: (r) => /^A\s+new\.txt$/m.test(git(r.repo, ['status', '--short'])) },
+  { id: 'git-commit', kind: 'allow', rule: 'Bash(git commit *)', expect: 'approved', tool: 'Bash', command: 'git commit -m probe', setup: (repo) => { fs.writeFileSync(path.join(repo, 'new.txt'), 'x\n'); git(repo, ['add', 'new.txt']); }, ask: 'Use the Bash tool to run exactly this command, once, unchanged: git commit -m probe', ran: (r) => /probe/.test(git(r.repo, ['log', '--oneline', '-1'])) },
+  { id: 'edit', kind: 'allow', rule: 'Edit(/**)', expect: 'approved', tool: 'Edit', command: null, ask: 'Use the Read tool on README.md, then the Edit tool to replace the line "# probe" with "# probe edited". Nothing else.', ran: (r) => fs.readFileSync(path.join(r.repo, 'README.md'), 'utf8').includes('# probe edited') },
+  // the human's decisions (ask rules): a headless session has nobody to answer an ask, so Claude
+  // Code refuses them; refused here while `Bash(kit *)` is in allow proves ask beats allow (#63, Step 2)
+  { id: 'merge-asks', rule: 'Bash(kit lane merge *)', kind: 'ask', expect: 'denied', tool: 'Bash', command: 'kit lane merge probe --by probe', ask: 'Use the Bash tool to run exactly this command, once, unchanged: kit lane merge probe --by probe', ran: () => false },
+  { id: 'merge-bare-asks', rule: 'Bash(kit lane merge)', kind: 'ask', expect: 'denied', tool: 'Bash', command: 'kit lane merge', ask: 'Use the Bash tool to run exactly this command, once, unchanged: kit lane merge', ran: () => false },
+  { id: 'resume-asks', rule: 'Bash(kit lane resume-all *)', kind: 'ask', expect: 'denied', tool: 'Bash', command: 'kit lane resume-all --by probe', ask: 'Use the Bash tool to run exactly this command, once, unchanged: kit lane resume-all --by probe', ran: () => false },
+  { id: 'bootstrap-asks', rule: 'Bash(kit bootstrap *)', kind: 'ask', expect: 'denied', tool: 'Bash', command: 'kit bootstrap --repo .', ask: 'Use the Bash tool to run exactly this command, once, unchanged: kit bootstrap --repo .', ran: () => false },
+  { id: 'bootstrap-bare-asks', rule: 'Bash(kit bootstrap)', kind: 'ask', expect: 'denied', tool: 'Bash', command: 'kit bootstrap', ask: 'Use the Bash tool to run exactly this command, once, unchanged: kit bootstrap', ran: () => false },
+  // a skill whose allowed-tools is plain Bash still cannot merge without the human: ask is not overridden by the skill's
+  // tool grant (all the kit's skills list Bash today)
+  { id: 'merge-in-skill', rule: null, kind: 'ask-skill', expect: 'denied', tool: 'Bash', command: 'kit lane merge probe --by probe', setup: (repo) => { fs.mkdirSync(path.join(repo, '.claude', 'skills', 'probe-merge'), { recursive: true }); fs.writeFileSync(path.join(repo, '.claude', 'skills', 'probe-merge', 'SKILL.md'), '---\nname: probe-merge\ndescription: "Merges the probe lane. Use when asked to merge the probe."\nallowed-tools: Bash\n---\n\nUse the Bash tool to run exactly this command, once, unchanged: kit lane merge probe --by probe\n'); }, ask: '/probe-merge', ran: () => false },
   // controls: what must stay refused
-  { id: 'home-form', rule: null, expect: 'denied', tool: 'Bash', command: 'node "$HOME/.claude/kit/scripts/lane.js" template goal --slug probe', ask: 'Use the Bash tool to run exactly this command, once, unchanged: node "$HOME/.claude/kit/scripts/lane.js" template goal --slug probe', ran: (r) => r.results.some((x) => !x.error && /^# Goal: /m.test(x.text)) },
-  { id: 'unlisted', rule: null, expect: 'denied', tool: 'Bash', command: 'git tag probe-tag', ask: 'Use the Bash tool to run exactly this command, once, unchanged: git tag probe-tag', ran: (r) => git(r.repo, ['tag', '--list', 'probe-tag']).trim() === 'probe-tag' },
+  { id: 'home-form', kind: 'control', rule: null, expect: 'denied', tool: 'Bash', command: 'node "$HOME/.claude/kit/scripts/lane.js" template goal --slug probe', ask: 'Use the Bash tool to run exactly this command, once, unchanged: node "$HOME/.claude/kit/scripts/lane.js" template goal --slug probe', ran: (r) => r.results.some((x) => !x.error && /^# Goal: /m.test(x.text)) },
+  { id: 'unlisted', kind: 'control', rule: null, expect: 'denied', tool: 'Bash', command: 'git tag probe-tag', ask: 'Use the Bash tool to run exactly this command, once, unchanged: git tag probe-tag', ran: (r) => git(r.repo, ['tag', '--list', 'probe-tag']).trim() === 'probe-tag' },
 ];
 
 function git(repo, args) {
@@ -71,7 +82,7 @@ function transcript(config) {
 }
 
 /** Run one case in a fresh repo; `via` is 'project' (trusted project settings) or 'flag' (--settings, untrusted). */
-export function runCase(c, allow, via, tmp) {
+export function runCase(c, permissions, via, tmp) {
   const dir = fs.mkdtempSync(path.join(tmp, `${c.id}-${via}-`));
   const repo = path.join(dir, 'repo');
   const config = path.join(dir, 'config');
@@ -82,7 +93,7 @@ export function runCase(c, allow, via, tmp) {
   git(repo, ['add', 'README.md']);
   git(repo, ['commit', '-q', '-m', 'init']);
   c.setup?.(repo);
-  const settings = { permissions: { allow } };
+  const settings = { permissions };
   const args = ['-p', c.ask, '--permission-mode', 'default', '--output-format', 'json'];
   if (via === 'flag') {
     fs.writeFileSync(path.join(dir, 'settings.json'), JSON.stringify(settings));
@@ -128,17 +139,18 @@ export function main(argv = process.argv.slice(2)) {
       return 2;
     }
   }
-  const allow = JSON.parse(fs.readFileSync(FRAGMENT, 'utf8')).permissions.allow;
+  const { allow, ask = [], deny = [] } = JSON.parse(fs.readFileSync(FRAGMENT, 'utf8')).permissions;
+  const permissions = { allow, ask, deny };
   const tmp = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'kit-permission-probe-')));
   const rows = [];
   try {
     for (const c of CASES) {
-      rows.push(runCase(c, allow, 'project', tmp));
+      rows.push(runCase(c, permissions, 'project', tmp));
       process.stdout.write(`${rows.at(-1).ok ? 'ok  ' : 'FAIL'} ${c.id} (project settings): expected ${c.expect}, got ${rows.at(-1).got}\n`);
     }
     // per-run settings for unattended runs: the launcher rule through --settings, in a repo that is not trusted
     const k = CASES.find((c) => c.id === 'kit-launcher');
-    rows.push(runCase(k, allow, 'flag', tmp));
+    rows.push(runCase(k, permissions, 'flag', tmp));
     process.stdout.write(`${rows.at(-1).ok ? 'ok  ' : 'FAIL'} ${k.id} (--settings, untrusted repo): expected ${k.expect}, got ${rows.at(-1).got}\n`);
   } finally {
     fs.rmSync(tmp, { recursive: true, force: true });

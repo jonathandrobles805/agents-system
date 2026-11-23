@@ -1,5 +1,5 @@
 {
-  "$comment": "Installed into <repo>/.claude/settings.json by /zi-bootstrap. Versioned with the project. Hooks call kit scripts in ~/.claude/kit/scripts. Edit via /zi-bootstrap --upgrade, not by hand during a lane. permissions.allow is the lane's own working set: a headless `claude -p --permission-mode default` session DENIES any call that needs approval when no human is there to answer, so without it a lane can only read. Reads and read-only commands (ls, cat, grep, find, read-only git) need no rule; Claude Code runs those without a prompt. `Edit(/**)` anchors at the session's working directory, which for a lane is its worktree, mirroring the sandbox's allowWrite. Deny beats allow in every scope, so none of this reaches what the floor denies. Project commands are added by /zi-bootstrap from .claude/kit.json commands.",
+  "$comment": "Installed into <repo>/.claude/settings.json by /zi-bootstrap. Versioned with the project. Hooks call kit scripts in ~/.claude/kit/scripts. Edit via /zi-bootstrap --upgrade, not by hand during a lane. permissions.allow is the lane's own working set: a headless `claude -p --permission-mode default` session DENIES any call that needs approval when no human is there to answer, so without it a lane can only read. Reads and read-only commands (ls, cat, grep, find, read-only git) need no rule; Claude Code runs those without a prompt. `Edit(/**)` anchors at the session's working directory, which for a lane is its worktree, mirroring the sandbox's allowWrite. Deny beats allow in every scope, so none of this reaches what the floor denies. Project commands are added by /zi-bootstrap from .claude/kit.json commands. permissions.ask holds the human's own decisions: merging (`kit lane merge`), lifting the kill switch (`kit lane resume-all`) and re-running `/bootstrap` prompt every time. Ask beats allow, so `Bash(kit *)` never approves them, and a headless session cannot run them at all (#63, hardening plan Step 2). A direct `gh pr merge` (and its `gh api` forms) is blocked by the bash guard; merging goes through `kit lane merge`, which waits for CI.",
   "permissions": {
     "allow": [
       "Edit(/**)",
@@ -7,54 +7,187 @@
       "Bash(git commit *)",
       "Bash(kit *)"
     ],
+    "ask": [
+      "Bash(kit lane merge *)",
+      "Bash(kit lane merge)",
+      "Bash(kit lane resume-all *)",
+      "Bash(kit bootstrap *)",
+      "Bash(kit bootstrap)"
+    ],
     "deny": [
-      "Read(.env)", "Read(.env.*)", "Read(**/*.pem)", "Read(**/*.key)", "Read(**/id_rsa*)", "Read(**/secrets/**)", "Read(**/credentials*)", "Read(**/.aws/**)", "Read(**/.ssh/**)",
-      "Edit(.claude/**)", "Edit(.github/workflows/**)",
-      "Bash(git push --force*)", "Bash(git push -f*)", "Bash(git reset --hard*)", "Bash(sudo *)", "Bash(rm -rf /*)"
+      "Read(.env)",
+      "Read(.env.*)",
+      "Read(**/*.pem)",
+      "Read(**/*.key)",
+      "Read(**/id_rsa*)",
+      "Read(**/secrets/**)",
+      "Read(**/credentials*)",
+      "Read(**/.aws/**)",
+      "Read(**/.ssh/**)",
+      "Edit(.claude/**)",
+      "Edit(.github/workflows/**)",
+      "Bash(git push --force*)",
+      "Bash(git push -f*)",
+      "Bash(git reset --hard*)",
+      "Bash(sudo *)",
+      "Bash(rm -rf /*)"
     ]
   },
   "hooks": {
     "PreToolUse": [
-      { "matcher": "Edit|MultiEdit|Write|NotebookEdit", "hooks": [ { "type": "command", "command": "node \"$HOME/.claude/kit/scripts/hook_guard_edit.js\"" } ] },
-      { "matcher": "Read|NotebookRead|Grep|Glob", "hooks": [ { "type": "command", "command": "node \"$HOME/.claude/kit/scripts/hook_guard_read.js\"" } ] },
-      { "matcher": "Bash", "hooks": [ { "type": "command", "command": "node \"$HOME/.claude/kit/scripts/hook_guard_bash.js\"" } ] }
+      {
+        "matcher": "Edit|MultiEdit|Write|NotebookEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"$HOME/.claude/kit/scripts/hook_guard_edit.js\""
+          }
+        ]
+      },
+      {
+        "matcher": "Read|NotebookRead|Grep|Glob",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"$HOME/.claude/kit/scripts/hook_guard_read.js\""
+          }
+        ]
+      },
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"$HOME/.claude/kit/scripts/hook_guard_bash.js\""
+          }
+        ]
+      }
     ],
     "PostToolUse": [
-      { "matcher": "Read|NotebookRead|Write|Bash", "hooks": [ { "type": "command", "command": "node \"$HOME/.claude/kit/scripts/hook_read_log.js\"" } ] },
-      { "matcher": "Edit|MultiEdit|Write|Bash", "hooks": [ { "type": "command", "command": "node \"$HOME/.claude/kit/scripts/hook_post_edit_check.js\"", "timeout": 300 } ] },
-      { "matcher": "Write", "hooks": [ { "type": "command", "command": "node \"$HOME/.claude/kit/scripts/validate_docs.js\" --hook" } ] },
-      { "hooks": [
-          { "type": "command", "command": "node \"$HOME/.claude/kit/scripts/hook_event_log.js\"" },
-          { "type": "command", "command": "node \"$HOME/.claude/kit/scripts/hook_budget_check.js\"" }
-      ] }
+      {
+        "matcher": "Read|NotebookRead|Write|Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"$HOME/.claude/kit/scripts/hook_read_log.js\""
+          }
+        ]
+      },
+      {
+        "matcher": "Edit|MultiEdit|Write|Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"$HOME/.claude/kit/scripts/hook_post_edit_check.js\"",
+            "timeout": 300
+          }
+        ]
+      },
+      {
+        "matcher": "Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"$HOME/.claude/kit/scripts/validate_docs.js\" --hook"
+          }
+        ]
+      },
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"$HOME/.claude/kit/scripts/hook_event_log.js\""
+          },
+          {
+            "type": "command",
+            "command": "node \"$HOME/.claude/kit/scripts/hook_budget_check.js\""
+          }
+        ]
+      }
     ],
     "PostToolUseFailure": [
-      { "hooks": [ { "type": "command", "command": "node \"$HOME/.claude/kit/scripts/hook_event_log.js\"" } ] }
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"$HOME/.claude/kit/scripts/hook_event_log.js\""
+          }
+        ]
+      }
     ],
     "SubagentStart": [
-      { "hooks": [ { "type": "command", "command": "node \"$HOME/.claude/kit/scripts/hook_event_log.js\"" } ] }
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"$HOME/.claude/kit/scripts/hook_event_log.js\""
+          }
+        ]
+      }
     ],
     "SubagentStop": [
-      { "hooks": [
-          { "type": "command", "command": "node \"$HOME/.claude/kit/scripts/hook_event_log.js\"" },
-          { "type": "command", "command": "node \"$HOME/.claude/kit/scripts/hook_done_check.js\"" },
-          { "type": "command", "command": "node \"$HOME/.claude/kit/scripts/validate_docs.js\" --hook" }
-      ] }
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"$HOME/.claude/kit/scripts/hook_event_log.js\""
+          },
+          {
+            "type": "command",
+            "command": "node \"$HOME/.claude/kit/scripts/hook_done_check.js\""
+          },
+          {
+            "type": "command",
+            "command": "node \"$HOME/.claude/kit/scripts/validate_docs.js\" --hook"
+          }
+        ]
+      }
     ],
     "Stop": [
-      { "hooks": [
-          { "type": "command", "command": "node \"$HOME/.claude/kit/scripts/hook_done_check.js\"" },
-          { "type": "command", "command": "node \"$HOME/.claude/kit/scripts/hook_notify.js\"" }
-      ] }
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"$HOME/.claude/kit/scripts/hook_done_check.js\""
+          },
+          {
+            "type": "command",
+            "command": "node \"$HOME/.claude/kit/scripts/hook_notify.js\""
+          }
+        ]
+      }
     ],
     "Notification": [
-      { "hooks": [ { "type": "command", "command": "node \"$HOME/.claude/kit/scripts/hook_notify.js\"" } ] }
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"$HOME/.claude/kit/scripts/hook_notify.js\""
+          }
+        ]
+      }
     ],
     "ConfigChange": [
-      { "matcher": "project_settings|local_settings", "hooks": [ { "type": "command", "command": "node \"$HOME/.claude/kit/scripts/hook_config_guard.js\"" } ] }
+      {
+        "matcher": "project_settings|local_settings",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"$HOME/.claude/kit/scripts/hook_config_guard.js\""
+          }
+        ]
+      }
     ],
     "SessionStart": [
-      { "matcher": "compact|resume", "hooks": [ { "type": "command", "command": "node \"$HOME/.claude/kit/scripts/hook_session_context.js\"" } ] }
+      {
+        "matcher": "compact|resume",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"$HOME/.claude/kit/scripts/hook_session_context.js\""
+          }
+        ]
+      }
     ]
   }
 }
