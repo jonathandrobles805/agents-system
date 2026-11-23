@@ -127,18 +127,37 @@ export function fixtureRepo(task, dir, claudeHome) {
 }
 
 /**
- * Credential-looking strings never reach a report or a kept transcript, whatever a session printed: Anthropic keys,
- * GitHub tokens (classic and fine-grained), AWS access key ids, Bearer tokens, Slack tokens, and the value of any
- * `…password=` or `…secret=` assignment. A value stops at a quote or backslash, so a redacted JSONL line stays JSON.
+ * Credential-looking strings never reach a report or a kept transcript, whatever a session printed: Anthropic keys
+ * (`sk-ant-`), OpenAI project keys (`sk-proj-`), Stripe keys (`sk_live_`, `sk_test_`), GitHub tokens (classic and
+ * fine-grained), GitLab (`glpat-`) and npm (`npm_`) tokens, AWS access key ids, Slack tokens, PEM private-key blocks,
+ * `Bearer` tokens (case-sensitive, 16 characters or more, so "a Bearer token" and "the bearer of bad news" stay), and
+ * the value of a credential-named key (`…password`, `passwd`, `secret`, `token`, `api_key`, `access_key`,
+ * `secret_access_key`, `private_key`) written `name=value` (no space before `=`, never `==`/`===`), `name: value`, or
+ * with a quoted value (`"password": "x"`, `secret = 'x'`, and the `\"…\"` a JSONL line escapes them to). A value stops
+ * at a quote or backslash, so a redacted JSONL line stays JSON.
  */
+const CRED = String.raw`[A-Za-z0-9_]*(?:password|passwd|secret_access_key|secret|token|api_?key|access_?key|private_?key)`;
+const Q = String.raw`\\?["']`;
 const REDACTIONS = [
+  [/-----BEGIN ([A-Z0-9 ]*)PRIVATE KEY-----[\s\S]*?-----END \1PRIVATE KEY-----/g, '-----BEGIN $1PRIVATE KEY-----***-----END $1PRIVATE KEY-----'],
+  // a block cut off before its END line (a clipped output): everything after BEGIN up to a quote (or an escaped one)
+  [/-----BEGIN ([A-Z0-9 ]*)PRIVATE KEY-----(?![*]{3}-----END)(?:[^"\\]|\\[^"])*/g, '-----BEGIN $1PRIVATE KEY-----***'],
   [/sk-ant-[A-Za-z0-9_-]+/g, 'sk-ant-***'],
+  [/\bsk-proj-[A-Za-z0-9_-]+/g, 'sk-proj-***'],
+  [/\bsk_(live|test)_[A-Za-z0-9]+/g, 'sk_$1_***'],
   [/\bgh[pousr]_[A-Za-z0-9]{20,}\b/g, 'gh*_***'],
   [/\bgithub_pat_[A-Za-z0-9_]{20,}/g, 'github_pat_***'],
+  [/\bglpat-[A-Za-z0-9_-]{20,}/g, 'glpat-***'],
+  [/\bnpm_[A-Za-z0-9]{36,}\b/g, 'npm_***'],
   [/\bAKIA[0-9A-Z]{16}\b/g, 'AKIA***'],
-  [/\b(Bearer\s+)[A-Za-z0-9._~+/-]+=*/gi, '$1***'],
+  [/\b(Bearer\s+)[A-Za-z0-9._~+/-]{16,}=*/g, '$1***'],
   [/\bxox[abpr]-[A-Za-z0-9-]+/g, 'xox*-***'],
-  [/([A-Za-z0-9_]*(?:password|passwd|secret)\s*=\s*)[^\s"'\\&,;]+/gi, '$1***'],
+  // a quoted value: "password": "x", secret = 'x', token: "x" (and their \"…\" form inside a JSONL line)
+  [new RegExp(String.raw`(${CRED}(?:${Q})?\s*(?:=(?!=)|:)\s*${Q})[^"'\\]+`, 'gi'), '$1***'],
+  // name=value with no space before `=` (shell, env files, query strings); `==`/`===` is a comparison
+  [new RegExp(String.raw`(${CRED}=(?!=))[^\s"'\\&,;]+`, 'gi'), '$1***'],
+  // name: value (YAML, headers, logs)
+  [new RegExp(String.raw`(${CRED}:[ \t]*)[^\s"'\\,;*][^\s"'\\,;]*`, 'gi'), '$1***'],
 ];
 export const redact = (s) => REDACTIONS.reduce((t, [re, to]) => t.replace(re, to), s);
 

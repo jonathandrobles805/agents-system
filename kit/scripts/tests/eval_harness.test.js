@@ -440,6 +440,46 @@ test('a kept transcript and a report are redacted: Anthropic, GitHub, AWS, Beare
   assert.equal(claude.redact('"secret_read_patterns": ["*.pem"] and the password is checked'), '"secret_read_patterns": ["*.pem"] and the password is checked');
 });
 
+test('redact: every credential form is redacted, and prose and code that only name one are left alone', () => {
+  // assembled at run time, so no credential-shaped literal sits in the repository
+  const j = (...p) => p.join('');
+  const redacted = [
+    ['password: hunter2', 'password: ***'],
+    ['"password": "hunter2"', '"password": "***"'],
+    [j('aws_secret_access_key', '=wJalrXUtnFEMI/K7MDENG'), 'aws_secret_access_key=***'],
+    // the node-api fixture's own .env line
+    [j('STRIPE_KEY=sk', '_live_notreal'), 'STRIPE_KEY=sk_live_***'],
+    [j('sk', '_test_', '4eC39HqLyjWDarjtT1zdp7dc'), 'sk_test_***'],
+    ['token=abc123def', 'token=***'],
+    [j('-----BEGIN RSA PRIVATE', ' KEY-----\nMIIEowIBAAKCAQEA\n-----END RSA PRIVATE', ' KEY-----'), '-----BEGIN RSA PRIVATE KEY-----***-----END RSA PRIVATE KEY-----'],
+    [j('-----BEGIN OPENSSH PRIVATE', ' KEY-----\nb3BlbnNzaC1rZXk (clipped)'), '-----BEGIN OPENSSH PRIVATE KEY-----***'],
+    [j('sk', '-proj-', 'Ab12Cd34_Ef-56'), 'sk-proj-***'],
+    [j('gl', 'pat-', 'xYz123AbC456dEf789gH'), 'glpat-***'],
+    [j('np', 'm_', 'a1B2c3D4e5F6g7H8i9J0k1L2m3N4o5P6q7R8'), 'npm_***'],
+    [j('Authorization: Bearer ', 'eyJhbGciOiJIUzI1NiJ9.e30'), 'Authorization: Bearer ***'],
+    ["secret = 'shh it is'", "secret = '***'"],
+    ['private_key: abc', 'private_key: ***'],
+    ['API_KEY=xyz', 'API_KEY=***'],
+  ];
+  for (const [input, want] of redacted) {
+    assert.equal(claude.redact(input), want, input);
+    // the same text inside a JSONL line: redacted, and still JSON
+    // (a clipped key block has no END line: everything after BEGIN goes, so nothing follows it here)
+    const after = input.includes('clipped') ? '' : ' after';
+    const out = claude.redact(JSON.stringify({ text: `before ${input}${after}` }));
+    assert.doesNotThrow(() => JSON.parse(out), out);
+    assert.equal(JSON.parse(out).text, `before ${want}${after}`, `in a JSONL line: ${input}`);
+  }
+  const untouched = [
+    'the bearer of bad news', 'Use a Bearer token', 'if (password === input) return;', 'if (token == null) throw', 'The secret = to good tests',
+    'max_tokens=4096, input_tokens: 12', 'npm_config_cache=/tmp/x', 'a password is required', '"secret_read_patterns": ["*.pem"]',
+  ];
+  for (const text of untouched) {
+    assert.equal(claude.redact(text), text, text);
+    assert.equal(claude.redact(JSON.stringify({ text })), JSON.stringify({ text }), `in a JSONL line: ${text}`);
+  }
+});
+
 test('a role task the container runtime runs without --agent is reported as measuring plain Claude Code', async (t) => {
   const dir = tmpPath(t);
   const bin = path.join(dir, 'bin');
