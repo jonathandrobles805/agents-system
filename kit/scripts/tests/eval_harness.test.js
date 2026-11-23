@@ -332,7 +332,7 @@ test('claude runner setup: shared files come from kit/eval, carry the fixture co
   assert.throws(() => claude.setProgressCell(p, 'D2', 'red', 'x'), /no row D2/);
 });
 
-test('every setup spec the benchmarks share is valid by the kit\'s own validator, and low-risk: no lane task needs the high-risk waiver', (t) => {
+test('every setup spec and research file the benchmarks share is valid by the kit\'s own validator, and low-risk: no lane task needs the high-risk waiver', (t) => {
   for (const task of loadTasks().filter((x) => x.setup)) {
     const root = F.nodeApi(path.join(tmpPath(t), task.id));
     const head = F.git(['rev-parse', 'HEAD'], root).trim();
@@ -342,7 +342,14 @@ test('every setup spec the benchmarks share is valid by the kit\'s own validator
       fs.writeFileSync(path.join(root, rel), claude.setupText(value, head));
     }
     const specs = Object.keys(task.setup.files ?? {}).filter((rel) => rel.startsWith('docs/specs/'));
-    assert.ok(specs.length, `${task.id} sets up a spec`);
+    if (task.setup.lane) assert.ok(specs.length, `${task.id} sets up the spec its lane is made from`);
+    // a research file the setup writes (the planner's input) is valid by the same validator
+    for (const rel of Object.keys(task.setup.files ?? {}).filter((r) => /^docs\/research\/(?!INDEX\.md$)/.test(r))) {
+      const v = new V.Validator(root, null, { commands: { test: 'npx vitest run' } });
+      v.run(path.join(root, rel), 'research');
+      assert.deepEqual(v.v, [], `${task.id}: ${rel}`);
+    }
+    assert.ok(specs.length || Object.keys(task.setup.files ?? {}).some((r) => r.startsWith('docs/research/')), `${task.id} sets up a spec or research`);
     for (const rel of specs) {
       // the kit's defaults: bootstrap writes DEFAULT_HIGH_RISK_PATHS into the fixture's kit.json
       const v = new V.Validator(root, null, { high_risk_paths: K.DEFAULT_HIGH_RISK_PATHS, commands: { test: 'npx vitest run' } });

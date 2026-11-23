@@ -1,0 +1,18 @@
+{
+  "files": {},
+  "events": [],
+  "git": {
+    "log": [
+      "abc1234 eval"
+    ]
+  },
+  "judge": {},
+  "output": "Invalid API key · Please run /login\n",
+  "ms": 900,
+  "expect": {
+    "hard_ok": false,
+    "violations": [
+      "files_exist"
+    ]
+  }
+}
