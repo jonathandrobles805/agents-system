@@ -979,7 +979,10 @@ export class Bootstrap {
       // a rule that overlaps the floor is never written, so the generated file cannot disagree with ci_security_floor
       .filter((a) => typeof a === 'string' && a && !floor.some((d) => K.ruleOverlapsFloor(a, d)));
     const kept = pruneSubsumed(allow);
-    merged.permissions = { ...permsObj, allow: kept.sort(cpCompare), deny: [...deny].sort(cpCompare) };
+    // ask: the human's own decisions (merge, resume-all, bootstrap). The kit's rules are always written; a project's own
+    // ask rules are kept. Ask beats allow in Claude Code, so `Bash(kit *)` never approves these (#63).
+    const ask = [...new Set([...get(permsObj, 'ask', []), ...get(req(frag, 'permissions'), 'ask', [])])].filter((a) => typeof a === 'string' && a);
+    merged.permissions = { ...permsObj, allow: kept.sort(cpCompare), ask: ask.sort(cpCompare), deny: [...deny].sort(cpCompare) };
     return K.jsonDumps(merged, { indent: 2 }) + '\n';
   }
 

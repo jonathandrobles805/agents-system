@@ -147,7 +147,9 @@ export class ArgumentParser {
         continue;
       }
       // positional token
-      if (this.subparsers && positionalsRaw.length >= this.positionals.length) {
+      // a subcommand is never picked after `--`: `lane.js -- merge` would otherwise reach merge in a form the
+      // permission ask rule `Bash(kit lane merge *)` does not match (#106 review)
+      if (this.subparsers && !onlyPositional && positionalsRaw.length >= this.positionals.length) {
         subName = tok;
         subRest = argv.slice(i + 1);
         break;
