@@ -192,7 +192,9 @@ test('guard bash refuses the owner\'s decisions through kit in forms the permiss
     'kit lane next-step merge-sort --repo .', 'git commit -m "run kit lane merge when CI is green"', 'git merge --no-ff main', 'timeout 60 kit lane merge x --by j',
     // kit as an argument, not the program, is untouched
     'grep -n kit README.md', 'grep -rn "kit" docs | head', 'rg kit -g "*.md"', 'grep kit $(git ls-files)', 'find . -name "*.js" | xargs grep -l kit',
-    'git commit -m "update kit docs" \\\n --author x', 'kit lane merge s --by j 2>&1 | tail -3', 'kit --help', 'echo "$(kit lane merge s --by j)"']) {
+    'git commit -m "update kit docs" \\\n --author x', 'kit lane merge s --by j 2>&1 | tail -3', 'kit --help',
+    // a here-doc body is text (review 5: a commit message naming the rule was refused)
+    "git commit -m \"$(cat <<'EOF'\nfix\n\nBash(kit *) no longer approves it.\nEOF\n)\"", 'echo "$(kit lane merge s --by j)"']) {
     const r = run('hook_guard_bash.js', pre(repo, 'Bash', { command: c }));
     assert.equal(r.returncode, 0, `${c}: ${r.stderr}`);
   }

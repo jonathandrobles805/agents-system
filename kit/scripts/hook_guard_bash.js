@@ -178,6 +178,23 @@ export function substitutionBodies(line) {
   return out;
 }
 
+/** The line with each here-doc's body removed (text such as a commit message, not commands; a known miss when fed to a shell). */
+export function withoutHeredocBodies(line) {
+  const lines = line.split('\n');
+  const out = [];
+  for (let i = 0; i < lines.length; i++) {
+    out.push(lines[i]);
+    const delims = [...lines[i].matchAll(/<<-?\s*(['"]?)([A-Za-z_][A-Za-z0-9_]*)\1/g)].map((m) => m[2]);
+    for (const d of delims) {
+      let j = i + 1;
+      while (j < lines.length && lines[j].replace(/^\t+/, '') !== d) j++;
+      i = Math.min(j, lines.length - 1);
+      if (j < lines.length) out.push(lines[j]);
+    }
+  }
+  return out.join('\n');
+}
+
 // what may stand before the program in a simple command: assignments, the wrappers Claude Code strips (and env/exec),
 // their options and the plain values those options take
 const BEFORE_PROGRAM = /^(!|\{|if|then|else|elif|do|while|until|[A-Za-z_][A-Za-z0-9_]*=.*|timeout|time|nice|nohup|stdbuf|command|builtin|noglob|xargs|env|exec|-.*|[0-9.]+[smhd]?|[A-Z]+)$/;
@@ -194,6 +211,7 @@ const DECISIONS = [['bootstrap'], ['lane', 'merge'], ['lane', 'resume-all']];
  * control, and the container (Step 8) is the wall.
  */
 export function kitDecisionDisguised(line, depth = 0) {
+  line = withoutHeredocBodies(line);
   for (const words of shellCommands(line)) {
     const k = words.findIndex((w, i) => (w.value === 'kit' || w.raw === 'kit') && words.slice(0, i).every((x) => BEFORE_PROGRAM.test(x.value)));
     if (k < 0) continue;
