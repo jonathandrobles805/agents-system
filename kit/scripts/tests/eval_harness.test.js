@@ -383,6 +383,10 @@ fs.writeFileSync(path.join(t, 's.jsonl'), JSON.stringify({ type: 'user', text: '
 // in a lane: one event in the lane's file, and an earlier one in the session file hook_event_log uses for what it cannot place in a lane
 if (fs.existsSync('.claude/lane.json')) {
   fs.writeFileSync('tests/truncate.test.ts', '// written by the session\\n');
+  // secret files the session leaves (one gitignored, one not): the judge reads neither
+  fs.writeFileSync('.env', 'STRIPE_KEY=planted-env-value\\n');
+  fs.mkdirSync('config', { recursive: true });
+  fs.writeFileSync('config/credentials.json', '{"k": "planted-credentials-value"}\\n');
   fs.appendFileSync('docs/specs/truncate-text.events.jsonl', JSON.stringify({ event: 'bash', tool: 'Bash', command: 'npx vitest run tests/truncate.test.ts', result: 'fail', ts: '2999-01-01T00:00:02' }) + '\\n');
   fs.appendFileSync('.claude/session/events.jsonl', JSON.stringify({ event: 'read', tool: 'Read', path: 'docs/specs/truncate-text.md', result: 'ok', lane: null, ts: '2999-01-01T00:00:01' }) + '\\n');
 }
@@ -428,6 +432,9 @@ process.stdout.write(process.env.KIT_EVAL_JUDGE ? '{"r1": 1}' : 'done');
   // neither a setup file, nor .claude/, nor the lane's events file (the hooks' record, not the agent's work)
   assert.deepEqual([...sessionPart.matchAll(/^diff --git a\/(\S+)/gm)].map((m) => m[1]), ['tests/truncate.test.ts'], sessionPart);
   assert.match(prompt, /What the session printed \(its final answer\):\ndone/);
+  // files the floor forbids reading are in neither the end state nor the judge's input
+  assert.ok(!('.env' in o.files) && !('config/credentials.json' in o.files), Object.keys(o.files).join(' '));
+  assert.ok(!prompt.includes('planted-env-value') && !prompt.includes('planted-credentials-value') && !prompt.includes('config/credentials.json'), 'no secret file reaches the judge');
   assert.equal(o.session_diff, sessionPart.slice(sessionPart.indexOf('\n') + 1) + '\n');
   // transcripts: one per session, redacted
   assert.deepEqual([o.transcripts.worker, o.transcripts.judge].map((x) => x.map((f) => path.relative(out, f))), [[path.join('worker', 'p', 's.jsonl')], [path.join('judge', 'p', 's.jsonl')]]);

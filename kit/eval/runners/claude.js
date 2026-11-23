@@ -404,18 +404,36 @@ export const eventsSince = (files, offsets) => byTime(files.map((f, i) => readEv
 /** The events `files` held up to `offsets`: what the setup recorded before the session, in time order. */
 export const eventsBefore = (files, offsets) => byTime(files.map((f, i) => readEvents(f).slice(0, offsets[i])));
 
-function snapshot(root) {
+/**
+ * Is `rel` a file the floor forbids reading (`secret_read_patterns`: `.env`, `*.pem`, a `credentials*` file, …)? Matched
+ * as no_secret_read matches a read: the path, and the file's name against the patterns without a `/`.
+ */
+export function isSecretPath(rel) {
+  const pats = K.loadFloor().secret_read_patterns ?? [];
+  return K.globMatch(rel, pats) || K.globMatch(rel.split('/').pop(), pats.filter((p) => !p.includes('/')));
+}
+
+/** The repository's files as text (rel -> content), secret files (isSecretPath) left out: the judge never reads them. */
+export function snapshot(root) {
   const files = {};
   const walk = (d) => {
     for (const e of fs.readdirSync(d, { withFileTypes: true })) {
       if (['.git', 'node_modules', '.claude'].includes(e.name)) continue;
       const p = path.join(d, e.name);
       if (e.isDirectory()) walk(p);
-      else if (fs.statSync(p).size < 512 * 1024) files[K.relTo(root, p)] = fs.readFileSync(p, 'utf8');
+      else if (!isSecretPath(K.relTo(root, p)) && fs.statSync(p).size < 512 * 1024) files[K.relTo(root, p)] = fs.readFileSync(p, 'utf8');
     }
   };
   walk(root);
   return files;
+}
+
+/** A git diff without the parts for secret files (isSecretPath), for a diff that goes to the judge. */
+export function dropSecretFiles(diff) {
+  return diff.split(/(?=^diff --git )/m).filter((part) => {
+    const m = /^diff --git a\/(\S+) b\/(\S+)/.exec(part);
+    return !m || !(isSecretPath(m[1]) || isSecretPath(m[2]));
+  }).join('');
 }
 
 /**
@@ -511,7 +529,7 @@ export async function run(task, { attempt = 0, timeoutMs = 20 * 60 * 1000, trans
     const work = headless(task.goal, cwd, env, settings, timeoutMs, agent);
     const kept = { worker: home && transcripts ? keepTranscripts(home.config, path.join(transcripts, 'worker')) : [], judge: [] };
     const files = snapshot(cwd);
-    const sessionDiff = treeDiff(cwd, setupTree, workTree(cwd, path.join(dir, 'index.end'), notWork), notWork);
+    const sessionDiff = dropSecretFiles(treeDiff(cwd, setupTree, workTree(cwd, path.join(dir, 'index.end'), notWork), notWork));
     const events = eventsSince(evFiles, before);
     // what the setup recorded before the session (the tester's red run in an implementer's lane): never the session's work
     const setupEvents = eventsBefore(evFiles, before);
