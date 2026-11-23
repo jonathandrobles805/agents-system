@@ -147,36 +147,80 @@ export function fixtureRepo(task, dir, claudeHome) {
  * Credential-looking strings never reach a report or a kept transcript, whatever a session printed: Anthropic keys
  * (`sk-ant-`), OpenAI project keys (`sk-proj-`), Stripe keys (`sk_live_`, `sk_test_`), GitHub tokens (classic and
  * fine-grained), GitLab (`glpat-`) and npm (`npm_`) tokens, AWS access key ids, Slack tokens, PEM private-key blocks,
- * `Bearer` tokens (case-sensitive, 16 characters or more, so "a Bearer token" and "the bearer of bad news" stay), and
- * the value of a credential-named key (`…password`, `passwd`, `secret`, `token`, `api_key`, `access_key`,
- * `secret_access_key`, `private_key`) written `name=value` (no space before `=`, never `==`/`===`), `name: value`, or
- * with a quoted value (`"password": "x"`, `secret = 'x'`, and the `\"…\"` a JSONL line escapes them to). A value stops
- * at a quote or backslash, so a redacted JSONL line stays JSON.
+ * `Bearer` tokens (either case, 16 characters or more, so "a Bearer token" and "the bearer of bad news" stay), the
+ * password in a `scheme://user:password@host` URL, and the value of a credential-named key (`…password`, `passwd`,
+ * `secret`, `token`, `api_key`, `access_key`, `secret_access_key`, `private_key`) written `name=value` (no space before
+ * `=`, never `==`/`===`), `name: value` (not a TypeScript type: `password: string` stays), or with a quoted value
+ * (`"password": "x"`, `secret = 'x'`, and the `\"…\"` a JSON string escapes them to). A value stops at a quote or
+ * backslash, so redacted JSON text stays JSON.
+ *
+ * Redaction works on decoded strings: a JSON document (a transcript line, the report) is parsed, every string in it
+ * (object keys included) redacted, and re-serialized (redactDeep, redactJsonl), so an escape such as `\n` never stands
+ * between a pattern and its token. The patterns still hold on serialized text, for a line that is not JSON: a token's
+ * start is matched after a non-word character or after an escape (`\n`, `\r`, `\t`), never with `\b`, which sees
+ * no boundary between the `n` of `\n` and the token.
  */
 const CRED = String.raw`[A-Za-z0-9_]*(?:password|passwd|secret_access_key|secret|token|api_?key|access_?key|private_?key)`;
 const Q = String.raw`\\?["']`;
+// where a token may start: after a non-word character, at the start, or right after a JSON escape (`\n` in text)
+const START = String.raw`(?:(?<=\\[nrt])|(?<![A-Za-z0-9_]))`;
+// a TypeScript primitive type after `name:` is an annotation, not a value
+const TYPE_WORD = String.raw`(?:string|number|boolean|bigint|symbol|any|unknown|never|void|object|null|undefined)(?![A-Za-z0-9_$])`;
+const tok = (body, flags = 'g') => new RegExp(START + body, flags);
 const REDACTIONS = [
   [/-----BEGIN ([A-Z0-9 ]*)PRIVATE KEY-----[\s\S]*?-----END \1PRIVATE KEY-----/g, '-----BEGIN $1PRIVATE KEY-----***-----END $1PRIVATE KEY-----'],
-  // a block cut off before its END line (a clipped output): everything after BEGIN up to a quote (or an escaped one)
-  [/-----BEGIN ([A-Z0-9 ]*)PRIVATE KEY-----(?![*]{3}-----END)(?:[^"\\]|\\[^"])*/g, '-----BEGIN $1PRIVATE KEY-----***'],
-  [/sk-ant-[A-Za-z0-9_-]+/g, 'sk-ant-***'],
-  [/\bsk-proj-[A-Za-z0-9_-]+/g, 'sk-proj-***'],
-  [/\bsk_(live|test)_[A-Za-z0-9]+/g, 'sk_$1_***'],
-  [/\bgh[pousr]_[A-Za-z0-9]{20,}\b/g, 'gh*_***'],
-  [/\bgithub_pat_[A-Za-z0-9_]{20,}/g, 'github_pat_***'],
-  [/\bglpat-[A-Za-z0-9_-]{20,}/g, 'glpat-***'],
-  [/\bnpm_[A-Za-z0-9]{36,}\b/g, 'npm_***'],
-  [/\bAKIA[0-9A-Z]{16}\b/g, 'AKIA***'],
-  [/\b(Bearer\s+)[A-Za-z0-9._~+/-]{16,}=*/g, '$1***'],
-  [/\bxox[abpr]-[A-Za-z0-9-]+/g, 'xox*-***'],
-  // a quoted value: "password": "x", secret = 'x', token: "x" (and their \"…\" form inside a JSONL line)
+  // key/value forms before the cut-off key block below, so a value that follows a clipped block is redacted first
+  // a quoted value: "password": "x", secret = 'x', token: "x" (and their \"…\" form inside JSON text)
   [new RegExp(String.raw`(${CRED}(?:${Q})?\s*(?:=(?!=)|:)\s*${Q})[^"'\\]+`, 'gi'), '$1***'],
   // name=value with no space before `=` (shell, env files, query strings); `==`/`===` is a comparison
   [new RegExp(String.raw`(${CRED}=(?!=))[^\s"'\\&,;]+`, 'gi'), '$1***'],
-  // name: value (YAML, headers, logs)
-  [new RegExp(String.raw`(${CRED}:[ \t]*)[^\s"'\\,;*][^\s"'\\,;]*`, 'gi'), '$1***'],
+  // name: value (YAML, headers, logs), not a TypeScript annotation (`password: string`)
+  [new RegExp(String.raw`(${CRED}:[ \t]*)(?!${TYPE_WORD})[^\s"'\\,;*][^\s"'\\,;]*`, 'gi'), '$1***'],
+  // a block cut off before its END line (a clipped output): its base64 body, lines and escaped newlines included
+  [/-----BEGIN ([A-Z0-9 ]*)PRIVATE KEY-----(?![*]{3}-----END)(?:(?:\s|\\[nrt])*[A-Za-z0-9+\/=]+)*/g, '-----BEGIN $1PRIVATE KEY-----***'],
+  [tok('sk-ant-[A-Za-z0-9_-]+'), 'sk-ant-***'],
+  [tok('sk-proj-[A-Za-z0-9_-]+'), 'sk-proj-***'],
+  [tok('sk_(live|test)_[A-Za-z0-9]+'), 'sk_$1_***'],
+  [tok('gh[pousr]_[A-Za-z0-9]{20,}'), 'gh*_***'],
+  [tok('github_pat_[A-Za-z0-9_]{20,}'), 'github_pat_***'],
+  [tok('glpat-[A-Za-z0-9_-]{20,}'), 'glpat-***'],
+  [tok('npm_[A-Za-z0-9]{36,}'), 'npm_***'],
+  [tok('AKIA[0-9A-Z]{16}'), 'AKIA***'],
+  [tok('([Bb]earer\\s+)[A-Za-z0-9._~+/-]{16,}=*'), '$1***'],
+  [tok('xox[abpr]-[A-Za-z0-9-]+'), 'xox*-***'],
+  // scheme://user:password@host
+  [/([a-z][a-z0-9+.-]*:\/\/[^\s:\/@"'\\]+:)[^\s@\/"'\\]+(?=@)/gi, '$1***'],
 ];
+/** Redact one string (decoded text, or serialized text that is not JSON). */
 export const redact = (s) => REDACTIONS.reduce((t, [re, to]) => t.replace(re, to), s);
+
+const CRED_KEY = new RegExp(`^${CRED}$`, 'i');
+/**
+ * A copy of a JSON value with every string redacted, object keys included; a string under a credential-named key
+ * (`"password": "x"`, `"api_key": "x"`) is replaced whole, since decoded it no longer carries its name.
+ */
+export function redactDeep(v) {
+  if (typeof v === 'string') return redact(v);
+  if (Array.isArray(v)) return v.map(redactDeep);
+  if (v && typeof v === 'object') {
+    const out = {};
+    for (const [k, x] of Object.entries(v)) out[redact(k)] = typeof x === 'string' && x && CRED_KEY.test(k) ? '***' : redactDeep(x);
+    return out;
+  }
+  return v;
+}
+
+/** A JSONL text redacted line by line: each JSON line decoded, redacted and re-serialized; any other line as text. */
+export function redactJsonl(text) {
+  return text.split('\n').map((line) => {
+    if (!line.trim()) return line;
+    try {
+      return JSON.stringify(redactDeep(JSON.parse(line)));
+    } catch {
+      return redact(line);
+    }
+  }).join('\n');
+}
 
 /**
  * What Claude Code itself needs inside the sandbox, beyond the lane's own rules. Seen on GitHub's runner (eval-smoke-main
@@ -321,7 +365,7 @@ export function keepTranscripts(config, out) {
       else if (e.name.endsWith('.jsonl')) {
         const dest = path.join(out, path.relative(src, p));
         fs.mkdirSync(path.dirname(dest), { recursive: true });
-        fs.writeFileSync(dest, redact(fs.readFileSync(p, 'utf8')));
+        fs.writeFileSync(dest, redactJsonl(fs.readFileSync(p, 'utf8')));
         kept.push(dest);
       }
     }

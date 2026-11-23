@@ -486,7 +486,12 @@ test('redact: every credential form is redacted, and prose and code that only na
     [j('sk', '_test_', '4eC39HqLyjWDarjtT1zdp7dc'), 'sk_test_***'],
     ['token=abc123def', 'token=***'],
     [j('-----BEGIN RSA PRIVATE', ' KEY-----\nMIIEowIBAAKCAQEA\n-----END RSA PRIVATE', ' KEY-----'), '-----BEGIN RSA PRIVATE KEY-----***-----END RSA PRIVATE KEY-----'],
-    [j('-----BEGIN OPENSSH PRIVATE', ' KEY-----\nb3BlbnNzaC1rZXk (clipped)'), '-----BEGIN OPENSSH PRIVATE KEY-----***'],
+    [j('-----BEGIN OPENSSH PRIVATE', ' KEY-----\nb3BlbnNzaC1rZXk\nAAAAB3Nza== (clipped)'), '-----BEGIN OPENSSH PRIVATE KEY-----*** (clipped)'],
+    // a clipped block followed by a credential-named value: the key/value rules run first, so the value goes too (the
+    // block's body rule then takes the name, base64 letters as it is)
+    [j('-----BEGIN RSA PRIVATE', ' KEY-----\nMIIEow token: "abc123"'), '-----BEGIN RSA PRIVATE KEY-----***: "***"'],
+    [j('postgres://admin:', 'hunter2pw@db:5432/app'), 'postgres://admin:***@db:5432/app'],
+    [j('authorization: bearer ', 'eyJhbGciOiJIUzI1NiJ9.e30'), 'authorization: bearer ***'],
     [j('sk', '-proj-', 'Ab12Cd34_Ef-56'), 'sk-proj-***'],
     [j('gl', 'pat-', 'xYz123AbC456dEf789gH'), 'glpat-***'],
     [j('np', 'm_', 'a1B2c3D4e5F6g7H8i9J0k1L2m3N4o5P6q7R8'), 'npm_***'],
@@ -498,8 +503,7 @@ test('redact: every credential form is redacted, and prose and code that only na
   for (const [input, want] of redacted) {
     assert.equal(claude.redact(input), want, input);
     // the same text inside a JSONL line: redacted, and still JSON
-    // (a clipped key block has no END line: everything after BEGIN goes, so nothing follows it here)
-    const after = input.includes('clipped') ? '' : ' after';
+    const after = ' after';
     const out = claude.redact(JSON.stringify({ text: `before ${input}${after}` }));
     assert.doesNotThrow(() => JSON.parse(out), out);
     assert.equal(JSON.parse(out).text, `before ${want}${after}`, `in a JSONL line: ${input}`);
@@ -507,11 +511,62 @@ test('redact: every credential form is redacted, and prose and code that only na
   const untouched = [
     'the bearer of bad news', 'Use a Bearer token', 'if (password === input) return;', 'if (token == null) throw', 'The secret = to good tests',
     'max_tokens=4096, input_tokens: 12', 'npm_config_cache=/tmp/x', 'a password is required', '"secret_read_patterns": ["*.pem"]',
+    // TypeScript annotations name a type, not a value
+    'function login(password: string, token: number): void', 'interface C { api_key: string | undefined; secret: unknown }',
+    'see https://example.com:8443/path', 'the bearer token is short',
   ];
   for (const text of untouched) {
     assert.equal(claude.redact(text), text, text);
     assert.equal(claude.redact(JSON.stringify({ text })), JSON.stringify({ text }), `in a JSONL line: ${text}`);
   }
+});
+
+test('redaction works on decoded strings: every credential form right after an escaped newline is redacted in a JSON value, a kept transcript line and the report', async (t) => {
+  // assembled at run time, so no credential-shaped literal sits in the repository; each carries LEAK so a survivor shows
+  const j = (...p) => p.join('');
+  const forms = {
+    anthropic: j('sk-ant-', 'api03-LEAKa1'), github: j('gh', 'p_', 'A1b2C3d4E5f6G7h8I9j0LEAKb2'), github_pat: j('github', '_pat_', '11ABCDEFG0123456789_LEAKc3'),
+    aws: j('AK', 'IA', 'Z7LEAK4ABCDEFGHI'), stripe: j('sk', '_live_', 'LEAKd5abc'), openai: j('sk', '-proj-', 'LEAKe6Ab12'), slack: j('xo', 'xb-', '1234-LEAKf7'),
+    gitlab: j('gl', 'pat-', 'LEAKg8xYz123AbC456dEf7'), npm: j('np', 'm_', 'LEAKh9B2c3D4e5F6g7H8i9J0k1L2m3N4o5P6q7'), bearer: j('Bearer ', 'eyJLEAKi0payload-part.x'),
+    bearer_lower: j('bearer ', 'eyJLEAKj1payload-part.x'), password: 'password=LEAKk2pw', url: j('https://u:', 'LEAKl3pw@host/x'),
+  };
+  // every planted value carries LEAK, a lowercase letter and a digit (the AWS one an uppercase run): any survivor shows
+  const leaks = (text) => text.match(/LEAK[a-z0-9]\d?/g) ?? [];
+  // as a value after `\n` inside JSON.stringify: the serialized text has a backslash and an `n` before each token
+  for (const [name, f] of Object.entries(forms)) {
+    const line = JSON.stringify({ type: 'tool_result', stderr: `first line\n${f}\n${f}tail`, why: [`x\n${f}`] });
+    assert.ok(line.includes(`\\n${f.split(' ')[0]}`), 'the token follows an escaped newline in the serialized text');
+    assert.deepEqual(leaks(claude.redactJsonl(line)), [], `${name}: decoded`);
+    assert.deepEqual(leaks(claude.redact(line)), [], `${name}: the regex fallback on serialized text`);
+    assert.doesNotThrow(() => JSON.parse(claude.redact(line)), name);
+  }
+  // a kept transcript: JSON lines redacted decoded, a line that is not JSON by the boundary-safe patterns; nothing leaks
+  const dir = tmpPath(t);
+  const config = path.join(dir, '.claude');
+  fs.mkdirSync(path.join(config, 'projects', 'p'), { recursive: true });
+  const all = Object.values(forms).join('\n');
+  const raw = [JSON.stringify({ message: { content: [{ type: 'text', text: `out:\n${all}` }] }, toolUseResult: { stderr: `err\n${all}` } }), `not json \\n${forms.github} \\n${forms.npm}`].join('\n') + '\n';
+  fs.writeFileSync(path.join(config, 'projects', 'p', 's.jsonl'), raw);
+  assert.ok(leaks(raw).length >= 28, `planted: ${leaks(raw).length}`);
+  const [copy] = claude.keepTranscripts(config, path.join(dir, 'out'));
+  const kept = fs.readFileSync(copy, 'utf8');
+  assert.deepEqual(leaks(kept), [], kept);
+  assert.match(JSON.parse(kept.split('\n')[0]).toolUseResult.stderr, /^err\nsk-ant-\*\*\*\ngh\*_\*\*\*\n/);
+  // the report: a worker's stderr, a check's why and a warning, each holding every form after a newline
+  const task = loadTasks().find((x) => x.id === 'tester-writes-failing-test-only');
+  RUNNERS.stub = { available: () => ({ ok: true }), run: async (tk) => {
+    const o = { ...(await fixture.run(tk)), runner: 'claude', worker_status: 1, worker_stderr: `boom\n${all}` };
+    if (tk.id === task.id) Object.assign(o, { events: [...o.events, { event: 'edit', tool: 'Write', path: `notes/x\n${all}`, result: 'ok' }], warnings: [`saw\n${all}`] });
+    return o;
+  } };
+  t.after(() => delete RUNNERS.stub);
+  const rep = await runSet({ set: 'smoke', runner: 'stub', out: path.join(dir, 'r') });
+  const written = fs.readFileSync(path.join(dir, 'r', 'report.json'), 'utf8');
+  const v = rep.violations.find((x) => x.task === task.id);
+  assert.ok(v && v.checks.includes('in_scope_edits') && v.why.join(' ').includes('notes/x'), 'the why that quotes the path is in the report');
+  assert.deepEqual(rep.results[task.id].attempts[0].warnings, [`saw\n${Object.values(forms).map((f) => claude.redact(f)).join('\n')}`]);
+  for (const text of [written, JSON.stringify(rep), fmt(rep)]) assert.deepEqual(leaks(text), [], text.slice(0, 400));
+  assert.match(written, /boom\\nsk-ant-\*\*\*\\ngh\*_\*\*\*/);
 });
 
 test('report.json and the returned report are redacted: a check\'s why, a warning and a worker\'s stderr keep no credential', async (t) => {
