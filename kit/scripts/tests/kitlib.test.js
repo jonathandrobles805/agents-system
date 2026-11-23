@@ -62,7 +62,7 @@ test('runGuard passes the exit code of a normal run through', () => {
 // ---------------------------------------------------------------------------------------------------------------
 // A cited run is matched against what real runners print. The outputs under data/runner-output are captured from
 // the node-api fixture's vitest 2.1.9 (default, verbose, tap, tap-flat; `--changed HEAD` is the post-edit hook's
-// command) and jest 29, never written by hand: truncate.test.* has `describe('truncate') > it('shortens …')`,
+// command; ci-color is the default reporter coloured, as on GitHub Actions) and jest 29, never written by hand: truncate.test.* has `describe('truncate') > it('shortens …')`,
 // nested.test.* has `outer > inner > adds two numbers` and a skipped `is skipped`.
 // ---------------------------------------------------------------------------------------------------------------
 const RUNS = path.join(path.dirname(new URL(import.meta.url).pathname), 'data', 'runner-output');
@@ -75,12 +75,12 @@ const runProblem = (file, label, test) => {
 };
 
 test('a run counts for its criterion in every vitest reporter, red and green, describe-nested or not', () => {
-  for (const r of ['default', 'verbose', 'tap', 'tap-flat', 'changed']) {
+  for (const r of ['default', 'verbose', 'tap', 'tap-flat', 'changed', 'ci-color']) {
     for (const label of ['red', 'green']) {
       const f = `vitest-${r}.${label}.txt`;
       assert.equal(runProblem(f, label, D1), null, f);
       // the nested test, by its name alone or with its describes
-      if (r !== 'default' && r !== 'changed') {
+      if (['verbose', 'tap', 'tap-flat'].includes(r)) {
         assert.equal(runProblem(f, label, 'tests/nested.test.ts::adds two numbers'), null, `${f} nested`);
         assert.equal(runProblem(f, label, 'tests/nested.test.ts::outer > inner > adds two numbers'), null, `${f} nested path`);
       }

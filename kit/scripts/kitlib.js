@@ -750,6 +750,7 @@ export function sameTest(want, result) {
  *   `ok N - file > describe > name` (https://vitest.dev/guide/reporters).
  * - jest prints `PASS|FAIL file`, then for one file each test indented under its describes (`✓ name (2 ms)`), and
  *   for a failure `● describe › name`.
+ * Colour codes are dropped first: a runner colours its output under CI or a terminal (vitest does on GitHub Actions).
  * A file-level pass (`fileLevel`) is recorded only when the runner says every test in that file passed with none
  * skipped (vitest's count, jest's run summary); a skipped or todo test is never a result.
  */
@@ -770,7 +771,8 @@ export function testResults(lines, patterns) {
     out.push({ ok, name: name.trim(), file: own.file ?? outerFile ?? file, segs });
   };
   for (const raw of lines) {
-    const line = raw.replace(/\s+$/, '');
+    // eslint-disable-next-line no-control-regex
+    const line = raw.replace(/\x1b\[[0-9;]*[A-Za-z]/g, '').replace(/\s+$/, '');
     const t = line.trimStart();
     const indent = line.length - t.length;
     if (!t || t === '}') continue;
