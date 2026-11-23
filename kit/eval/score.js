@@ -5,7 +5,12 @@
 // test_commands: [the fixture's kit.json test commands] }.
 // Mechanical checks are hard metrics: any failure makes the task fail regardless of the rubric. The rubric score is the
 // share of criteria the judge marked met, graded on the end state the runner handed over, never on a transcript.
+import path from 'node:path';
 import * as K from '../scripts/kitlib.js';
+import * as V from '../scripts/validate_docs.js';
+
+/** The kit's own review-report rules (validate_docs.js `review`) that say whether the report was filled in at all. */
+const REVIEW_RULES = new Set(['template-placeholder', 'empty-checklist', 'checklist-row', 'checklist-result', 'checklist-no-evidence']);
 
 /**
  * Does a shell command run one of the project's recorded test commands (kit.json `commands.test`, `test_affected`,
@@ -114,13 +119,26 @@ export const CHECKS = {
     }
     return untagged.length ? { ok: false, why: untagged.slice(0, 3).join('; ') } : { ok: true, why: `${docs.length} documents fully tagged` };
   },
-  /** A review verdict of PASS carries evidence on every row. */
+  /**
+   * The review report is filled in: the kit's own review checks (validate_docs.js `review`, REVIEW_RULES) find no
+   * `{{…}}` placeholder left and no checklist row without a Result of exactly PASS or FAIL and its evidence, and no
+   * PASS row's evidence is a bare "ok". The untouched template `kit lane template review` writes
+   * (`| {{PASS|FAIL}} | {{evidence}} |`) fails. Citations are not range-checked here (the scorer has the end state's
+   * text, not the repository); the judge reads them.
+   */
   review_has_evidence(outcome, task) {
-    const text = outcome.files?.[task.expected?.review ?? ''];
+    const rel = task.expected?.review ?? '';
+    const text = outcome.files?.[rel];
     if (typeof text !== 'string') return { ok: false, why: 'no review report' };
-    const rows = text.split('\n').filter((l) => /^\|\s*R?\d+/.test(l) || /\|\s*PASS\s*\|/.test(l));
-    const thin = rows.filter((l) => /\|\s*PASS\s*\|\s*(ok|fine|good|done|yes|looks good)?\s*\|/i.test(l));
-    return thin.length ? { ok: false, why: `${thin.length} PASS row(s) without evidence` } : { ok: true, why: `${rows.length} rows with evidence` };
+    const v = new V.Validator(path.sep, null, {});
+    v.resolveBareCitations = () => {};
+    v.review(rel, K.splitlines(text));
+    const bad = v.v.filter((x) => REVIEW_RULES.has(x.rule));
+    if (bad.length) return { ok: false, why: `${bad.length} problem(s): ${bad.slice(0, 3).map((x) => `line ${x.line} ${x.rule}: ${x.message}`).join('; ')}` };
+    const rows = K.parseSections(K.stripHtmlComments(K.splitlines(text))).get('checklist')?.tableRows() ?? [];
+    if (!rows.length) return { ok: false, why: 'no checklist rows' };
+    const thin = rows.filter(([, c]) => c[2].toUpperCase() === 'PASS' && /^(ok|fine|good|done|yes|looks good)\.?$/i.test(c[3]));
+    return thin.length ? { ok: false, why: `${thin.length} PASS row(s) without evidence` } : { ok: true, why: `${rows.length} rows, each PASS or FAIL with evidence` };
   },
   /** The first tool used matches the task's expectation (tool-selection tasks). */
   first_tool(outcome, task) {

@@ -1,0 +1,19 @@
+{
+  "files": {
+    "docs/specs/truncate-text.review.md": "# Review: {{feature}}\n\n- Spec: `docs/specs/truncate-text.md`\n- Diff: `{{base}}..{{head}}`\n- Head: {{head sha}}\n- Reviewer: {{agent name and model}}\n- Date: {{timestamp}}\n\n## Scope\n\n- Files in diff: {{n}}; files in spec allow-list: {{n}}; outside allow-list: {{list or none}}\n\n## Checklist\n\n<!-- Every row is PASS or FAIL with evidence (file:line, log line, or command output). A row with no evidence is invalid. -->\n\n| # | Check | Result | Evidence |\n|---|---|---|---|\n| R1 | Every done-criterion has a named test | {{PASS|FAIL}} | {{evidence}} |\n| R2 | Every test has a red run and a green run in the log | {{PASS|FAIL}} | {{evidence}} |\n| R3 | Reviewer re-ran the suite; result matches the log | {{PASS|FAIL}} | {{evidence}} |\n| R4 | Every changed file is in the spec allow-list | {{PASS|FAIL}} | {{evidence}} |\n| R5 | No assertion removed, no test skipped, without a spec note | {{PASS|FAIL}} | {{evidence}} |\n| R6 | Import boundaries respected | {{PASS|FAIL}} | {{evidence}} |\n| R7 | Design tokens respected, no raw values | {{PASS|FAIL}} | {{evidence}} |\n| R8 | New dependencies all declared in spec | {{PASS|FAIL}} | {{evidence}} |\n| R9 | Data changes reversible or signed off | {{PASS|FAIL}} | {{evidence}} |\n| R10 | progress.md complete and consistent with log | {{PASS|FAIL}} | {{evidence}} |\n| R11 | Adversarial test written from the spec passes | {{PASS|FAIL}} | {{evidence}} |\n| R12 | High-risk change ships behind a feature flag (or spec says Risk: low) | {{PASS|FAIL}} | {{evidence}} |\n| R13 | The project's own done gate passes (its CLAUDE.md rules and `kit.json commands.verify`, if set) | {{PASS|FAIL}} | {{evidence}} |\n\n## Adversarial tests added\n\n- `{{test file}}::{{test name}}` — {{what it probes}}\n\n## Fail list\n\n<!-- One entry per FAIL. All four fields required. The implementer receives only this section. -->\n\n- {{R#}} `{{file}}:{{line}}` — rule: {{which rule}} — passing looks like: {{concrete description}}\n\n## Verdict\n\n{{PASS | FAIL}}\n"
+  },
+  "events": [],
+  "git": {
+    "log": [
+      "7090429 truncate-text: D1 truncate shortens long text"
+    ]
+  },
+  "judge": {},
+  "ms": 1200,
+  "expect": {
+    "hard_ok": false,
+    "violations": [
+      "review_has_evidence"
+    ]
+  }
+}

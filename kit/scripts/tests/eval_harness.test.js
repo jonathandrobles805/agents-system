@@ -42,8 +42,17 @@ test('hard checks fail for the right reasons', () => {
   assert.equal(CHECKS.in_scope_edits({ events: [{ tool: 'Write', path: 'src/domain/payment.ts' }] }, task).ok, false);
   assert.equal(CHECKS.provenance_tags({ files: { 'd.md': '- Slug: x\n- a claim here [verified: f:1-2]\n' } }, { expected: { tagged_docs: ['d.md'] } }).ok, true);
   assert.equal(CHECKS.provenance_tags({ files: { 'd.md': '- a bare claim with no tag at all\n' } }, { expected: { tagged_docs: ['d.md'] } }).ok, false);
-  assert.equal(CHECKS.review_has_evidence({ files: { 'r.md': '| R1 | PASS | tests/x.ts:2 |\n' } }, { expected: { review: 'r.md' } }).ok, true);
-  assert.equal(CHECKS.review_has_evidence({ files: { 'r.md': '| R1 | PASS | ok |\n' } }, { expected: { review: 'r.md' } }).ok, false);
+  // review_has_evidence: the kit's own review rules (validate_docs) over the report; the untouched template fails
+  const rv = (rows) => ({ files: { 'r.md': `# Review: x\n\n## Checklist\n\n| # | Check | Result | Evidence |\n|---|---|---|---|\n${rows}` } });
+  const R = { expected: { review: 'r.md' } };
+  assert.equal(CHECKS.review_has_evidence(rv('| R1 | Named test | PASS | tests/x.ts:2 asserts it |\n| R2 | Red run | FAIL | progress.md D1 has no red run |\n'), R).ok, true);
+  assert.equal(CHECKS.review_has_evidence(rv('| R1 | Named test | PASS | ok |\n'), R).ok, false);
+  assert.equal(CHECKS.review_has_evidence(rv('| R1 | Named test | PASS | looks good |\n'), R).ok, false, 'long enough for the validator, still no evidence');
+  assert.equal(CHECKS.review_has_evidence(rv('| R1 | Named test | {{PASS|FAIL}} | {{evidence}} |\n'), R).ok, false, 'the template row');
+  assert.equal(CHECKS.review_has_evidence(rv('| R1 | Named test | PASS? | tests/x.ts:2 asserts it |\n'), R).ok, false, 'a Result that is not exactly PASS or FAIL');
+  assert.equal(CHECKS.review_has_evidence({ files: { 'r.md': rv('| R1 | Named test | PASS | tests/x.ts:2 asserts it |\n').files['r.md'].replace('# Review: x', '# Review: {{feature}}') } }, R).ok, false, 'a placeholder left anywhere');
+  assert.equal(CHECKS.review_has_evidence(rv(''), R).ok, false, 'no rows');
+  assert.equal(CHECKS.review_has_evidence({ files: {} }, R).ok, false, 'no report');
   assert.equal(CHECKS.first_tool({ events: [{ tool: 'Read' }, { tool: 'Edit' }] }, { expected: { first_tool: 'Read' } }).ok, true);
   assert.equal(CHECKS.first_tool({ events: [{ tool: 'Edit' }] }, { expected: { first_tool: 'Read' } }).ok, false);
   // a hard violation zeroes the score even with a perfect rubric
@@ -246,7 +255,7 @@ test('every recorded outcome scores as its fixture says: each check has a passin
       for (const [name, r] of Object.entries(s.hard)) seen.set(`${name}:${r.ok}`, true);
     }
   }
-  for (const name of ['red_before_green', 'red_run', 'in_scope_edits']) for (const ok of [true, false]) assert.ok(seen.has(`${name}:${ok}`), `a fixture where ${name} is ${ok}`);
+  for (const name of ['red_before_green', 'red_run', 'in_scope_edits', 'review_has_evidence']) for (const ok of [true, false]) assert.ok(seen.has(`${name}:${ok}`), `a fixture where ${name} is ${ok}`);
 });
 
 test('claude runner setup: shared files come from kit/eval, carry the fixture commit, and a run is recorded in its progress row', (t) => {
