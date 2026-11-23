@@ -663,7 +663,8 @@ process.stderr.write('fake gh: unexpected ' + j); process.exit(9);
     // 53 an agent merges (or lifts the kill switch) through `kit` in a form the permission ask rule does not match, so
     //    Claude Code would approve it under Bash(kit *) without asking the owner (#106 review)
     const forms53 = ['kit lane -- merge --pr 4 --by x', "kit lane 'merge' footer --by x", 'kit  lane merge footer --by x', 'kit lane -- resume-all --by x',
-      "echo 'merge footer --by x' | xargs kit lane", "stdbuf -o0 kit lane 'merge' footer", "for i in 1; do kit lane 'merge' footer; done", 'kit lane $(echo merge) footer'];
+      "echo 'merge footer --by x' | xargs kit lane", "stdbuf -o0 kit lane 'merge' footer", "for i in 1; do kit lane 'merge' footer; done", 'kit lane $(echo merge) footer',
+      `echo "$(kit lane 'merge' footer)"`, "kit>/dev/null lane 'merge' footer", 'echo kit lane merge; kit lane  merge footer'];
     const r53 = forms53.map((c) => hook('hook_guard_bash.js', { ...base, hook_event_name: 'PreToolUse', tool_name: 'Bash', tool_input: { command: c } }));
     const plain53 = hook('hook_guard_bash.js', { ...base, hook_event_name: 'PreToolUse', tool_name: 'Bash', tool_input: { command: 'kit lane merge footer --by Jonathan' } });
     const args53 = run('lane.js', ['--', 'merge', '--by', 'x']);

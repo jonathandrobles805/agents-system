@@ -65,43 +65,66 @@ export const URL_IN = /(?:https?:\/\/|\/\/)([A-Za-z0-9._-]+\.[A-Za-z]{2,})/gu;
 
 /** The reason a fetch must not run in this lane, or null when every host it names is declared. */
 /**
- * The simple commands of a shell line, each as words with quotes removed and the raw text of each word, split on
- * unquoted `;`, `&`, `|`, newlines and parentheses. Not a full shell parser: enough to see which program a command
- * runs and how its words were written.
+ * The simple commands of a shell line, each a list of words `{ value, raw, start, end }` (offsets into `line`), split
+ * on `; & | ( )`, and newlines outside quotes (a backtick stays in its word, so it is never plain). Quotes and backslashes are removed from `value` and kept in
+ * `raw`. Redirections (`>f`, `2>&1`, `<f`) are dropped with their target. `cont` marks a command continued over a
+ * backslash-newline. Command substitutions inside double quotes are not split here; `substitutionBodies` finds them.
  */
 export function shellCommands(line) {
   const cmds = [];
   let words = [];
-  let cur = null; // { value, raw }
+  let cont = false;
+  let cur = null;
   let q = null;
+  let redirect = false;
+  const word = (i) => (cur = cur ?? { value: '', raw: '', start: i, end: i });
   const endWord = () => {
-    if (cur !== null) words.push(cur);
+    if (cur !== null && !redirect) words.push(cur);
+    else if (cur !== null) redirect = false;
     cur = null;
   };
   const endCmd = () => {
     endWord();
-    if (words.length) cmds.push(words);
+    redirect = false;
+    if (words.length) cmds.push(Object.assign(words, { cont }));
     words = [];
+    cont = false;
   };
   for (let i = 0; i < line.length; i++) {
     const c = line[i];
     if (q) {
       cur.raw += c;
+      cur.end = i + 1;
       if (c === q) q = null;
-      else if (c === '\\' && q === '"' && i + 1 < line.length) cur.value += line[++i], (cur.raw += line[i]);
+      else if (c === '\\' && q === '"' && i + 1 < line.length) (cur.value += line[++i]), (cur.raw += line[i]), (cur.end = i + 1);
       else cur.value += c;
       continue;
     }
+    if (c === '\\' && line[i + 1] === '\n') {
+      endWord();
+      cont = true;
+      i++;
+      continue;
+    }
     if (c === "'" || c === '"') {
-      cur = cur ?? { value: '', raw: '' };
+      word(i);
       cur.raw += c;
+      cur.end = i + 1;
       q = c;
       continue;
     }
     if (c === '\\' && i + 1 < line.length) {
-      cur = cur ?? { value: '', raw: '' };
+      word(i);
       cur.raw += c + line[i + 1];
       cur.value += line[++i];
+      cur.end = i + 1;
+      continue;
+    }
+    if (c === '>' || c === '<') {
+      if (cur !== null && /^\d+$/.test(cur.raw)) cur = null; // the fd of `2>`
+      endWord();
+      while ('<>&|'.includes(line[i + 1] ?? 'x') && line[i + 1] !== undefined) i++;
+      redirect = true;
       continue;
     }
     if (';&|\n()'.includes(c)) {
@@ -112,40 +135,83 @@ export function shellCommands(line) {
       endWord();
       continue;
     }
-    cur = cur ?? { value: '', raw: '' };
+    word(i);
     cur.raw += c;
     cur.value += c;
+    cur.end = i + 1;
   }
   endCmd();
   return cmds;
 }
 
+/** The bodies of every `$(…)` and `` `…` `` in a line, outside single quotes (inside double quotes too). */
+export function substitutionBodies(line) {
+  const out = [];
+  let q = null;
+  for (let i = 0; i < line.length; i++) {
+    const c = line[i];
+    if (c === '\\' && q !== "'") { i++; continue; }
+    if (q === "'") { if (c === "'") q = null; continue; }
+    if (c === "'" && !q) { q = "'"; continue; }
+    if (c === '"') { q = q ? null : '"'; continue; }
+    if (c === '`') {
+      let j = i + 1;
+      while (j < line.length && line[j] !== '`') j += line[j] === '\\' ? 2 : 1;
+      out.push(line.slice(i + 1, j));
+      i = j;
+      continue;
+    }
+    if (c === '$' && line[i + 1] === '(') {
+      let depth = 1;
+      let j = i + 2;
+      let sq = false;
+      for (; j < line.length && depth; j++) {
+        if (line[j] === "'") sq = !sq;
+        else if (!sq && line[j] === '\\') j++;
+        else if (!sq && line[j] === '(') depth++;
+        else if (!sq && line[j] === ')') depth--;
+      }
+      out.push(line.slice(i + 2, depth ? j : j - 1));
+      i = (depth ? j : j - 1);
+    }
+  }
+  return out;
+}
+
+// what may stand before the program in a simple command: assignments, the wrappers Claude Code strips (and env/exec),
+// their options and the plain values those options take
+const BEFORE_PROGRAM = /^(!|\{|if|then|else|elif|do|while|until|[A-Za-z_][A-Za-z0-9_]*=.*|timeout|time|nice|nohup|stdbuf|command|builtin|noglob|xargs|env|exec|-.*|[0-9.]+[smhd]?|[A-Z]+)$/;
+const DECISIONS = [['bootstrap'], ['lane', 'merge'], ['lane', 'resume-all']];
+
 /**
- * The owner's decisions run through `kit` behind permission ask rules (`Bash(kit lane merge *)`,
- * `Bash(kit lane resume-all *)`, `Bash(kit bootstrap *)`). Claude Code matches those rules against the command as
- * written, after stripping wrappers (`timeout`, `stdbuf`, `xargs`, …) and checking loop and group bodies on their own,
- * so a computed or disguised word (`kit lane -- merge`, `kit lane 'merge'`, `kit lane $(echo merge)`,
- * `echo merge | xargs kit lane`) would match only `Bash(kit *)` and run without asking (#106 review). Rather than
- * chase every wrapper, any `kit` word anywhere in a command must be followed by plain words: the script name, and
- * for `lane` the subcommand, written as typed (lowercase letters, digits, `_`/`-`, no quotes, `$`, backticks,
- * backslashes or globs). `xargs … kit` is refused outright: its arguments come from stdin, where nothing can see
- * them, and no agent needs it. A guardrail, not a wall (Step 8 is the wall).
+ * Why a line runs a kit command in a form Claude Code's ask rules (`Bash(kit lane merge *)`, …) might not match, or
+ * null. `kit` counts only where it is the program of a simple command (after assignments and wrappers), in the line
+ * or in any command substitution. Such a command must name its script, and for `lane` its subcommand, as plain
+ * lowercase words; an owner's decision must be written exactly `kit lane merge` (single spaces, nothing between; what follows is the
+ * ask rule's `*`); it
+ * must not run through xargs or continue over a backslash-newline. A guardrail: the container (Step 8) is the wall.
  */
-export function kitDecisionDisguised(line) {
-  if (/kit[^\n]*\\\n/.test(line) && /(^|[\s;&|(`])kit\b/.test(line)) return 'a kit command continued over a backslash-newline; write it on one line';
+export function kitDecisionDisguised(line, depth = 0) {
   for (const words of shellCommands(line)) {
-    const k = words.findIndex((w) => w.value === 'kit' || w.raw === 'kit');
+    const k = words.findIndex((w, i) => (w.value === 'kit' || w.raw === 'kit') && words.slice(0, i).every((x) => BEFORE_PROGRAM.test(x.value)));
     if (k < 0) continue;
     const plainWord = (w, re) => w !== undefined && w.raw === w.value && re.test(w.value);
     if (words.slice(0, k).some((w) => w.value === 'xargs')) return 'running kit through xargs (its arguments are not visible to the permission prompt); run the kit command directly';
     const [kitWord, script, sub] = [words[k], words[k + 1], words[k + 2]];
-    if (kitWord.raw !== 'kit') return 'the kit launcher written in a quoted or escaped form; write it plainly as `kit <script> …`';
+    if (kitWord.raw !== 'kit') return `the kit command written in a quoted or escaped form (${kitWord.raw}); write it plainly as \`kit <script> …\``;
+    if (words.cont) return 'a kit command continued over a backslash-newline; write it on one line';
     if (script === undefined) continue;
     if (!plainWord(script, /^[a-z0-9_]+$/)) return `a kit script name written in a computed or quoted form (${script.raw}); write it plainly as \`kit <script> …\``;
-    if (script.value === 'lane' && sub !== undefined && !plainWord(sub, /^[a-z][a-z0-9-]*$/)) return `a kit lane subcommand written in a computed or quoted form (${sub.raw}); write it plainly as \`kit lane <subcommand> …\` so a decision such as merge reaches the owner's prompt`;
-    // a decision written plainly must also be spelt with single spaces, which is what the ask rule matches
-    const decision = script.value === 'bootstrap' ? ['kit', 'bootstrap'] : script.value === 'lane' && sub && ['merge', 'resume-all'].includes(sub.value) ? ['kit', 'lane', sub.value] : null;
-    if (decision && !line.includes(decision.join(' '))) return `the owner's decision (${decision.slice(1).join(' ')}) written in a form the permission prompt does not match; write it plainly as \`${decision.join(' ')} …\``;
+    if (script.value === 'lane' && sub !== undefined && !plainWord(sub, /^[a-z][a-z0-9-]*$/)) return `a kit lane subcommand written in a computed or quoted form (${sub.raw}); write it plainly as \`kit lane <subcommand> …\``;
+    const decision = DECISIONS.find((d) => d.every((x, i) => words[k + 1 + i]?.value === x));
+    if (decision) {
+      const want = ['kit', ...decision].join(' ');
+      if (line.slice(kitWord.start, words[k + decision.length].end) !== want) return `the owner's decision (${want}) written with extra spacing or text between its words; write it plainly as \`${want} …\``;
+    }
+  }
+  if (depth < 4) for (const body of substitutionBodies(line)) {
+    const why = kitDecisionDisguised(body, depth + 1);
+    if (why) return why;
   }
   return null;
 }
