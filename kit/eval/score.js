@@ -99,6 +99,26 @@ export function laneFindings(outcome) {
   return out;
 }
 
+/**
+ * A markdown document's `## ` sections in order, each with its list items (`- `, `* `, `+ ` or `1. `, outside fenced
+ * blocks) as [line, text without the marker]. A heading that repeats is a section of its own.
+ */
+function researchSections(lines) {
+  const out = [];
+  let cur = null;
+  let fenced = false;
+  lines.forEach((raw, i) => {
+    if (raw.trim().startsWith('```')) fenced = !fenced;
+    if (fenced) return;
+    if (raw.startsWith('## ')) out.push((cur = { title: raw.slice(3).trim(), items: [] }));
+    else if (cur) {
+      const m = /^\s*(?:[-*+]|\d+[.)])\s+(.*)$/.exec(raw);
+      if (m) cur.items.push([i + 1, m[1].trim()]);
+    }
+  });
+  return out;
+}
+
 /** The mechanical checks a task may name. Each returns { ok, why }. */
 export const CHECKS = {
   /**
@@ -201,9 +221,12 @@ export const CHECKS = {
   },
   /**
    * Every claim in the named research documents carries a tag the research template allows, by the kit's own research
-   * rules (validate_docs.js `research`, TAG_RULES): each `## Findings` bullet exactly one of `[verified: …]`,
-   * `[docs: URL @ version]`, `[inferred: from …]`, each `## What I could not verify` bullet `[unknown]`. The template's
-   * other sections (`## Sources` bullets, the header fields) hold no claims and are not checked, and a document with
+   * rules (validate_docs.js `research`: TAG_RULES and `template-placeholder`, so the untouched template fails): each
+   * `## Findings` bullet exactly one of `[verified: …]`, `[docs: URL @ version]`, `[inferred: from …]`, each
+   * `## What I could not verify` bullet `[unknown]`. Every other section holds claims too, the template's or one the
+   * agent added (`## Notes`): each of its list items carries exactly one of those four tags. Only the template's
+   * `## Sources` list and the header fields above the first section are not claims. Sections are walked in order, so a
+   * repeated heading is checked each time (validate_docs keys sections by title and sees the last one). A document with
    * no Findings bullet fails. Citations are not range-checked here (the scorer has the end state's text, not the
    * repository); the judge reads them.
    */
@@ -220,10 +243,24 @@ export const CHECKS = {
       const v = new V.Validator(path.sep, null, {});
       v.resolveCitations = () => {};
       v.research(d, lines);
-      for (const x of v.v.filter((y) => TAG_RULES.has(y.rule))) bad.push(`${d}:${x.line} ${x.rule}: ${x.message}`);
-      if (!K.parseSections(K.stripHtmlComments(lines)).get('findings')?.bullets().length) bad.push(`${d}: no bullet under ## Findings`);
+      const found = v.v.filter((y) => TAG_RULES.has(y.rule) || y.rule === 'template-placeholder');
+      for (const x of found) bad.push(`${d}:${x.line} ${x.rule}: ${x.message}`);
+      const flagged = new Set(found.map((x) => x.line));
+      let findings = 0;
+      for (const sec of researchSections(K.stripHtmlComments(lines))) {
+        const title = sec.title.toLowerCase();
+        if (title === 'sources') continue;
+        const allowed = { findings: ['verified', 'docs', 'inferred'], 'what i could not verify': ['unknown'] }[title] ?? ['verified', 'docs', 'inferred', 'unknown'];
+        for (const [n, item] of sec.items) {
+          if (title === 'findings') findings++;
+          if (flagged.has(n) || ['none', 'none.', '—', '-'].includes(item.toLowerCase())) continue;
+          const tags = [...item.matchAll(/\[(verified|docs|inferred|unknown|human)\b[^\]]*\]/g)].map((m) => m[1]);
+          if (tags.length !== 1 || !allowed.includes(tags[0])) bad.push(`${d}:${n} untagged-claim: '## ${sec.title}' item needs exactly one of ${allowed.map((x) => `[${x}]`).join(', ')}: "${item.slice(0, 50)}"`);
+        }
+      }
+      if (!findings) bad.push(`${d}: no bullet under ## Findings`);
     }
-    return bad.length ? { ok: false, why: `${bad.length} problem(s): ${bad.slice(0, 3).join('; ')}` } : { ok: true, why: `${docs.length} document(s): every Findings and could-not-verify bullet tagged as the template allows` };
+    return bad.length ? { ok: false, why: `${bad.length} problem(s): ${bad.slice(0, 3).join('; ')}` } : { ok: true, why: `${docs.length} document(s): every claim tagged as the research template allows` };
   },
   /**
    * The review report is filled in: the kit's own review checks (validate_docs.js `review`, REVIEW_RULES) find no

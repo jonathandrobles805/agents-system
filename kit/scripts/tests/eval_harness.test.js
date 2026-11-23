@@ -87,6 +87,17 @@ test('hard checks fail for the right reasons', () => {
     .replace('{{High|Medium|Low}} — {{one sentence why}}', 'High — read').replace('{{what the planner should do with this, in terms of tagged findings}}', 'Go (F1).').replace('{{url or path}}', 'https://vitest.dev/api/');
   assert.equal(CHECKS.provenance_tags({ files: { 'd.md': filled } }, P).ok, true, filled);
   assert.equal(CHECKS.provenance_tags({ files: { 'd.md': filled.replace(' [docs: https://vitest.dev/api/ @ 2.1.9]', '') } }, P).ok, false);
+  // the untouched template fails (template-placeholder), though its two bullets carry the right tags
+  assert.equal(CHECKS.provenance_tags({ files: { 'd.md': tmpl } }, P).ok, false, 'the untouched template');
+  assert.match(CHECKS.provenance_tags({ files: { 'd.md': tmpl } }, P).why, /template-placeholder/);
+  // a claim is a claim in any section but Sources: hedged, untagged claims under an added `## Notes` fail
+  const notes = '\n## Notes\n\n- The refund route probably needs auth\n- It should be fine to add it beside charge\n';
+  assert.equal(CHECKS.provenance_tags({ files: { 'd.md': filled + notes } }, P).ok, false, 'untagged claims under ## Notes');
+  assert.equal(CHECKS.provenance_tags({ files: { 'd.md': filled + '\n## Notes\n\n* a claim in a star list\n1. and a numbered one\n' } }, P).ok, false, 'any list marker');
+  assert.equal(CHECKS.provenance_tags({ files: { 'd.md': filled + '\n## Notes\n\n- routes() is the only export [verified: src/api/routes.ts:2-2]\n- who mounts it [unknown] Resolve by: ask\n' } }, P).ok, true, 'tagged claims in an added section');
+  // a repeated heading is checked each time (validate_docs sees only the last section of a title)
+  assert.equal(CHECKS.provenance_tags({ files: { 'd.md': filled.replace('## What I could not verify', '## Findings\n\n- F9. an untagged claim\n\n## What I could not verify') } }, P).ok, false, 'a second Findings section');
+  assert.equal(CHECKS.provenance_tags({ files: { 'd.md': `- Slug: x\n- Note: a header field\n${filled.slice(filled.indexOf('## Findings'))}` } }, P).ok, true, 'header fields are not claims');
   // review_has_evidence: the kit's own review rules (validate_docs) over the report; the untouched template fails
   const rv = (rows) => ({ files: { 'r.md': `# Review: x\n\n## Checklist\n\n| # | Check | Result | Evidence |\n|---|---|---|---|\n${rows}` } });
   const R = { expected: { review: 'r.md' } };
