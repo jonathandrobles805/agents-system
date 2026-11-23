@@ -5,6 +5,29 @@
     "smoke"
   ],
   "fixture": "node-api",
+  "setup": {
+    "files": {
+      "docs/specs/refund-route.md": {
+        "from": "setups/refund-route/spec.approved.md"
+      }
+    },
+    "kit_json": {
+      "sandbox": {
+        "high_risk_waiver": {
+          "by": "kit-eval",
+          "reason": "the spec is high-risk (it names the payment service) and the eval runs every lane under srt; no container runtime on the eval host"
+        }
+      }
+    },
+    "lane": {
+      "slug": "refund-route",
+      "steps": [
+        {
+          "stage": "test"
+        }
+      ]
+    }
+  },
   "goal": "From the approved spec, write the failing test for D1 in tests/routes.test.ts. Do not touch source files.",
   "checks": [
     "in_scope_edits",

@@ -11,7 +11,10 @@ import { CORE_ROLES, compare, fmt, loadTasks, runSet, selectTasks, summarize, wr
 import { CHECKS, score, testCommandIn, testRuns } from '../../eval/score.js';
 import * as fixture from '../../eval/runners/fixture.js';
 import * as claude from '../../eval/runners/claude.js';
-import { tmpPath } from './helpers.js';
+import * as K from '../kitlib.js';
+import * as V from '../validate_docs.js';
+import * as F from './fixtures.js';
+import { setEnv, tmpPath } from './helpers.js';
 
 const impl = () => loadTasks().find((t) => t.id === 'implementer-red-then-green');
 
@@ -160,7 +163,8 @@ test('claude runner: each session gets its own home with the kit installed, a wr
   }
   assert.match(fs.readFileSync(path.join(ownerBin, 'kit'), 'utf8'), /KIT_DIR='\/owner\/\.claude\/kit'/);
   // a home and a temp directory in the eval's scratch space, writable in the sandbox, handed to Claude Code
-  assert.deepEqual({ ...home.env, PATH: undefined }, { HOME: path.join(dir, 'home'), CLAUDE_CONFIG_DIR: path.join(dir, 'home', '.claude'), CLAUDE_CODE_TMPDIR: path.join(dir, 'claude-tmp'), PATH: undefined });
+  // zsh reads its startup files from the session's home too, never from an owner's inherited ZDOTDIR
+  assert.deepEqual({ ...home.env, PATH: undefined }, { HOME: path.join(dir, 'home'), ZDOTDIR: path.join(dir, 'home'), CLAUDE_CONFIG_DIR: path.join(dir, 'home', '.claude'), CLAUDE_CODE_TMPDIR: path.join(dir, 'claude-tmp'), PATH: undefined });
   assert.deepEqual(home.allowWrite, [home.env.HOME, home.env.CLAUDE_CODE_TMPDIR]);
   for (const d of home.allowWrite) assert.ok(fs.statSync(d).isDirectory(), d);
   assert.deepEqual(home.allowedDomains, ['api.anthropic.com']);
@@ -241,3 +245,78 @@ test('every recorded outcome scores as its fixture says: each check has a passin
   for (const name of ['red_before_green', 'red_run', 'in_scope_edits']) for (const ok of [true, false]) assert.ok(seen.has(`${name}:${ok}`), `a fixture where ${name} is ${ok}`);
 });
 
+test('claude runner setup: shared files come from kit/eval, carry the fixture commit, and a run is recorded in its progress row', (t) => {
+  assert.equal(claude.setupText('at {{eval:head}}', 'abc1234'), 'at abc1234');
+  assert.match(claude.setupText({ from: 'setups/refund-route/spec.approved.md' }, 'abc1234'), /^Approved by: kit-eval on \d{4}-\d\d-\d\d at abc1234$/m);
+  assert.throws(() => claude.setupText({ from: '../../package.json' }, 'x'), /neither text nor/);
+  const p = path.join(tmpPath(t), 'p.md');
+  fs.writeFileSync(p, '| # | Criterion | Test | Red run | Green run |\n|---|---|---|---|---|\n| D1 | a | `t::x` | — | — |\n| D10 | b | `t::y` | — | — |\n');
+  claude.setProgressCell(p, 'D1', 'red', 'lane.log#1');
+  claude.setProgressCell(p, 'D1', 'green', 'lane.log#9');
+  assert.deepEqual(fs.readFileSync(p, 'utf8').split('\n').slice(2, 4), ['| D1 | a | `t::x` | lane.log#1 | lane.log#9 |', '| D10 | b | `t::y` | — | — |']);
+  assert.throws(() => claude.setProgressCell(p, 'D2', 'red', 'x'), /no row D2/);
+});
+
+test('every setup spec the benchmarks share is valid by the kit\'s own validator', (t) => {
+  const root = F.nodeApi(path.join(tmpPath(t), 'node-api'));
+  const head = F.git(['rev-parse', 'HEAD'], root).trim();
+  const dir = path.join(path.dirname(path.dirname(fileURLToPath(import.meta.url))), '..', 'eval', 'setups', 'refund-route');
+  for (const f of fs.readdirSync(dir).filter((x) => x.startsWith('spec.'))) {
+    fs.mkdirSync(path.join(root, 'docs', 'specs'), { recursive: true });
+    fs.writeFileSync(path.join(root, 'docs', 'specs', 'refund-route.md'), claude.setupText({ from: `setups/refund-route/${f}` }, head));
+    const v = new V.Validator(root, null, { high_risk_paths: K.DEFAULT_HIGH_RISK_PATHS, commands: { test: 'npx vitest run' } });
+    v.run(path.join(root, 'docs', 'specs', 'refund-route.md'), 'spec');
+    assert.deepEqual(v.v, [], f);
+  }
+});
+
+test('claude runner end to end with a stand-in claude: the worker runs as the kit agent in the lane the setup made, the judge as no agent, transcripts kept and redacted', async (t) => {
+  const dir = tmpPath(t);
+  const bin = path.join(dir, 'bin');
+  const log = path.join(dir, 'calls.jsonl');
+  fs.mkdirSync(bin);
+  // srt stand-in: runs what follows `--` (the real sandbox is proven by sandbox.js probe and the eval-smoke-main run)
+  fs.writeFileSync(path.join(bin, 'srt'), '#!/bin/sh\nwhile [ "$1" != "--" ]; do shift; done\nshift\nexec "$@"\n', { mode: 0o755 });
+  // claude stand-in: records its argv and cwd, writes a transcript holding a key, and in a lane appends one hook event
+  fs.writeFileSync(path.join(bin, 'claude'), `#!/usr/bin/env node
+const fs = require('fs'), path = require('path');
+fs.appendFileSync(${JSON.stringify(log)}, JSON.stringify({ argv: process.argv.slice(2), cwd: process.cwd(), judge: !!process.env.KIT_EVAL_JUDGE, zdotdir: process.env.ZDOTDIR, home: process.env.HOME }) + '\\n');
+const t = path.join(process.env.CLAUDE_CONFIG_DIR, 'projects', 'p');
+fs.mkdirSync(t, { recursive: true });
+fs.writeFileSync(path.join(t, 's.jsonl'), JSON.stringify({ type: 'user', text: 'key sk-ant-api03-abcdefSECRET in a tool result' }) + '\\n');
+if (fs.existsSync('.claude/lane.json')) fs.appendFileSync('docs/specs/refund-route.events.jsonl', JSON.stringify({ event: 'bash', tool: 'Bash', command: 'npx vitest run tests/routes.test.ts', result: 'fail' }) + '\\n');
+process.stdout.write(process.env.KIT_EVAL_JUDGE ? '{"r1": 1}' : 'done');
+`, { mode: 0o755 });
+  setEnv(t, 'PATH', `${bin}${path.delimiter}${process.env.PATH}`);
+  setEnv(t, 'KIT_SANDBOX_RUNTIME', 'srt');
+  setEnv(t, 'ANTHROPIC_API_KEY', 'sk-ant-fake');
+  const task = loadTasks().find((x) => x.id === 'tester-writes-failing-test-only');
+  const out = path.join(dir, 'transcripts');
+  const o = await claude.run(task, { transcripts: out });
+  const [worker, judge] = fs.readFileSync(log, 'utf8').trim().split('\n').map((l) => JSON.parse(l));
+  assert.equal(worker.judge, false);
+  assert.deepEqual(worker.argv.slice(-2), ['--agent', 'tester'], worker.argv.join(' '));
+  assert.deepEqual(o.worker_command.slice(-2), ['--agent', 'tester']);
+  assert.ok(!judge.argv.includes('--agent'), `the judge runs as no kit agent: ${judge.argv.join(' ')}`);
+  assert.equal(judge.judge, true);
+  // the worker ran in the lane's worktree, which lane.js start made from the approved spec; zsh's startup files come from the session's home
+  assert.match(worker.cwd, /node-api-lanes[\\/]refund-route$/);
+  assert.equal(worker.zdotdir, worker.home);
+  assert.ok(!judge.cwd.includes('node-api'));
+  // the session's events only: the one the stand-in's hook wrote, none of the setup's; scored as the tester's red run
+  assert.deepEqual(o.events.map((e) => e.event), ['bash']);
+  assert.deepEqual(o.test_commands, ['npx vitest run', 'npx vitest run --changed HEAD', 'npx vitest run {file}']);
+  assert.equal(score(task, o).hard.red_run.ok, true);
+  assert.ok('docs/specs/refund-route.md' in o.files && 'docs/specs/refund-route.progress.md' in o.files);
+  assert.deepEqual(o.judge, { r1: 1 });
+  // transcripts: one per session, redacted
+  assert.deepEqual([o.transcripts.worker, o.transcripts.judge].map((x) => x.map((f) => path.relative(out, f))), [[path.join('worker', 'p', 's.jsonl')], [path.join('judge', 'p', 's.jsonl')]]);
+  for (const f of [...o.transcripts.worker, ...o.transcripts.judge]) {
+    const text = fs.readFileSync(f, 'utf8');
+    assert.ok(!text.includes('SECRET') && text.includes('sk-ant-***'), text);
+  }
+  // a kit agent only when the session's home has it installed
+  assert.equal(claude.kitAgent({ role: 'tester' }, null), null);
+  assert.equal(claude.kitAgent({ role: 'no-such-agent' }, { config: path.join(dir, 'nothing') }), null);
+  assert.equal(claude.kitAgent({ role: '../x' }, { config: dir }), null);
+});

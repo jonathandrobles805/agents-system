@@ -5,6 +5,66 @@
     "smoke"
   ],
   "fixture": "node-api",
+  "setup": {
+    "files": {
+      "docs/specs/refund-route.md": {
+        "from": "setups/refund-route/spec.approved.md"
+      }
+    },
+    "kit_json": {
+      "sandbox": {
+        "high_risk_waiver": {
+          "by": "kit-eval",
+          "reason": "the spec is high-risk (it names the payment service) and the eval runs every lane under srt; no container runtime on the eval host"
+        }
+      }
+    },
+    "lane": {
+      "slug": "refund-route",
+      "steps": [
+        {
+          "stage": "test"
+        },
+        {
+          "write": {
+            "tests/routes.test.ts": {
+              "from": "setups/refund-route/routes.test.ts"
+            }
+          }
+        },
+        {
+          "check": "D1",
+          "command": "npx vitest run --reporter=tap tests/routes.test.ts",
+          "record": "red"
+        },
+        {
+          "stage": "build"
+        },
+        {
+          "write": {
+            "src/api/routes.ts": {
+              "from": "setups/refund-route/routes.ts"
+            }
+          }
+        },
+        {
+          "check": "D1",
+          "command": "npx vitest run --reporter=tap tests/routes.test.ts",
+          "record": "green"
+        },
+        {
+          "commit": "refund-route: D1 routes expose refund"
+        },
+        {
+          "stage": "review"
+        },
+        {
+          "template": "review",
+          "to": "docs/specs/refund-route.review.md"
+        }
+      ]
+    }
+  },
   "goal": "Review the refund-route lane: fill docs/specs/refund-route.review.md with a verdict per checklist row and evidence for each PASS.",
   "checks": [
     "review_has_evidence",

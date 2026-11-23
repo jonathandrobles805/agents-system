@@ -26,20 +26,103 @@ export function available(env = process.env) {
   return { ok: true, why: `claude on PATH, key present, sandbox ${det.runtime}` };
 }
 
-function fixtureRepo(task, dir, claudeHome) {
+/**
+ * A setup file's text: a string, or `{ "from": "<path under kit/eval>" }` for a file several tasks share. In either,
+ * `{{eval:head}}` becomes the fixture's commit the setup is written against (a spec's Commit and approval lines).
+ */
+export function setupText(value, head) {
+  let text = value;
+  if (typeof value !== 'string') {
+    const src = path.resolve(EVAL_DIR, String(value?.from ?? ''));
+    if (!value?.from || path.relative(EVAL_DIR, src).startsWith('..')) throw new Error(`eval setup: ${JSON.stringify(value)} is neither text nor { "from": "<path under kit/eval>" }`);
+    text = fs.readFileSync(src, 'utf8');
+  }
+  return text.replaceAll('{{eval:head}}', head);
+}
+
+function writeSetupFiles(root, files, head) {
+  for (const [rel, value] of Object.entries(files ?? {})) {
+    fs.mkdirSync(path.dirname(path.join(root, rel)), { recursive: true });
+    fs.writeFileSync(path.join(root, rel), setupText(value, head));
+  }
+}
+
+const isObj = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
+const deepMerge = (a, b) => {
+  for (const [k, v] of Object.entries(b)) a[k] = isObj(v) && isObj(a[k]) ? deepMerge({ ...a[k] }, v) : v;
+  return a;
+};
+
+/** One row's Red run or Green run cell in a lane's progress.md set to a log reference, as the tester and implementer do. */
+export function setProgressCell(file, criterion, column, ref) {
+  const at = { red: 4, green: 5 }[column];
+  if (!at) throw new Error(`eval setup: a run is recorded as red or green, not '${column}'`);
+  const lines = fs.readFileSync(file, 'utf8').split('\n');
+  const i = lines.findIndex((l) => new RegExp(`^\\|\\s*${criterion}\\s*\\|`).test(l));
+  if (i < 0) throw new Error(`eval setup: no row ${criterion} in ${file}`);
+  const cells = lines[i].split('|');
+  cells[at] = ` ${ref} `;
+  lines[i] = cells.join('|');
+  fs.writeFileSync(file, lines.join('\n'));
+}
+
+/**
+ * The lane a task's goal names, made the way the kit makes one: `lane.js start` (precheck, worktree on wt/<slug> from
+ * origin's base, lane.json, progress skeleton), then the task's steps, each a kit operation: `stage` (lane.js stage),
+ * `write` (files in the worktree), `check` (lane.js check runs the command host-side and logs it; its log ref goes into
+ * the progress row, and a run whose exit contradicts `record` stops the setup), `commit`, `template` (lane.js template).
+ * Returns the worktree.
+ */
+function startLane(root, dir, lane, env, head) {
+  const laneJs = (args) => {
+    const r = spawnSync(process.execPath, [path.join(K.KIT_DIR, 'scripts', 'lane.js'), ...args], { cwd: root, env, encoding: 'utf8', timeout: 10 * 60 * 1000 });
+    if (r.status !== 0) throw new Error(`eval setup: lane.js ${args.join(' ')} exited ${r.status}: ${r.stderr || r.stdout}`);
+    return r.stdout;
+  };
+  const last = (out) => JSON.parse(out.trim().split('\n').pop());
+  // lane.js start fetches the base from origin and refuses a repo without one; the fixture's origin is a bare clone
+  F.git(['clone', '-q', '--bare', root, path.join(dir, 'origin.git')], dir);
+  F.git(['remote', 'add', 'origin', path.join(dir, 'origin.git')], root);
+  const wt = last(laneJs(['start', lane.slug, '--repo', root])).worktree;
+  for (const step of lane.steps ?? []) {
+    if (step.stage) laneJs(['stage', lane.slug, step.stage, '--repo', root]);
+    else if (step.write) writeSetupFiles(wt, step.write, head);
+    else if (step.check) {
+      const r = last(laneJs(['check', lane.slug, step.check, '--repo', root, '--', step.command]));
+      if ((step.record === 'red') !== (r.exit !== 0)) throw new Error(`eval setup: the ${step.record} run of ${step.check} (${step.command}) exited ${r.exit}`);
+      setProgressCell(path.join(wt, K.findLane(wt).work, `${lane.slug}.progress.md`), step.check, step.record, r.ref);
+    } else if (step.commit) F.commitAll(wt, step.commit);
+    else if (step.template) fs.writeFileSync(path.join(wt, step.to), laneJs(['template', step.template, '--slug', lane.slug, '--repo', wt]));
+    else throw new Error(`eval setup: unknown lane step ${JSON.stringify(step)}`);
+  }
+  return wt;
+}
+
+/**
+ * The fixture repo, bootstrapped, with the task's setup: its `files` and `kit_json` patch committed on main as
+ * "eval setup", then its `lane`, if any. Returns the repo, the directory the worker runs in (the lane's worktree when
+ * there is one) and the lane's slug.
+ */
+export function fixtureRepo(task, dir, claudeHome) {
   const builders = { 'node-api': F.nodeApi, 'python-service': F.pythonService };
   const build = builders[task.fixture ?? 'node-api'];
   if (!build) throw new Error(`unknown fixture repo '${task.fixture}'`);
   const root = build(path.join(dir, task.fixture ?? 'node-api'));
-  // the bootstrap registers the repo in the session's own home (CLAUDE_HOME), never the owner's ~/.claude
-  const r = spawnSync(process.execPath, [path.join(K.KIT_DIR, 'scripts', 'bootstrap.js'), '--repo', root], { encoding: 'utf8', env: claudeHome ? { ...process.env, CLAUDE_HOME: claudeHome } : process.env });
+  // the bootstrap registers the repo in the session's own home (CLAUDE_HOME), never the owner's ~/.claude; a setup's
+  // test runs (npx) cache their packages in the eval's scratch space, not the owner's ~/.npm
+  const env = { ...process.env, ...(claudeHome ? { CLAUDE_HOME: claudeHome } : {}), npm_config_cache: path.join(dir, 'npm-cache') };
+  const r = spawnSync(process.execPath, [path.join(K.KIT_DIR, 'scripts', 'bootstrap.js'), '--repo', root], { encoding: 'utf8', env });
   if (r.status !== 0) throw new Error(`bootstrap failed: ${r.stderr}`);
-  for (const [rel, text] of Object.entries(task.setup?.files ?? {})) {
-    fs.mkdirSync(path.dirname(path.join(root, rel)), { recursive: true });
-    fs.writeFileSync(path.join(root, rel), text);
+  const setup = task.setup ?? {};
+  const head = F.git(['rev-parse', 'HEAD'], root).trim();
+  writeSetupFiles(root, setup.files, head);
+  if (setup.kit_json) {
+    const kj = path.join(root, '.claude', 'kit.json');
+    fs.writeFileSync(kj, JSON.stringify(deepMerge(JSON.parse(fs.readFileSync(kj, 'utf8')), setup.kit_json), null, 2) + '\n');
   }
   F.commitAll(root, 'eval setup');
-  return root;
+  if (!setup.lane) return { root, cwd: root, lane: null };
+  return { root, cwd: startLane(root, dir, setup.lane, env, head), lane: setup.lane.slug };
 }
 
 /** Credential-looking strings never reach a report, whatever a session printed. */
@@ -89,8 +172,11 @@ export function sessionHome(dir, { install = true } = {}) {
   return {
     home,
     config,
-    // the kit's `kit` launcher (#63) is installed into the home's .local/bin and goes first on PATH
-    env: { HOME: home, CLAUDE_CONFIG_DIR: config, CLAUDE_CODE_TMPDIR: tmp, PATH: `${path.join(home, '.local', 'bin')}${path.delimiter}${process.env.PATH ?? ''}` },
+    // the kit's `kit` launcher (#63) is installed into the home's .local/bin and goes first on PATH. zsh reads its
+    // startup files from $ZDOTDIR when set, else $HOME. On the owner's Mac every Bash call printed
+    // `/Users/<owner>/.zshenv:.:1: no such file or directory: <session home>/.cargo/env`, which is what zsh 5.9 prints
+    // when ZDOTDIR still names the owner's home and HOME is the session's (reproduced on Linux); ZDOTDIR is the session's
+    env: { HOME: home, ZDOTDIR: home, CLAUDE_CONFIG_DIR: config, CLAUDE_CODE_TMPDIR: tmp, PATH: `${path.join(home, '.local', 'bin')}${path.delimiter}${process.env.PATH ?? ''}` },
     allowWrite: [home, tmp],
     // the home is writable, the kit's guards in it are not: a session cannot rewrite the hooks that check it, nor
     // leave instructions for a later session (the global CLAUDE.md, settings, commands)
@@ -152,12 +238,52 @@ export function trustWorkspace(config, root) {
   fs.writeFileSync(file, JSON.stringify(cfg, null, 2));
 }
 
-function headless(prompt, cwd, env, settingsPath, timeoutMs) {
+function headless(prompt, cwd, env, settingsPath, timeoutMs, agent = null) {
   const cfg = { runtime: SB.detectRuntime(env).runtime, allowWrite: [cwd, os.tmpdir()], allowedDomains: [], engine: process.env.KIT_CONTAINER_ENGINE || 'docker' };
-  const cmd = SB.launchCommand(cfg, { wt: cwd, settingsPath, prompt });
+  const cmd = SB.launchCommand(cfg, { wt: cwd, settingsPath, prompt, agent });
   const r = spawnSync(cmd[0], cmd.slice(1), { cwd, env, encoding: 'utf8', timeout: timeoutMs, maxBuffer: 64 * 1024 * 1024 });
   // status is null when the session timed out (signal) or could not be spawned (error); both are kept
-  return { status: r.status, signal: r.signal ?? null, error: r.error ? (r.error.code || r.error.message) : null, stdout: r.stdout ?? '', stderr: redact(r.stderr ?? '') };
+  return { command: cmd.map(redact), status: r.status, signal: r.signal ?? null, error: r.error ? (r.error.code || r.error.message) : null, stdout: r.stdout ?? '', stderr: redact(r.stderr ?? '') };
+}
+
+/**
+ * The kit agent a task runs as: its role, when the session's home has that agent installed (install.sh --copy puts
+ * kit/agents/*.md in <home>/.claude/agents). Without a session home (the container runtime) nothing proves which
+ * agents the session can see, so none is named.
+ */
+export function kitAgent(task, home) {
+  const role = task.role;
+  if (!home || typeof role !== 'string' || !/^[a-z][a-z-]*$/.test(role)) return null;
+  return fs.existsSync(path.join(home.config, 'agents', `${role}.md`)) ? role : null;
+}
+
+/**
+ * The session's transcripts, redacted, copied to `out` (Claude Code writes them under its config directory's projects/,
+ * one file per session and one per subagent). Returns the copies' paths; none when the session wrote none.
+ */
+export function keepTranscripts(config, out) {
+  const src = path.join(config, 'projects');
+  const kept = [];
+  const walk = (d) => {
+    for (const e of fs.existsSync(d) ? fs.readdirSync(d, { withFileTypes: true }) : []) {
+      const p = path.join(d, e.name);
+      if (e.isDirectory()) walk(p);
+      else if (e.name.endsWith('.jsonl')) {
+        const dest = path.join(out, path.relative(src, p));
+        fs.mkdirSync(path.dirname(dest), { recursive: true });
+        fs.writeFileSync(dest, redact(fs.readFileSync(p, 'utf8')));
+        kept.push(dest);
+      }
+    }
+  };
+  walk(src);
+  return kept;
+}
+
+/** Hook events from line `from` on: the lines a session appended, never the ones the setup wrote before it. */
+function readEvents(file, from = 0) {
+  if (!fs.existsSync(file)) return [];
+  return fs.readFileSync(file, 'utf8').split('\n').filter(Boolean).slice(from).map((l) => JSON.parse(l));
 }
 
 function snapshot(root) {
@@ -174,7 +300,7 @@ function snapshot(root) {
   return files;
 }
 
-export async function run(task, { attempt = 0, timeoutMs = 20 * 60 * 1000 } = {}) {
+export async function run(task, { attempt = 0, timeoutMs = 20 * 60 * 1000, transcripts = null } = {}) {
   const a = available();
   if (!a.ok) throw new Error(`claude runner unavailable: ${a.why}`);
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), `kit-eval-${task.id}-`));
@@ -183,22 +309,32 @@ export async function run(task, { attempt = 0, timeoutMs = 20 * 60 * 1000 } = {}
     // the session home is for srt only: a container runtime runs the host's docker/podman CLI, which needs the real HOME
     const srt = SB.detectRuntime(process.env).runtime === 'srt';
     const home = srt ? sessionHome(dir) : null;
-    const root = fixtureRepo(task, dir, home?.config);
-    if (home) trustWorkspace(home.config, root);
-    const lane = SB.sandboxConfig({ root, wt: root, slug: task.id, agent: task.role ?? 'implementer' });
-    const settings = path.join(root, '.claude', 'session', 'sandbox.json');
-    if (home) sessionSettings(lane, home, root, settings);
+    // the worker runs where its goal is: the fixture repo, or the lane's worktree when the task sets one up
+    const { root, cwd, lane: slug } = fixtureRepo(task, dir, home?.config);
+    // Claude Code looks up a worktree's trust under its main repository (seen: "Ignoring 16 permissions.allow entries ...
+    // projects["<repo>"].hasTrustDialogAccepted" for a session in the lane's worktree), so both are trusted
+    if (home) for (const p of new Set([root, cwd])) trustWorkspace(home.config, p);
+    const lane = SB.sandboxConfig({ root, wt: cwd, slug: slug ?? task.id, agent: task.role ?? 'implementer' });
+    const settings = path.join(cwd, '.claude', 'session', 'sandbox.json');
+    if (home) sessionSettings(lane, home, cwd, settings);
     else {
       fs.mkdirSync(path.dirname(settings), { recursive: true });
       fs.writeFileSync(settings, JSON.stringify(SB.srtSettings(lane), null, 2));
     }
+    // in a lane the hooks write the lane's events file; elsewhere the repo's session file
+    const laneRec = slug ? K.findLane(cwd) : null;
+    const eventsPath = laneRec ? laneRec.eventsPath : path.join(cwd, '.claude', 'session', 'events.jsonl');
+    const before = readEvents(eventsPath).length;
     const base = { ...process.env, ...SB.telemetryEnv({ project: 'kit-eval', slug: task.id, stage: task.role ?? 'build' }), KIT_EVAL_ATTEMPT: String(attempt) };
     const env = { ...base, ...(home?.env ?? {}) };
-    const work = headless(task.goal, root, env, settings, timeoutMs);
-    const files = snapshot(root);
-    const eventsPath = path.join(root, '.claude', 'session', 'events.jsonl');
-    const events = fs.existsSync(eventsPath) ? fs.readFileSync(eventsPath, 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l)) : [];
-    const git = { log: spawnSync('git', ['log', '--oneline', '-20'], { cwd: root, encoding: 'utf8' }).stdout.trim().split('\n') };
+    const work = headless(task.goal, cwd, env, settings, timeoutMs, kitAgent(task, home));
+    const kept = { worker: home && transcripts ? keepTranscripts(home.config, path.join(transcripts, 'worker')) : [], judge: [] };
+    const files = snapshot(cwd);
+    const events = readEvents(eventsPath, before);
+    const git = { log: spawnSync('git', ['log', '--oneline', '-20'], { cwd, encoding: 'utf8' }).stdout.trim().split('\n') };
+    // the project's recorded test commands, so the scorer can tell a test run among the session's Bash calls
+    const cmds = K.loadKitJson(cwd).commands ?? {};
+    const testCommands = ['test', 'test_affected', 'test_file'].map((k) => cmds[k]).filter((c) => typeof c === 'string' && c.trim());
     // the judge: rubric + calibration examples + end state, never the worker's transcript
     let judge = {};
     let judgeSession = null;
@@ -206,13 +342,14 @@ export async function run(task, { attempt = 0, timeoutMs = 20 * 60 * 1000 } = {}
       const examples = task.calibration ? `\n\nCalibration examples:\n${JSON.stringify(task.calibration, null, 2)}` : '';
       const prompt = `You are grading the end state of a repository against a rubric. Answer ONLY with a JSON object mapping each criterion id to 1 (met) or 0 (not met).\n\nRubric:\n${task.rubric.map((c) => `- ${c.id}: ${c.text}`).join('\n')}${examples}\n\nFiles (path then content):\n${Object.entries(files).slice(0, 60).map(([p, t]) => `--- ${p}\n${t.slice(0, 4000)}`).join('\n')}\n\nGit log:\n${git.log.join('\n')}`;
       // the judge has its own home and an empty working directory: nothing the worker left in its repo or home
-      // (a CLAUDE.md, settings) reaches it; it sees the end state only through its prompt
+      // (a CLAUDE.md, settings) reaches it; it sees the end state only through its prompt. It runs as no kit agent.
       const jdir = path.join(dir, 'judge');
       const jcwd = path.join(jdir, 'work');
       fs.mkdirSync(jcwd, { recursive: true });
       const jhome = srt ? sessionHome(jdir, { install: false }) : null;
       const jsettings = jhome ? sessionSettings(lane, jhome, jcwd, path.join(jdir, 'sandbox.json'), { laneScratch: false }) : settings;
-      const j = headless(prompt, jhome ? jcwd : root, { ...base, ...(jhome?.env ?? {}), KIT_EVAL_JUDGE: '1' }, jsettings, 5 * 60 * 1000);
+      const j = headless(prompt, jhome ? jcwd : cwd, { ...base, ...(jhome?.env ?? {}), KIT_EVAL_JUDGE: '1' }, jsettings, 5 * 60 * 1000);
+      if (jhome && transcripts) kept.judge = keepTranscripts(jhome.config, path.join(transcripts, 'judge'));
       judgeSession = { status: j.status, signal: j.signal, error: j.error, stderr: j.stderr.slice(-2000) };
       const m = /\{[\s\S]*\}/.exec(j.stdout);
       if (m) {
@@ -223,7 +360,7 @@ export async function run(task, { attempt = 0, timeoutMs = 20 * 60 * 1000 } = {}
         }
       }
     }
-    return { runner: name, variant: null, files, events, git, judge, ms: Date.now() - started, worker_status: work.status, worker_signal: work.signal, worker_error: work.error, worker_stderr: work.stderr.slice(-2000), judge_session: judgeSession };
+    return { runner: name, variant: null, files, events, git, judge, test_commands: testCommands, transcripts: kept, ms: Date.now() - started, worker_command: work.command, worker_status: work.status, worker_signal: work.signal, worker_error: work.error, worker_stderr: work.stderr.slice(-2000), judge_session: judgeSession };
   } finally {
     if (!process.env.KIT_EVAL_KEEP) fs.rmSync(dir, { recursive: true, force: true });
   }

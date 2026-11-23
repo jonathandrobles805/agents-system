@@ -5,6 +5,13 @@
     "smoke"
   ],
   "fixture": "node-api",
+  "setup": {
+    "files": {
+      "docs/specs/refund-route.md": {
+        "from": "setups/refund-route/spec.waiting-approval.md"
+      }
+    }
+  },
   "goal": "Critique docs/specs/refund-route.md. Read every file the spec names before writing the critique.",
   "checks": [
     "first_tool",

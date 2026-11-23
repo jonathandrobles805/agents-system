@@ -118,12 +118,17 @@ export async function runSet({ set, runner = 'fixture', n = set === 'full' ? 3 :
   for (const task of tasks) {
     const attempts = [];
     for (let i = 0; i < n; i++) {
-      const outcome = await R.run(task, { attempt: i, ...(variant ? { variant } : {}) });
+      // a real session's transcripts are kept beside the report (redacted), so a verdict can be traced to what the agent did
+      const transcripts = path.join(outDir, 'transcripts', task.id, `attempt-${i}`);
+      const outcome = await R.run(task, { attempt: i, transcripts, ...(variant ? { variant } : {}) });
       const scored = score(task, outcome);
       // the worker session's exit status and the tail of its stderr travel with the attempt: a session that never
       // started (no sandbox, no credential, a refused token) must be diagnosable from the report alone
       const worker = { status: outcome.worker_status ?? null, signal: outcome.worker_signal ?? null, error: outcome.worker_error ?? null, stderr: String(outcome.worker_stderr ?? '').slice(-2000) };
-      attempts.push({ attempt: i, runner: outcome.runner, variant: outcome.variant ?? null, ms: outcome.ms, worker, judge_session: outcome.judge_session ?? null, scored });
+      if (outcome.worker_command) worker.command = outcome.worker_command;
+      const rel = (files) => (files ?? []).map((f) => path.relative(outDir, f));
+      const kept = outcome.transcripts ? { transcripts: { worker: rel(outcome.transcripts.worker), judge: rel(outcome.transcripts.judge) } } : {};
+      attempts.push({ attempt: i, runner: outcome.runner, variant: outcome.variant ?? null, ms: outcome.ms, worker, judge_session: outcome.judge_session ?? null, ...kept, scored });
       if (!scored.hard_ok) violations.push({ task: task.id, attempt: i, checks: scored.violations, why: scored.violations.map((v) => `${v}: ${scored.hard[v].why}`) });
     }
     results[task.id] = { role: task.role ?? null, kind: task.kind ?? null, runner, attempts, summary: summarize(attempts) };

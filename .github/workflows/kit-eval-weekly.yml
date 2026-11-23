@@ -67,4 +67,7 @@ jobs:
         with:
           name: eval-report-${{ github.run_id }}-${{ github.run_attempt }}
           retention-days: 30
-          path: eval-out/report.json
+          # the report and each session's redacted transcript beside it
+          path: |
+            eval-out/report.json
+            eval-out/transcripts/

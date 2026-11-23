@@ -167,12 +167,14 @@ jobs:
         run: |
           if [ -n "$CLAUDE_CODE_OAUTH_TOKEN" ]; then unset ANTHROPIC_API_KEY; echo "auth: subscription token"; else echo "auth: API key"; fi
           node kit/eval/harness.js run --set smoke --runner claude --touched "$TOUCHED" --out "$RUNNER_TEMP/eval-smoke"
-      - name: keep the report (each worker session's exit status and stderr tail are in it)
+      - name: keep the report and the transcripts (each session's exit status and stderr tail are in the report; its redacted transcript is beside it)
         if: always() && steps.touched.outputs.files != ''
         uses: actions/upload-artifact@v4
         with:
           name: eval-smoke-main-${{ github.sha }}-${{ github.run_attempt }}
-          path: ${{ runner.temp }}/eval-smoke/report.json
+          path: |
+            ${{ runner.temp }}/eval-smoke/report.json
+            ${{ runner.temp }}/eval-smoke/transcripts/
           retention-days: 30
           if-no-files-found: warn
 
