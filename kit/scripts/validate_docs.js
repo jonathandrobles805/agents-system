@@ -26,7 +26,134 @@ export const REQUIRED = {
 };
 export const RESEARCH_HEADER = ["question", "slug", "date", "commit"];
 export const SPEC_HEADER = ["slug", "date", "commit", "risk", "status"];
-export const ENFORCED_BY = new Set(["hook", "lint", "test", "ci", "text-only"]);
+/** A lesson's `Enforced by`: one or more of ENFORCERS (parseEnforcedBy), or `text-only` alone. */
+export const ENFORCERS = ["ci", "hook", "lint", "test"];
+export const ENFORCED_BY = new Set([...ENFORCERS, "text-only"]);
+/** The longest note an enforcer may carry in parentheses, `hook (stop runner)`, in code points. */
+export const ENFORCER_NOTE_MAX = 80;
+
+/**
+ * Read a lesson's `Enforced by` value: one or more of `ci`, `hook`, `lint`, `test`, joined by `and`, `,`, `+` or `/`,
+ * each optionally followed by a short note in parentheses (`hook (stop runner) and ci`), or `text-only` alone, which
+ * cannot be combined: a lesson is either enforced by a check or it is debt. Case is ignored. Returns the enforcer names
+ * (lower case, in order) and an error message, null when the value is valid.
+ */
+export function parseEnforcedBy(value) {
+  const NAME = /^(text-only|hook|lint|test|ci)(?![\p{L}\p{N}_-])/iu;
+  const SEP = /^\s*(?:,\s*(?:and\s+)?|\+|\/|and\s+)\s*/i;
+  const usage = `must be one or more of ${ENFORCERS.map((x) => `'${x}'`).join(", ")} joined by "and", ",", "+" or "/" ` +
+    `(each may add a short note in parentheses), or 'text-only' alone`;
+  const names = [];
+  let rest = pyStrip(value);
+  for (;;) {
+    const m = NAME.exec(rest);
+    if (!m) return { names, error: `${usage}; got '${pyStrip(value)}'` };
+    const name = m[1].toLowerCase();
+    if (names.includes(name)) return { names, error: `'${name}' is named twice` };
+    names.push(name);
+    rest = rest.slice(m[0].length);
+    const note = /^\s*\(([^()]*)\)/.exec(rest);
+    if (note) {
+      const text = pyStrip(note[1]);
+      if (!text) return { names, error: `the note after '${name}' is empty` };
+      if (pyLen(text) > ENFORCER_NOTE_MAX) return { names, error: `the note after '${name}' is longer than ${ENFORCER_NOTE_MAX} characters; put the detail in Proposed change` };
+      rest = rest.slice(note[0].length);
+    }
+    if (!pyStrip(rest)) break;
+    const sep = SEP.exec(rest);
+    if (!sep || sep[0].length === 0 || !pyStrip(rest.slice(sep[0].length))) return { names, error: `${usage}; got '${pyStrip(value)}'` };
+    rest = rest.slice(sep[0].length);
+  }
+  if (names.includes("text-only") && names.length > 1) {
+    return { names, error: "'text-only' stands alone: a lesson is enforced by a check or it is text-only debt, not both" };
+  }
+  return { names, error: null };
+}
+
+/**
+ * The template each document type validate_docs checks is filled from (kit/templates/<name>.md, the file
+ * `kit lane template <name>` prints). Its `{{…}}` tokens are that document's own placeholders (placeholderUnfilled).
+ */
+export const TEMPLATE_OF = { research: "research", spec: "spec", review: "review", lesson: "lesson", goal: "goal" };
+const PLACEHOLDER_G = new RegExp(K.PLACEHOLDER.source, "g");
+const placeholderKey = (tok) => tok.slice(2, -2).replace(/\s+/g, " ").trim();
+const templateTokens = new Map();
+
+/**
+ * The `{{…}}` tokens of a document type's template (whitespace inside a token collapsed), read once per process.
+ * Null when the type has no template or the template cannot be read: then every `{{…}}` counts as unfilled, wherever
+ * it stands (placeholderUnfilled fails closed).
+ */
+export function templatePlaceholders(kind) {
+  if (!Object.hasOwn(TEMPLATE_OF, kind)) return null;
+  if (!templateTokens.has(kind)) {
+    let set = null;
+    try {
+      const text = fs.readFileSync(path.join(kitDir(), "templates", `${TEMPLATE_OF[kind]}.md`), "utf8");
+      set = new Set([...text.matchAll(PLACEHOLDER_G)].map((m) => placeholderKey(m[0])));
+    } catch {
+      set = null;
+    }
+    templateTokens.set(kind, set);
+  }
+  return templateTokens.get(kind);
+}
+
+/**
+ * Which character ranges of each line are code: a whole line inside a fenced block (``` or ~~~, closed by a fence of
+ * the same character at least as long; the fence lines too), and inline code spans (a run of N backticks closed by the
+ * next run of exactly N on the same line; an unclosed run is literal text). Returns one array of [start, end) per line.
+ */
+export function codeRanges(lines) {
+  const out = [];
+  let fence = null;
+  for (const t of lines) {
+    const f = /^\s*(`{3,}|~{3,})/.exec(t);
+    if (fence) {
+      out.push([[0, t.length]]);
+      if (f && f[1][0] === fence[0] && f[1].length >= fence.length && !pyStrip(t.slice(f[0].length))) fence = null;
+      continue;
+    }
+    if (f && !(f[1][0] === "`" && t.slice(f[0].length).includes("`"))) {
+      fence = f[1];
+      out.push([[0, t.length]]);
+      continue;
+    }
+    const ranges = [];
+    const runs = [...t.matchAll(/`+/g)];
+    for (let i = 0; i < runs.length; i++) {
+      const j = runs.findIndex((r, k) => k > i && r[0].length === runs[i][0].length);
+      if (j < 0) continue;
+      ranges.push([runs[i].index, runs[j].index + runs[j][0].length]);
+      i = j;
+    }
+    out.push(ranges);
+  }
+  return out;
+}
+
+/**
+ * The unfilled placeholders in a document of type `kind`: one of the type's own template placeholders
+ * (templatePlaceholders) wherever it stands, inside backticks and fenced blocks too, since the research template itself
+ * writes "`{{snippet}}`"; any other `{{…}}` only outside code spans and fenced blocks, so a lesson may quote another
+ * file's placeholder (`{{n}}` from progress.md) while a stray `{{x}}` in prose is still caught. Returns
+ * [{ line, token }], the first unfilled token of each line, lines numbered from 1.
+ */
+export function unfilledPlaceholders(kind, lines) {
+  const own = templatePlaceholders(kind);
+  const code = codeRanges(lines);
+  const found = [];
+  lines.forEach((t, idx) => {
+    for (const m of t.matchAll(PLACEHOLDER_G)) {
+      const inCode = code[idx].some(([a, b]) => m.index >= a && m.index + m[0].length <= b);
+      if (own === null || own.has(placeholderKey(m[0])) || !inCode) {
+        found.push({ line: idx + 1, token: m[0] });
+        return;
+      }
+    }
+  });
+  return found;
+}
 
 // ---------------------------------------------------------------------------
 // Python-compatible text helpers (the Python original relied on Unicode-aware str/re behaviour).
@@ -182,11 +309,11 @@ export class Validator {
     this.v.push(new K.Violation(inside ? a.parts.slice(r.parts.length).join("/") : pyNorm(p), line, rule, msg));
   }
 
-  checkPlaceholders(p, lines) {
-    lines.forEach((t, idx) => {
-      const m = K.PLACEHOLDER.exec(t);
-      if (m) this.add(p, idx + 1, "template-placeholder", `unfilled template placeholder: ${m[0]}`);
-    });
+  /** A placeholder left unfilled (unfilledPlaceholders: the type's own template tokens anywhere, others outside code). */
+  checkPlaceholders(p, lines, kind) {
+    for (const { line, token } of unfilledPlaceholders(kind, lines)) {
+      this.add(p, line, "template-placeholder", `unfilled template placeholder: ${token}`);
+    }
   }
 
   checkRequired(p, kind, sections) {
@@ -305,7 +432,7 @@ export class Validator {
   // ---------- document types ----------
   research(p, lines) {
     const clean = K.stripHtmlComments(lines);
-    this.checkPlaceholders(p, clean);
+    this.checkPlaceholders(p, clean, "research");
     this.checkHeader(p, clean, RESEARCH_HEADER);
     const sections = K.parseSections(clean);
     this.checkRequired(p, "research", sections);
@@ -418,7 +545,7 @@ export class Validator {
 
   spec(p, lines) {
     const clean = K.stripHtmlComments(lines);
-    this.checkPlaceholders(p, clean);
+    this.checkPlaceholders(p, clean, "spec");
     this.checkHeader(p, clean, SPEC_HEADER);
     const hdr = K.headerFields(clean);
     const sections = K.parseSections(clean);
@@ -506,7 +633,7 @@ export class Validator {
 
   review(p, lines) {
     const clean = K.stripHtmlComments(lines);
-    this.checkPlaceholders(p, clean);
+    this.checkPlaceholders(p, clean, "review");
     const sections = K.parseSections(clean);
     this.checkRequired(p, "review", sections);
     const cl = sections.get("checklist");
@@ -566,7 +693,7 @@ export class Validator {
   /** A goal's classification fields (KIT-SPEC 10.12): a known work type, a known risk and size when present. Absent fields keep the defaults. */
   goal(p, lines) {
     const clean = K.stripHtmlComments(lines);
-    this.checkPlaceholders(p, clean);
+    this.checkPlaceholders(p, clean, "goal");
     const h = K.headerFields(clean);
     const get = (k) => (h.has(k) ? [h.get(k)[0], pyStrip(h.get(k)[1]).toLowerCase()] : null);
     const wt = get("work type") || get("work_type");
@@ -583,7 +710,7 @@ export class Validator {
 
   lesson(p, lines) {
     const clean = K.stripHtmlComments(lines);
-    this.checkPlaceholders(p, clean);
+    this.checkPlaceholders(p, clean, "lesson");
     // Each entry starts with '## ' and has the required bullets
     const entries = K.parseSections(clean);
     for (const [key, sec] of entries) {
@@ -597,16 +724,16 @@ export class Validator {
         if (!fields.has(req)) this.add(p, sec.start, "lesson-field", `entry '${sec.title}' missing '${req}'`);
       }
       const eb = fields.get("enforced by");
-      if (eb && !ENFORCED_BY.has(eb[1].toLowerCase())) {
-        this.add(p, eb[0], "lesson-enforced-by", `must be one of [${sorted(ENFORCED_BY).map((x) => `'${x}'`).join(", ")}]`);
-      }
-      if (eb && eb[1].toLowerCase() !== "text-only") {
+      const enforced = eb ? parseEnforcedBy(eb[1]) : null;
+      if (enforced?.error) this.add(p, eb[0], "lesson-enforced-by", enforced.error);
+      const textOnly = Boolean(enforced?.names.includes("text-only"));
+      if (eb && !textOnly) {
         const pc = fields.get("proposed change");
         if (pc && pc[1].toLowerCase().startsWith("none")) {
           this.add(p, pc[0], "lesson-no-change", "an enforced lesson must name the hook/lint/test change");
         }
       }
-      if (eb && eb[1].toLowerCase() === "text-only") {
+      if (eb && textOnly) {
         const pc = fields.get("proposed change");
         if (pc && !pc[1].toLowerCase().includes("reason")) {
           this.add(p, pc[0], "lesson-debt-reason", "text-only lessons must state the reason they cannot be enforced yet");

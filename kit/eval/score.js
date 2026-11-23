@@ -800,8 +800,8 @@ export const CHECKS = {
     v.lesson('output', entry);
     if (v.v.length) return { ok: false, why: `${v.v.length} problem(s): ${v.v.slice(0, 3).map((x) => `${x.rule}: ${x.message}`).join('; ')}` };
     // the lesson rules ask for every field, not for content in it: each free-text field holds at least three words of
-    // letters (letterWords), so blank fields or `.` in each are no lesson. `Enforced by` and `Status` are one word by
-    // the template's own choices
+    // letters (letterWords), so blank fields or `.` in each are no lesson. `Enforced by` and `Status` are names from
+    // the template's own choices (validate_docs parseEnforcedBy)
     const thin = [];
     let title = '';
     for (const l of entry) {

@@ -167,7 +167,7 @@ All agents are subagents in `~/.claude/agents/`. Each file has: frontmatter (`na
 ### 4.6 `retro`
 
 - Input: merged PR, review report, progress file, events log, `LESSONS.md`.
-- Output: a lesson entry in the lesson template with `Enforced by` set to one of `hook | lint | test | ci | text-only`, and when not text-only, the concrete change (a hook rule, a lint rule, a test template) as a proposed diff for you to approve.
+- Output: a lesson entry in the lesson template with `Enforced by` set to one or more of `hook | lint | test | ci`, joined by `and`, `,`, `+` or `/`, each optionally followed by a short note in parentheses (`hook (stop runner) and ci`), or to `text-only` alone (it cannot be combined), and when not text-only, the concrete change (a hook rule, a lint rule, a test template) as a proposed diff for you to approve.
 - Refuses: a lesson without an enforcement proposal unless explicitly marked text-only debt with a reason.
 
 ---
@@ -197,6 +197,8 @@ Every finding, assumption, or claim in a research file, spec, or review report c
 9. Review report: every checklist item is PASS or FAIL with evidence; every FAIL has file, line, rule, and what passing looks like. Every bare `path:N` or `path:N-M` in checklist evidence or a Fail-list entry is range-checked the same way a `[verified: ...]` citation is.
 10. A test command a spec names as a run must be one the project records in `.claude/kit.json` `commands`; a spec that names a runner the hook will never invoke is refused, because a run of it would never reach the log.
 11. A spec that declares a route -- an HTTP method and a path together -- carries a done-criterion covering a request it cannot parse. The check looks for `malformed` or `unparseable` in a criterion, or `invalid` together with what it is invalid about; `invalid` alone does not count, because a configuration check satisfies that word while the route still crashes on a malformed target.
+12. No template placeholder left unfilled. A document's own placeholders are the `{{…}}` tokens of the template it is filled from (`kit/templates/<type>.md`, the file `kit lane template <type>` prints, for research, spec, review, lesson and goal); one of them is unfilled wherever it stands, inside backticks and fenced blocks too (the research template itself writes `` `{{snippet}}` ``). Any other `{{…}}` is unfilled only outside code spans and fenced blocks, so a lesson or review may quote another file's placeholder in backticks, and a stray `{{x}}` in prose is still caught. A template that cannot be read makes every `{{…}}` unfilled. The eval's checks run the same rule (they call the validator).
+13. Lesson: every field present; `Enforced by` is one or more of `hook`, `lint`, `test`, `ci` joined by `and`, `,`, `+` or `/`, each optionally followed by a note in parentheses of at most 80 characters, none named twice, or `text-only` alone; an enforced lesson names its change, a text-only one states in Proposed change the reason it cannot be enforced yet.
 
 Exit code 2 with the list of violations on stderr. Runs as a `SubagentStop` hook for the three writing agents, as a `PostToolUse` hook on writes under `docs/`, and in CI.
 

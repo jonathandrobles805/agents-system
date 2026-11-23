@@ -5,7 +5,8 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { makeRepo, runScript } from './helpers.js';
 import { git } from './fixtures.js';
-import { GOOD_RESEARCH, write } from './testdata.js';
+import * as V from '../validate_docs.js';
+import { GOOD_RESEARCH, GOOD_SPEC, GOOD_REVIEW, GOOD_LESSONS, write } from './testdata.js';
 
 const KIT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 
@@ -169,4 +170,114 @@ test('hook mode ignores non doc files', (t) => {
   const payload = JSON.stringify({ hook_event_name: 'PostToolUse', cwd: repo, tool_name: 'Write', tool_input: { file_path: path.join(repo, 'src', 'x.ts') } });
   const r = runScript('validate_docs.js', ['--hook'], { stdin: payload });
   assert.ok(r.returncode === 0 && r.stdout.trim() === '');
+});
+
+// ---------------------------------------------------------------------------- template placeholders, per document type
+// KIT-SPEC 5.2 rules 12 and 13. Evidence: the first real-agent eval run on 516ffdd failed a retro lesson that quoted
+// progress.md's `{{n}}` in backticks, and two lessons enforced by "hook and ci".
+
+const GOOD_GOAL = '# Goal: truncate text\n\n- Slug: truncate-text\n- Date: 2026-11-22\n- Work type: feature\n- Risk: normal\n- Size: S\n\n## What we want\n\nLong titles are cut to fit.\n';
+
+/** The rules each type's validator reports for `text`, run in process with citations left unresolved. */
+function rules(kind, text) {
+  const v = new V.Validator(path.sep, null, {});
+  v.resolveCitations = () => {};
+  v.resolveBareCitations = () => {};
+  v[kind](`${kind}.md`, text.split('\n'));
+  return v.v.filter((x) => x.rule === 'template-placeholder').map((x) => x.message);
+}
+
+// Each type: its good document, where a free-text line can be added, and one of its own template's placeholders.
+const TYPES = [
+  ['research', GOOD_RESEARCH, '## Recommendation\n', '{{snippet}}'],
+  ['spec', GOOD_SPEC, '## Approach\n', '{{path}}'],
+  ['review', GOOD_REVIEW, '## Verdict\n', '{{evidence}}'],
+  ['lesson', GOOD_LESSONS, '- Status: approved\n', '{{short title}}'],
+  ['goal', GOOD_GOAL, '## What we want\n', '{{human name}}'],
+];
+
+for (const [kind, good, at, own] of TYPES) {
+  const add = (line) => {
+    assert.ok(good.includes(at), `${kind}: anchor ${at}`);
+    return good.replace(at, `${at}\n${line}\n`);
+  };
+  test(`${kind}: another file's placeholder quoted in code is no placeholder of this document`, () => {
+    assert.deepEqual(rules(kind, good), []);
+    assert.deepEqual(rules(kind, add('progress.md still had `{{what fails}}` and ``{{tried}}`` in it.')), []);
+    assert.deepEqual(rules(kind, add('```\nAttempts: {{what fails}}\n```')), [], 'in a fenced block');
+    assert.deepEqual(rules(kind, add('~~~~\n{{what fails}}\n~~~~')), [], 'in a tilde fence');
+  });
+  test(`${kind}: a placeholder left unfilled is caught`, () => {
+    assert.deepEqual(rules(kind, add('progress.md still had {{what fails}} in it.')), ['unfilled template placeholder: {{what fails}}'], 'a stray one in prose');
+    assert.deepEqual(rules(kind, add(`the value is \`${own}\` here`)), [`unfilled template placeholder: ${own}`], 'its own, in backticks');
+    assert.deepEqual(rules(kind, add(`\`\`\`\n${own}\n\`\`\``)), [`unfilled template placeholder: ${own}`], 'its own, in a fenced block');
+    assert.deepEqual(rules(kind, add(`${own.replace('{{', '{{ ')}`)), [`unfilled template placeholder: ${own.replace('{{', '{{ ')}`], 'its own, spaced differently');
+    assert.deepEqual(rules(kind, add('an `unclosed {{x}} backtick')), ['unfilled template placeholder: {{x}}'], 'an unclosed backtick is no code span');
+    assert.deepEqual(rules(kind, add('```\n{{x}}')).length, 0, 'an unclosed fence runs to the end, as Markdown reads it');
+  });
+  test(`${kind}: the kit's own template, untouched, fails on every line that holds a placeholder`, () => {
+    const tmpl = fs.readFileSync(path.join(KIT, 'templates', `${V.TEMPLATE_OF[kind]}.md`), 'utf8').split('\n');
+    const want = tmpl.map((t, i) => (/\{\{[^}]*\}\}/.test(t) ? i + 1 : 0)).filter(Boolean);
+    assert.ok(want.length > 0);
+    assert.deepEqual(V.unfilledPlaceholders(kind, tmpl).map((x) => x.line), want);
+  });
+}
+
+test('the research template\'s own "`{{snippet}}`" is caught inside its backticks', () => {
+  assert.deepEqual(V.unfilledPlaceholders('research', ['- F1. claim [verified: a.ts:1-2] `{{snippet}}`']), [{ line: 1, token: '{{snippet}}' }]);
+});
+
+test('a type with no template counts every {{…}} as unfilled, code or not (fails closed)', () => {
+  assert.equal(V.templatePlaceholders('nonsense'), null);
+  assert.deepEqual(V.unfilledPlaceholders('nonsense', ['`{{a}}`', '```', '{{b}}', '```']).map((x) => x.token), ['{{a}}', '{{b}}']);
+});
+
+test('codeRanges: inline spans by matching backtick runs, fences by character and length', () => {
+  assert.deepEqual(V.codeRanges(['a `b` c ``d`e`` f']), [[[2, 5], [8, 15]]]);
+  assert.deepEqual(V.codeRanges(['````', '```', 'x', '````', 'y']).map((r) => r.length), [1, 1, 1, 1, 0], 'a shorter fence does not close a longer one');
+  assert.deepEqual(V.codeRanges(['```a` b', 'c']).map((r) => r.length), [0, 0], 'a backtick after the opening run makes it no fence');
+});
+
+test('the validator CLI on a lesson quoting placeholders and naming two enforcers', (t) => {
+  const repo = makeRepo(t);
+  const text = GOOD_LESSONS
+    .replace('- What went wrong: the first implementation', '- What went wrong: `progress.md` kept `{{n}}`/`{{what fails}}`; the first implementation')
+    .replace('- Enforced by: test', '- Enforced by: hook (stop/post-edit runner) and ci');
+  const r = runScript('validate_docs.js', [write(repo, 'LESSONS.md', text), '--repo', repo]);
+  assert.equal(r.returncode, 0, r.stderr);
+  const bad = runScript('validate_docs.js', [write(repo, 'LESSONS.md', text.replace('`{{n}}`', '{{n}}')), '--repo', repo]);
+  assert.equal(bad.returncode, 2);
+  assert.match(bad.stderr, /template-placeholder: unfilled template placeholder: \{\{n\}\}/);
+});
+
+// ---------------------------------------------------------------------------- Enforced by
+
+test('Enforced by: one or more of ci, hook, lint, test, each with an optional short note', () => {
+  const ok = {
+    hook: ['hook'], 'Test': ['test'], 'hook and ci': ['hook', 'ci'], 'hook (stop/post-edit runner) and ci': ['hook', 'ci'],
+    'hook, lint and ci': ['hook', 'lint', 'ci'], 'hook, lint, and ci': ['hook', 'lint', 'ci'], 'lint + test': ['lint', 'test'],
+    'hook/ci': ['hook', 'ci'], 'lint (eslint rule) / ci (kit.yml)': ['lint', 'ci'], 'text-only': ['text-only'],
+    'text-only (needs a model to judge)': ['text-only'],
+  };
+  for (const [v, names] of Object.entries(ok)) assert.deepEqual(V.parseEnforcedBy(v), { names, error: null }, v);
+});
+
+test('Enforced by: text-only stands alone; unknown, repeated, dangling or bare-space values fail', () => {
+  for (const v of ['text-only and ci', 'ci + text-only', 'hook/text-only']) assert.match(V.parseEnforcedBy(v).error, /'text-only' stands alone/, v);
+  for (const v of ['a reminder', '', 'hook ci', 'hook and', 'ci/cd', 'test-only', 'hook or ci', 'and hook', '`hook`']) assert.match(V.parseEnforcedBy(v).error, /must be one or more of/, v);
+  assert.match(V.parseEnforcedBy('hook and Hook').error, /'hook' is named twice/);
+  assert.match(V.parseEnforcedBy('hook ()').error, /note after 'hook' is empty/);
+  assert.match(V.parseEnforcedBy(`hook (${'x'.repeat(V.ENFORCER_NOTE_MAX + 1)})`).error, /longer than 80/);
+  assert.equal(V.parseEnforcedBy(`hook (${'x'.repeat(V.ENFORCER_NOTE_MAX)})`).error, null);
+});
+
+test('a lesson: several enforcers need a named change; text-only combined is refused and still needs its reason', () => {
+  const lesson = (eb, pc) => GOOD_LESSONS.replace('- Enforced by: test', `- Enforced by: ${eb}`)
+    .replace(/- Proposed change: .*/, `- Proposed change: ${pc}`);
+  const all = (text) => { const v = new V.Validator(path.sep, null, {}); v.lesson('LESSONS.md', text.split('\n')); return v.v.map((x) => x.rule); };
+  assert.deepEqual(all(lesson('hook and ci', 'kit/scripts/hook_x.js blocks it')), []);
+  assert.deepEqual(all(lesson('hook and ci', 'none')), ['lesson-no-change']);
+  assert.deepEqual(all(lesson('text-only', 'none (text-only, reason: needs judgement)')), []);
+  assert.deepEqual(all(lesson('text-only and ci', 'none')), ['lesson-enforced-by', 'lesson-debt-reason']);
+  assert.deepEqual(all(lesson('a reminder', 'kit/x.js')), ['lesson-enforced-by']);
 });
