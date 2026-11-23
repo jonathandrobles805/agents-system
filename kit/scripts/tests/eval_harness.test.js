@@ -651,6 +651,18 @@ test('redact: every credential form is redacted, and prose and code that only na
     ["secret = 'shh it is'", "secret = '***'"],
     ['private_key: abc', 'private_key: ***'],
     ['API_KEY=xyz', 'API_KEY=***'],
+    // finding: forms that were missed
+    [j('Authorization: token ', '0123456789abcdef0123456789abcdef'), 'Authorization: token ***'],
+    [j('Authorization: Basic ', 'dXNlcjpwYXNzd29yZA=='), 'Authorization: Basic ***'],
+    [j('x-api-key: ', 'abc123def456'), 'x-api-key: ***'],
+    [j('"x-api-key": "', 'abc123def456"'), '"x-api-key": "***"'],
+    [j('aws_secret_access_key = ', 'wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY'), 'aws_secret_access_key = ***'],
+    [j('eyJhbGciOiJIUzI1NiJ9', '.eyJzdWIiOiIxMjM0In0.abcDEF123_-x'), 'eyJ***'],
+    [j('AIza', 'SyA1234567890abcdefghijklmnopqrstu'), 'AIza***'],
+    [j('https://user:', 'secret@host.example.com/path'), 'https://user:***@host.example.com/path'],
+    [j('git clone https://x-access-token:', 's3cr/et@github.com/o/r'), 'git clone https://x-access-token:***@github.com/o/r'],
+    ['password: changeme', 'password: ***'],
+    ['login(password: Password)', 'login(password: ***)'],
   ];
   for (const [input, want] of redacted) {
     assert.equal(claude.redact(input), want, input);
@@ -666,7 +678,12 @@ test('redact: every credential form is redacted, and prose and code that only na
     // TypeScript annotations name a type, not a value
     'function login(password: string, token: number): void', 'interface C { api_key: string | undefined; secret: unknown }',
     'see https://example.com:8443/path', 'the bearer token is short',
+    'reads token: from header', 'const token = getToken();', 'const token = existingToken;', 'if (password == other) return',
   ];
+  // a value never takes the `)` that closes a call
+  assert.ok(claude.redact('login(password: Password)').endsWith(')'));
+  // decoded JSON: an Authorization header and an x-api-key under their own keys
+  assert.deepEqual(claude.redactDeep({ headers: { Authorization: j('token ', 'abc123def456abc1'), 'x-api-key': 'k1' } }), { headers: { Authorization: '***', 'x-api-key': '***' } });
   for (const text of untouched) {
     assert.equal(claude.redact(text), text, text);
     assert.equal(claude.redact(JSON.stringify({ text })), JSON.stringify({ text }), `in a JSONL line: ${text}`);

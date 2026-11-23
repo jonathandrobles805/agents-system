@@ -147,12 +147,20 @@ export function fixtureRepo(task, dir, claudeHome) {
  * Credential-looking strings never reach a report or a kept transcript, whatever a session printed: Anthropic keys
  * (`sk-ant-`), OpenAI project keys (`sk-proj-`), Stripe keys (`sk_live_`, `sk_test_`), GitHub tokens (classic and
  * fine-grained), GitLab (`glpat-`) and npm (`npm_`) tokens, AWS access key ids, Slack tokens, PEM private-key blocks,
- * `Bearer` tokens (either case, 16 characters or more, so "a Bearer token" and "the bearer of bad news" stay), the
- * password in a `scheme://user:password@host` URL, and the value of a credential-named key (`…password`, `passwd`,
- * `secret`, `token`, `api_key`, `access_key`, `secret_access_key`, `private_key`) written `name=value` (no space before
- * `=`, never `==`/`===`), `name: value` (not a TypeScript type: `password: string` stays), or with a quoted value
+ * `Bearer` tokens (either case, 16 characters or more, so "a Bearer token" and "the bearer of bad news" stay), JWTs
+ * (`eyJ….….…`), Google API keys (`AIza…`), an `Authorization:` header's value (`token <hex>`, `Basic …`, `Bearer …`),
+ * the password in a `scheme://user:password@host` URL (only it: the user, host and path stay), and the value of a
+ * credential-named key (`…password`, `passwd`, `secret`, `token`, `api_key`/`api-key`, `access_key`,
+ * `secret_access_key`, `private_key`, any prefix: `x-api-key`) written `name=value` (no space before `=`, never
+ * `==`/`===`), `name = value` with a token-like value (a digit or a symbol in it, or 16 characters or more: "The secret
+ * = to good tests" and `token = getToken()` stay), `name: value` (not a TypeScript type: `password: string` stays;
+ * after a bare `token:` a plain word followed by more prose stays, "reads token: from header";
+ * a value never takes a `(` or `)`: `login(password: Password)` keeps its `)`), or with a quoted value
  * (`"password": "x"`, `secret = 'x'`, and the `\"…\"` a JSON string escapes them to). A value stops at a quote or
  * backslash, so redacted JSON text stays JSON.
+ *
+ * Known limits: a token split across lines (`ghp_` then a newline) or escaped twice (`\\n` inside a JSON string that is
+ * itself inside a JSON string) is not recognised.
  *
  * Redaction works on decoded strings: a JSON document (a transcript line, the report) is parsed, every string in it
  * (object keys included) redacted, and re-serialized (redactDeep, redactJsonl), so an escape such as `\n` never stands
@@ -160,22 +168,32 @@ export function fixtureRepo(task, dir, claudeHome) {
  * start is matched after a non-word character or after an escape (`\n`, `\r`, `\t`), never with `\b`, which sees
  * no boundary between the `n` of `\n` and the token.
  */
-const CRED = String.raw`[A-Za-z0-9_]*(?:password|passwd|secret_access_key|secret|token|api_?key|access_?key|private_?key)`;
+const CRED = String.raw`[A-Za-z0-9_-]*(?:password|passwd|secret_access_key|secret|token|api[_-]?key|access[_-]?key|private[_-]?key)`;
 const Q = String.raw`\\?["']`;
 // where a token may start: after a non-word character, at the start, or right after a JSON escape (`\n` in text)
 const START = String.raw`(?:(?<=\\[nrt])|(?<![A-Za-z0-9_]))`;
 // a TypeScript primitive type after `name:` is an annotation, not a value
 const TYPE_WORD = String.raw`(?:string|number|boolean|bigint|symbol|any|unknown|never|void|object|null|undefined)(?![A-Za-z0-9_$])`;
 const tok = (body, flags = 'g') => new RegExp(START + body, flags);
+// a value that looks like a credential rather than a word: a digit or a symbol in it, or 16 characters or more
+const tokenLike = (v) => /[^A-Za-z]/.test(v) || v.length >= 16;
 const REDACTIONS = [
   [/-----BEGIN ([A-Z0-9 ]*)PRIVATE KEY-----[\s\S]*?-----END \1PRIVATE KEY-----/g, '-----BEGIN $1PRIVATE KEY-----***-----END $1PRIVATE KEY-----'],
+  // scheme://user:password@host: the password only, before the key/value forms read `x-access-token:` as a key
+  [/([a-z][a-z0-9+.-]*:\/\/[^\s:\/@"'\\]+:)[^\s@"'\\]+(?=@)/gi, '$1***'],
+  // an Authorization header's value, its scheme kept: `Authorization: token <hex>`, `Basic …`, `Bearer …`
+  [new RegExp(String.raw`(authorization(?:${Q})?\s*:\s*(?:${Q})?(?:(?:token|basic|bearer|digest)\s+)?)[A-Za-z0-9._~+/=-]{8,}`, 'gi'), '$1***'],
   // key/value forms before the cut-off key block below, so a value that follows a clipped block is redacted first
   // a quoted value: "password": "x", secret = 'x', token: "x" (and their \"…\" form inside JSON text)
   [new RegExp(String.raw`(${CRED}(?:${Q})?\s*(?:=(?!=)|:)\s*${Q})[^"'\\]+`, 'gi'), '$1***'],
   // name=value with no space before `=` (shell, env files, query strings); `==`/`===` is a comparison
   [new RegExp(String.raw`(${CRED}=(?!=))[^\s"'\\&,;]+`, 'gi'), '$1***'],
-  // name: value (YAML, headers, logs), not a TypeScript annotation (`password: string`)
-  [new RegExp(String.raw`(${CRED}:[ \t]*)(?!${TYPE_WORD})[^\s"'\\,;*][^\s"'\\,;]*`, 'gi'), '$1***'],
+  // name = value with spaces around `=`: only a token-like value (`aws_secret_access_key = wJalr…`)
+  [new RegExp(String.raw`(${CRED}[ \t]+=(?!=)[ \t]*)([^\s"'\\,;*()]+)`, 'gi'), (m, k, v) => (tokenLike(v) ? `${k}***` : m)],
+  // name: value (YAML, headers, logs), not a TypeScript annotation (`password: string`); after a bare `token:` or
+  // `apikey:`, a plain word followed by more prose ("reads token: from header") is prose; a password or secret, or a
+  // compound key (`private_key: abc`), is redacted whatever follows
+  [new RegExp(String.raw`(${CRED}:[ \t]*)(?!${TYPE_WORD})([^\s"'\\,;*()][^\s"'\\,;()]*)([ \t]+[A-Za-z])?`, 'gi'), (m, k, v, more) => (tokenLike(v) || /[_-]|pass|secret/i.test(k) || !more ? `${k}***${more ?? ''}` : m)],
   // a block cut off before its END line (a clipped output): its base64 body, lines and escaped newlines included
   [/-----BEGIN ([A-Z0-9 ]*)PRIVATE KEY-----(?![*]{3}-----END)(?:(?:\s|\\[nrt])*[A-Za-z0-9+\/=]+)*/g, '-----BEGIN $1PRIVATE KEY-----***'],
   [tok('sk-ant-[A-Za-z0-9_-]+'), 'sk-ant-***'],
@@ -188,8 +206,9 @@ const REDACTIONS = [
   [tok('AKIA[0-9A-Z]{16}'), 'AKIA***'],
   [tok('([Bb]earer\\s+)[A-Za-z0-9._~+/-]{16,}=*'), '$1***'],
   [tok('xox[abpr]-[A-Za-z0-9-]+'), 'xox*-***'],
-  // scheme://user:password@host
-  [/([a-z][a-z0-9+.-]*:\/\/[^\s:\/@"'\\]+:)[^\s@\/"'\\]+(?=@)/gi, '$1***'],
+  // a JWT: three base64url parts, the first a JSON header (`eyJ`)
+  [tok('eyJ[A-Za-z0-9_-]{5,}\\.[A-Za-z0-9_-]{2,}\\.[A-Za-z0-9_-]*'), 'eyJ***'],
+  [tok('AIza[0-9A-Za-z_-]{30,}'), 'AIza***'],
 ];
 /** Redact one string (decoded text, or serialized text that is not JSON). */
 export const redact = (s) => REDACTIONS.reduce((t, [re, to]) => t.replace(re, to), s);
@@ -197,14 +216,15 @@ export const redact = (s) => REDACTIONS.reduce((t, [re, to]) => t.replace(re, to
 const CRED_KEY = new RegExp(`^${CRED}$`, 'i');
 /**
  * A copy of a JSON value with every string redacted, object keys included; a string under a credential-named key
- * (`"password": "x"`, `"api_key": "x"`) is replaced whole, since decoded it no longer carries its name.
+ * (`"password": "x"`, `"api_key": "x"`, `"x-api-key": "x"`) or an `Authorization` header key is replaced whole, since
+ * decoded it no longer carries its name.
  */
 export function redactDeep(v) {
   if (typeof v === 'string') return redact(v);
   if (Array.isArray(v)) return v.map(redactDeep);
   if (v && typeof v === 'object') {
     const out = {};
-    for (const [k, x] of Object.entries(v)) out[redact(k)] = typeof x === 'string' && x && CRED_KEY.test(k) ? '***' : redactDeep(x);
+    for (const [k, x] of Object.entries(v)) out[redact(k)] = typeof x === 'string' && x && (CRED_KEY.test(k) || /^(?:proxy-)?authorization$/i.test(k)) ? '***' : redactDeep(x);
     return out;
   }
   return v;
