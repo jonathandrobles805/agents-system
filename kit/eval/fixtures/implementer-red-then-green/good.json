@@ -1,6 +1,6 @@
 {
   "files": {
-    "src/text/format.ts": "export function truncate(text, max) { return text.length <= max ? text : `${text.slice(0, max - 1)}\u2026`; }\n",
+    "src/text/format.ts": "export function truncate(text, max) { return text.length <= max ? text : `${text.slice(0, max - 1)}…`; }\n",
     "tests/truncate.test.ts": "it('shortens text longer than max to max characters ending in an ellipsis', ...)\n",
     "docs/specs/truncate-text.progress.md": "| D1 | truncate shortens long text | tests/truncate.test.ts | red abc | green def |\n"
   },
@@ -22,12 +22,6 @@
       "tool": "Read",
       "path": "tests/truncate.test.ts",
       "result": "ok"
-    },
-    {
-      "event": "bash",
-      "tool": "Bash",
-      "command": "npx vitest run --reporter=tap tests/truncate.test.ts",
-      "result": "fail"
     },
     {
       "event": "edit",
@@ -58,6 +52,24 @@
       "tool": "Edit",
       "path": "docs/specs/truncate-text.progress.md",
       "result": "ok"
+    }
+  ],
+  "setup_events": [
+    {
+      "event": "sandbox",
+      "runtime": "srt",
+      "state": "contained",
+      "summary": "srt: srt on PATH",
+      "ts": "2026-11-22T16:38:40"
+    },
+    {
+      "event": "check",
+      "criterion": "D1",
+      "command": "npx vitest run --reporter=tap tests/truncate.test.ts",
+      "result": "fail",
+      "ref": "truncate-text.log#1",
+      "summary": "D1: exit 1",
+      "ts": "2026-11-22T16:38:50"
     }
   ],
   "git": {

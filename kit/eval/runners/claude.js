@@ -311,14 +311,17 @@ export function eventFiles(root, cwd, laneRec) {
 /** Each file's line count now: where the session's own events start. */
 export const eventOffsets = (files) => files.map((f) => readEvents(f).length);
 
-/**
- * The events appended to `files` after `offsets`, in time order: stably sorted by their `ts` (K.appendEvent stamps every
- * event, to the second), so within one second the lane's own file comes first, then each file's own order.
- */
-export function eventsSince(files, offsets) {
+/** Lists of events (one per file, lane's first) in time order: stably by `ts` (K.appendEvent stamps it, to the second). */
+function byTime(lists) {
   const ts = (e) => String(e.ts ?? '');
-  return files.flatMap((f, i) => readEvents(f, offsets[i])).map((e, i) => [e, i]).sort(([a, i], [b, j]) => (ts(a) < ts(b) ? -1 : ts(a) > ts(b) ? 1 : i - j)).map(([e]) => e);
+  return lists.flat().map((e, i) => [e, i]).sort(([a, i], [b, j]) => (ts(a) < ts(b) ? -1 : ts(a) > ts(b) ? 1 : i - j)).map(([e]) => e);
 }
+
+/** The events appended to `files` after `offsets`, in time order (within one second, the lane's own file first). */
+export const eventsSince = (files, offsets) => byTime(files.map((f, i) => readEvents(f, offsets[i])));
+
+/** The events `files` held up to `offsets`: what the setup recorded before the session, in time order. */
+export const eventsBefore = (files, offsets) => byTime(files.map((f, i) => readEvents(f).slice(0, offsets[i])));
 
 function snapshot(root) {
   const files = {};
@@ -368,6 +371,8 @@ export async function run(task, { attempt = 0, timeoutMs = 20 * 60 * 1000, trans
     const kept = { worker: home && transcripts ? keepTranscripts(home.config, path.join(transcripts, 'worker')) : [], judge: [] };
     const files = snapshot(cwd);
     const events = eventsSince(evFiles, before);
+    // what the setup recorded before the session (the tester's red run in an implementer's lane): never the session's work
+    const setupEvents = eventsBefore(evFiles, before);
     const git = { log: spawnSync('git', ['log', '--oneline', '-20'], { cwd, encoding: 'utf8' }).stdout.trim().split('\n') };
     // the project's recorded test commands, so the scorer can tell a test run among the session's Bash calls
     const cmds = K.loadKitJson(cwd).commands ?? {};
@@ -398,7 +403,7 @@ export async function run(task, { attempt = 0, timeoutMs = 20 * 60 * 1000, trans
       }
     }
     // `output`: what the worker printed (its final answer with `claude -p`), redacted; a check may read it (lesson_proposed)
-    return { runner: name, variant: null, files, events, git, judge, test_commands: testCommands, transcripts: kept, ms: Date.now() - started, worker_command: work.command, worker_status: work.status, worker_signal: work.signal, worker_error: work.error, worker_stderr: work.stderr.slice(-2000), output: redact(work.stdout).slice(-20000), worker_agent: agent, warnings, judge_session: judgeSession };
+    return { runner: name, variant: null, files, events, setup_events: setupEvents, git, judge, test_commands: testCommands, transcripts: kept, ms: Date.now() - started, worker_command: work.command, worker_status: work.status, worker_signal: work.signal, worker_error: work.error, worker_stderr: work.stderr.slice(-2000), output: redact(work.stdout).slice(-20000), worker_agent: agent, warnings, judge_session: judgeSession };
   } finally {
     if (!process.env.KIT_EVAL_KEEP) fs.rmSync(dir, { recursive: true, force: true });
   }

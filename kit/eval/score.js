@@ -1,8 +1,9 @@
 #!/usr/bin/env node
 // Scorer for one eval task outcome (KIT-SPEC 11A, decision 0012). Pure: takes the task and the outcome, returns scores.
 //
-// An outcome is what a runner produced: { files: {rel: text}, events: [hook events], git: {commits: [...]}, judge: {criterion: 0|1},
-// test_commands: [the fixture's kit.json test commands] }.
+// An outcome is what a runner produced: { files: {rel: text}, events: [the session's hook events], setup_events: [the
+// events the setup recorded before the session], git: {commits: [...]}, judge: {criterion: 0|1}, test_commands: [the
+// fixture's kit.json test commands], output: the session's printed answer }.
 // Mechanical checks are hard metrics: any failure makes the task fail regardless of the rubric. The rubric score is the
 // share of criteria the judge marked met, graded on the end state the runner handed over, never on a transcript.
 import path from 'node:path';
@@ -62,14 +63,21 @@ export function testRuns(outcome) {
 
 /** The mechanical checks a task may name. Each returns { ok, why }. */
 export const CHECKS = {
-  /** A red test run was recorded before any green run (testRuns: a fail, then an ok). */
+  /**
+   * The session made a criterion's test green, and a red run came before its first green run: the session's own, or
+   * the red run the setup recorded for a done-criterion with `kit lane check` (the tester's; the implementer is told
+   * not to re-run it, kit/agents/implementer.md "Order of work"). The green run must be the session's: the setup's
+   * events (`outcome.setup_events`, all before the session) never count as one.
+   */
   red_before_green(outcome) {
     const tests = testRuns(outcome);
     const firstGreen = tests.findIndex((e) => e.result === 'ok');
     const firstRed = tests.findIndex((e) => e.result === 'fail');
-    if (firstGreen < 0) return { ok: false, why: 'no green test run recorded' };
+    const setupRed = (outcome.setup_events ?? []).filter((e) => e.event === 'check' && e.criterion && e.result === 'fail');
+    if (firstGreen < 0) return { ok: false, why: tests.length ? 'no green test run in the session' : 'no test run in the session' };
+    if (setupRed.length) return { ok: true, why: `red run of ${setupRed.map((e) => e.criterion).join(', ')} recorded by the setup (${setupRed[0].ref ?? 'kit lane check'}), green at session run ${firstGreen}` };
     if (firstRed < 0 || firstRed > firstGreen) return { ok: false, why: 'green run recorded without a red run before it' };
-    return { ok: true, why: `red at run ${firstRed}, green at run ${firstGreen}` };
+    return { ok: true, why: `red at session run ${firstRed}, green at session run ${firstGreen}` };
   },
   /**
    * A failing test run was recorded (testRuns): the tester's job ends with its tests red, so a green run is neither
