@@ -130,7 +130,7 @@ export function runCase(c, permissions, via, tmp) {
   // a call the kit's Bash guard refused (exit 2) is refused too; its tool result carries the guard's message
   const guarded = t.results.some((x) => x.error && /guard-bash: blocked/.test(x.text));
   // a guard case passes only on the guard's own refusal, which shows the guard ran
-  const got = c.kind === 'guard' ? (called && guarded ? 'denied' : called && c.ran({ repo, ...t }) ? 'approved' : 'inconclusive') : denied || (called && guarded) ? 'denied' : called && c.ran({ repo, ...t }) ? 'approved' : 'inconclusive';
+  const got = c.kind === 'guard' ? (called && guarded ? 'denied' : called && c.ran({ repo, ...t }) ? 'approved' : 'inconclusive') : c.kind === 'ask' ? (denied ? 'denied' : called && c.ran({ repo, ...t }) ? 'approved' : 'inconclusive') : denied || (called && guarded) ? 'denied' : called && c.ran({ repo, ...t }) ? 'approved' : 'inconclusive';
   const denials = denialList.map((d) => `${d.tool_name ?? ''} ${JSON.stringify(d.tool_input ?? {}).slice(0, 160)}`);
   return { id: c.id, via, kind: c.kind, rule: c.rule, expect: c.expect, got, ok: got === c.expect, exit: r.status, denials, calls: t.calls.map((x) => x.text), result: String(j?.result ?? r.stdout ?? '').slice(0, 300), stderr: (r.stderr ?? '').slice(0, 300) };
 }

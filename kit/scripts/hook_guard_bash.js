@@ -189,7 +189,9 @@ const DECISIONS = [['bootstrap'], ['lane', 'merge'], ['lane', 'resume-all']];
  * or in any command substitution. Such a command must name its script, and for `lane` its subcommand, as plain
  * lowercase words; an owner's decision must be written exactly `kit lane merge` (single spaces, nothing between; what follows is the
  * ask rule's `*`); it
- * must not run through xargs or continue over a backslash-newline. A guardrail: the container (Step 8) is the wall.
+ * must not run through xargs or continue over a backslash-newline. A guardrail for common forms: the shell is parsed only
+ * approximately (comments, here-docs, `$'…'`, `&>` and `xargs -I` are known misses); the ask rule and your prompt are the
+ * control, and the container (Step 8) is the wall.
  */
 export function kitDecisionDisguised(line, depth = 0) {
   for (const words of shellCommands(line)) {
@@ -200,7 +202,7 @@ export function kitDecisionDisguised(line, depth = 0) {
     const [kitWord, script, sub] = [words[k], words[k + 1], words[k + 2]];
     if (kitWord.raw !== 'kit') return `the kit command written in a quoted or escaped form (${kitWord.raw}); write it plainly as \`kit <script> …\``;
     if (words.cont) return 'a kit command continued over a backslash-newline; write it on one line';
-    if (script === undefined) continue;
+    if (script === undefined || (script.raw === script.value && /^(-h|--help)$/.test(script.value))) continue;
     if (!plainWord(script, /^[a-z0-9_]+$/)) return `a kit script name written in a computed or quoted form (${script.raw}); write it plainly as \`kit <script> …\``;
     if (script.value === 'lane' && sub !== undefined && !plainWord(sub, /^[a-z][a-z0-9-]*$/)) return `a kit lane subcommand written in a computed or quoted form (${sub.raw}); write it plainly as \`kit lane <subcommand> …\``;
     const decision = DECISIONS.find((d) => d.every((x, i) => words[k + 1 + i]?.value === x));
