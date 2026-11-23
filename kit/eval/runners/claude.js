@@ -29,22 +29,26 @@ export function available(env = process.env) {
 
 /**
  * A setup file's text: a string, or `{ "from": "<path under kit/eval>" }` for a file several tasks share. In either,
- * `{{eval:head}}` becomes the fixture's commit the setup is written against (a spec's Commit and approval lines).
+ * `{{eval:head}}` becomes the fixture's commit the setup is written against (a spec's Commit and approval lines), and
+ * in a lane step `{{eval:lane-base}}` and `{{eval:lane-head}}` the commit the lane started from and the lane's commit
+ * at that step (a review report's Diff and Head).
  */
-export function setupText(value, head) {
+export function setupText(value, head, lane = {}) {
   let text = value;
   if (typeof value !== 'string') {
     const src = path.resolve(EVAL_DIR, String(value?.from ?? ''));
     if (!value?.from || path.relative(EVAL_DIR, src).startsWith('..')) throw new Error(`eval setup: ${JSON.stringify(value)} is neither text nor { "from": "<path under kit/eval>" }`);
     text = fs.readFileSync(src, 'utf8');
   }
-  return text.replaceAll('{{eval:head}}', head);
+  text = text.replaceAll('{{eval:head}}', head);
+  for (const [k, v] of Object.entries({ 'lane-base': lane.base, 'lane-head': lane.head })) if (v) text = text.replaceAll(`{{eval:${k}}}`, v);
+  return text;
 }
 
-function writeSetupFiles(root, files, head) {
+function writeSetupFiles(root, files, head, lane = {}) {
   for (const [rel, value] of Object.entries(files ?? {})) {
     fs.mkdirSync(path.dirname(path.join(root, rel)), { recursive: true });
-    fs.writeFileSync(path.join(root, rel), setupText(value, head));
+    fs.writeFileSync(path.join(root, rel), setupText(value, head, lane));
   }
 }
 
@@ -71,8 +75,10 @@ export function setProgressCell(file, criterion, column, ref) {
  * The lane a task's goal names, made the way the kit makes one: `lane.js start` (precheck, worktree on wt/<slug> from
  * origin's base, lane.json, progress skeleton), then the task's steps, each a kit operation: `stage` (lane.js stage),
  * `write` (files in the worktree), `check` (lane.js check runs the command host-side and logs it; its log ref goes into
- * the progress row, and a run whose exit contradicts `record` stops the setup), `commit`, `template` (lane.js template).
- * Returns the worktree.
+ * the progress row, and a run whose exit contradicts `record` stops the setup), `commit`, `template` (lane.js template),
+ * `hook` (one of the kit's hook scripts run on a tool call's input, as Claude Code runs it, so the event it records is
+ * the hook's own; an exit other than `exit` stops the setup), `evidence` (lane.js evidence: the committed copy of the
+ * check log). Returns the worktree.
  */
 function startLane(root, dir, lane, env, head) {
   const laneJs = (args) => {
@@ -85,15 +91,26 @@ function startLane(root, dir, lane, env, head) {
   F.git(['clone', '-q', '--bare', root, path.join(dir, 'origin.git')], dir);
   F.git(['remote', 'add', 'origin', path.join(dir, 'origin.git')], root);
   const wt = last(laneJs(['start', lane.slug, '--repo', root])).worktree;
+  const short = () => F.git(['rev-parse', '--short', 'HEAD'], wt).trim();
+  const base = short();
   for (const step of lane.steps ?? []) {
     if (step.stage) laneJs(['stage', lane.slug, step.stage, '--repo', root]);
-    else if (step.write) writeSetupFiles(wt, step.write, head);
+    else if (step.write) writeSetupFiles(wt, step.write, head, { base, head: short() });
     else if (step.check) {
       const r = last(laneJs(['check', lane.slug, step.check, '--repo', root, '--', step.command]));
       if ((step.record === 'red') !== (r.exit !== 0)) throw new Error(`eval setup: the ${step.record} run of ${step.check} (${step.command}) exited ${r.exit}`);
       setProgressCell(path.join(wt, K.findLane(wt).work, `${lane.slug}.progress.md`), step.check, step.record, r.ref);
     } else if (step.commit) F.commitAll(wt, step.commit);
     else if (step.template) fs.writeFileSync(path.join(wt, step.to), laneJs(['template', step.template, '--slug', lane.slug, '--repo', wt]));
+    else if (step.hook) {
+      if (!/^hook_[a-z_]+\.js$/.test(step.hook)) throw new Error(`eval setup: '${step.hook}' is not one of the kit's hook scripts`);
+      // the tool call's input as Claude Code hands it to a hook; `file_path` is relative to the worktree
+      const ti = { ...(step.tool_input ?? {}) };
+      if (ti.file_path) ti.file_path = path.join(wt, ti.file_path);
+      const input = JSON.stringify({ session_id: 'kit-eval-setup', cwd: wt, hook_event_name: 'PreToolUse', tool_name: step.tool, tool_input: ti });
+      const r = spawnSync(process.execPath, [path.join(K.KIT_DIR, 'scripts', step.hook)], { cwd: wt, env, input, encoding: 'utf8' });
+      if (r.status !== (step.exit ?? 0)) throw new Error(`eval setup: ${step.hook} on ${step.tool} exited ${r.status}, expected ${step.exit ?? 0}: ${r.stderr}`);
+    } else if (step.evidence) laneJs(['evidence', lane.slug, '--repo', root]);
     else throw new Error(`eval setup: unknown lane step ${JSON.stringify(step)}`);
   }
   return wt;

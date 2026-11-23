@@ -575,3 +575,39 @@ test('the session diff leaves out a committed events file: workTree starts from 
   assert.match(diff, /changed by the session/);
   assert.ok(!diff.includes('events.jsonl') && !diff.includes('"event"'), diff);
 });
+
+test('claude runner setup: a lane step runs a kit hook as Claude Code would (its own event recorded), commits the evidence, and names the lane\'s commits', (t) => {
+  const dir = tmpPath(t);
+  const red = { check: 'D1', command: 'node -e "process.exit(1)"', record: 'red' };
+  const task = {
+    id: 'setup-steps', fixture: 'node-api',
+    setup: {
+      files: { 'src/text/format.ts': { from: 'setups/truncate-text/format.ts' }, 'tests/format.test.ts': { from: 'setups/truncate-text/format.test.ts' }, 'docs/specs/truncate-text.md': { from: 'setups/truncate-text/spec.approved.md' } },
+      lane: { slug: 'truncate-text', steps: [
+        { stage: 'test' }, red, { stage: 'build' },
+        { hook: 'hook_guard_edit.js', tool: 'Write', tool_input: { file_path: 'src/text/ellipsis.ts', content: 'x' }, exit: 2 },
+        { write: { 'src/text/format.ts': { from: 'setups/truncate-text/format.done.ts' } } },
+        { check: 'D1', command: 'node -e ""', record: 'green' },
+        { commit: 'truncate-text: D1' },
+        { write: { 'docs/specs/truncate-text.review.md': '- Diff: `{{eval:lane-base}}..{{eval:lane-head}}`\n' } },
+        { evidence: true }, { commit: 'truncate-text: evidence' },
+      ] },
+    },
+  };
+  const { root, cwd } = claude.fixtureRepo(task, dir, path.join(dir, 'home', '.claude'));
+  const events = fs.readFileSync(path.join(cwd, 'docs', 'specs', 'truncate-text.events.jsonl'), 'utf8').trim().split('\n').map((l) => JSON.parse(l));
+  // the hook's own record, as guard-edit writes it for an edit outside the spec
+  assert.deepEqual(events.filter((e) => e.event !== 'sandbox').map((e) => `${e.event}:${e.result}`), ['check:fail', 'blocked:blocked', 'check:ok']);
+  assert.match(events.find((e) => e.event === 'blocked').summary, /not in the spec's Files to change/);
+  assert.ok(!fs.existsSync(path.join(cwd, 'src', 'text', 'ellipsis.ts')), 'the hook refused the write; the setup did not make it');
+  // evidence committed: the events file and the check log copy are tracked, the tree is clean
+  assert.deepEqual(F.git(['ls-files', 'docs/specs'], cwd).trim().split('\n').filter((f) => /events|checks/.test(f)).sort(), ['docs/specs/truncate-text.checks.txt', 'docs/specs/truncate-text.events.jsonl']);
+  assert.equal(F.git(['status', '--porcelain'], cwd).trim(), '');
+  // the review's Diff names the lane's base (main after the eval setup commit) and the lane's commit at that step
+  const base = F.git(['rev-parse', '--short', 'main'], root).trim();
+  const d1 = F.git(['rev-parse', '--short', 'HEAD~1'], cwd).trim();
+  assert.equal(fs.readFileSync(path.join(cwd, 'docs', 'specs', 'truncate-text.review.md'), 'utf8'), `- Diff: \`${base}..${d1}\`\n`);
+  // a hook that does not exit as the step says stops the setup; only the kit's hook scripts run
+  assert.throws(() => claude.fixtureRepo({ ...task, setup: { ...task.setup, lane: { slug: 'truncate-text', steps: [{ stage: 'build' }, { hook: 'hook_guard_edit.js', tool: 'Write', tool_input: { file_path: 'src/text/format.ts' }, exit: 0 }] } } }, path.join(dir, 'b'), path.join(dir, 'b', 'home', '.claude')), /exited 2, expected 0/);
+  assert.throws(() => claude.fixtureRepo({ ...task, setup: { ...task.setup, lane: { slug: 'truncate-text', steps: [{ hook: '../lane.js', tool: 'Write' }] } } }, path.join(dir, 'c'), path.join(dir, 'c', 'home', '.claude')), /not one of the kit's hook scripts/);
+});
