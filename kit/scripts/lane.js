@@ -5,7 +5,8 @@
 //   lane.js scope <slug> --repo R             fix/incident: after the human approved the in-lane spec, check it and copy its criteria
 //   lane.js check <slug> <criterion> --repo R -- <command>   run a criterion's command in the lane, log it, print the log ref
 //   lane.js start <slug> --repo R [--base B]  precheck, then worktree ../<repo>-lanes/<slug> on branch wt/<slug> from fresh base; lane.json; progress skeleton
-//   lane.js stage <slug> <stage> --repo R     set lane.json stage (research|plan|build|review) and reset its clock
+//   lane.js advance <slug> <stage> --repo R   move the lane's stage in the store, if the table allows the move and its files justify it
+//   lane.js stage <slug> <stage> --repo R     the old name of advance
 //   lane.js launch <slug> --repo R [--exec]   host side: the command that starts the lane's headless session inside its sandbox (KIT-SPEC 10.9)
 //   lane.js resume <slug> --repo R            host side: next step from files alone, logged, plus the launch command (KIT-SPEC 10.11)
 //   lane.js stop --repo R --by N --reason T    kill switch: every lane refuses transitions and mutations (KIT-SPEC 10.13)
@@ -45,7 +46,8 @@ const DOC = `lane: the mechanical half of the pipeline commands. Agents do the t
 
   lane.js precheck <slug> --repo R          may /zi-implement start? (spec valid + approved, no open questions, WIP, no file overlap)
   lane.js start <slug> --repo R [--base B]  precheck, then worktree ../<repo>-lanes/<slug> on branch wt/<slug> from fresh base; lane.json; progress skeleton
-  lane.js stage <slug> <stage> --repo R     set lane.json stage (research|plan|build|review) and reset its clock
+  lane.js advance <slug> <stage> --repo R   move the lane's stage in the store, if the table allows the move and its files justify it
+  lane.js stage <slug> <stage> --repo R     the old name of advance
   lane.js wip --repo R                      active lanes vs WIP limit
   lane.js unknowns <draft spec> --repo R    exit 0 none / 3 resolve (1..3, one researcher each) / 2 research insufficient (>3)
   lane.js roadmap-set <slug> <status> --repo R
@@ -436,8 +438,9 @@ export function scope(root, slug) {
     writeText(prog, text.slice(0, at + sep.length) + rows.join('\n') + '\n' + text.slice(at + sep.length));
     added = rows.length;
   }
-  laneData.stage = 'test';
   writeText(lj, K.jsonDumps(laneData, { indent: 2 }) + '\n');
+  const moved = moveLane(root, slug, 'test');
+  if (moved.length) return refuse(moved);
   K.appendEvent(pjoin(wt, '.claude', 'session', 'events.jsonl'), { event: 'scope', criteria: added, summary: `spec approved; ${added} criteria copied into progress; lane at test` });
   process.stdout.write(K.jsonDumps({ slug, stage: 'test', criteria_added: added, files: [...mine].sort(cmp) }) + '\n');
   return 0;
@@ -664,6 +667,7 @@ export function start(root, slug, base) {
       ...(highRisk && sandbox.runtime !== 'container' ? { high_risk_waiver: { by: kget(waiver, 'by', ''), reason: kget(waiver, 'reason', '') } } : {}) },
   };
   writeText(pjoin(wt, '.claude', 'lane.json'), K.jsonDumps(lane, { indent: 2 }) + '\n');
+  recordMove(root, slug, wt, null, lane.stage, { mirror: false }); // a new record: the lane's first stage
   K.appendEvent(pjoin(sessionDir, 'events.jsonl'), { event: 'sandbox', runtime: sandbox.runtime, state: sandbox.state, summary: sandbox.state === 'degraded' ? `DEGRADED: ${sandbox.how}` : `${sandbox.runtime}: ${sandbox.how}` });
   if (highRisk && sandbox.runtime !== 'container') {
     K.appendEvent(pjoin(sessionDir, 'events.jsonl'), { event: 'waiver', what: 'high-risk without container', by: kget(waiver, 'by', ''), reason: kget(waiver, 'reason', ''), summary: `high-risk lane without container, waived by ${kget(waiver, 'by', '')}` });
@@ -754,17 +758,167 @@ export async function resume(root, slug) {
   return 0;
 }
 
-export function setStage(root, slug, stage) {
-  const wt = pjoin(lanesDir(root), slug);
+// ---------------------------------------------------------------------------
+// The lane store and lane.js advance (hardening plan Step 2, D2; 0016 E.1 Add 1)
+// ---------------------------------------------------------------------------
+
+/**
+ * A lane's record: one JSON file per lane in the MAIN checkout, under the gitignored .claude/session/, so it is outside
+ * the lane's worktree and never committed. advance (with start, scope and merged, which move through it) is its only
+ * writer. Fields: version, slug, stage, updated, and moves (each: from, to, at, the lane's HEAD commit). Later steps add
+ * their own fields beside these (the spec approval, a security sign-off, rounds); a move keeps every field it does not
+ * write.
+ */
+export function storeDir(root) {
+  return pjoin(root, '.claude', 'session', 'lanes');
+}
+
+export function storePath(root, slug) {
+  return pjoin(storeDir(root), `${slug}.json`);
+}
+
+/** The lane's record, or null when it has none (no lane, or a lane started before the store). */
+export function readStore(root, slug) {
+  const p = storePath(root, slug);
+  return K.isFile(p) ? asDict(JSON.parse(readText(p))) : null;
+}
+
+/** The lane's stage: the store's; for a lane started before the store, its lane.json's until its first move. */
+export function laneStage(root, slug) {
+  const rec = readStore(root, slug);
+  if (rec) return kget(rec, 'stage', null);
+  const lj = pjoin(lanesDir(root), slug, '.claude', 'lane.json');
+  return K.isFile(lj) ? kget(asDict(JSON.parse(readText(lj))), 'stage', null) : null;
+}
+
+/**
+ * The allowed moves: from each stage, the stages a lane may go to and what must justify the move (null: nothing; the
+ * move re-enters a stage or sends the work back). A move not listed is refused. lane.js start writes the first stage:
+ * build, or reproduce for a lane that opens before its spec (fix, incident).
+ *   scoped  the lane's spec is approved and its criteria are in progress.md (lane.js scope makes this move)
+ *   red     every criterion except a preserved (P) one cites a logged run of its test that failed
+ *   green   every criterion cites both runs it needs: red as above, and a logged run of its test that passed
+ *   merged  the lane branch is merged into the base (lane.js merged makes this move). A merge is a fact in git, gated
+ *           by GitHub and the owner's yes, so it is recorded from whatever stage the lane had reached.
+ */
+export const MOVES = {
+  reproduce: { reproduce: null, test: 'scoped', retro: 'merged' },
+  test: { test: null, build: 'red', retro: 'merged' },
+  build: { build: null, test: null, review: 'green', retro: 'merged' },
+  review: { review: null, build: null, retro: 'merged' },
+  retro: { retro: null },
+};
+
+/**
+ * The lane's criteria, and how many cite a real red and a real green run in its check log. A cell counts only when
+ * it names a logged run of the row's test with the right outcome, never because it contains `#` (#56).
+ */
+export function laneRuns(wt) {
+  const out = { criteria: 0, red: 0, green: 0, problems: { red: [], green: [] } };
+  const lane = wt ? K.findLane(wt) : null;
+  if (!lane || !K.isFile(lane.progressPath)) return out;
+  const logLines = K.isFile(lane.logPath) ? K.readLines(lane.logPath) : [];
+  const dc = K.parseSections(K.stripHtmlComments(K.readLines(lane.progressPath))).get('done-criteria');
+  for (const [, cells] of dc ? dc.tableRows() : []) {
+    if (cells.length < 5) continue;
+    out.criteria += 1;
+    const red = /^P\d+$/.test(cells[0].trim()) ? null : K.runRefProblem(lane, logLines, cells, 'red');
+    const green = K.runRefProblem(lane, logLines, cells, 'green');
+    if (red) out.problems.red.push(red);
+    else out.red += 1;
+    if (green) out.problems.green.push(green);
+    else out.green += 1;
+  }
+  return out;
+}
+
+/** Why wt/<slug> does not count as merged into the base, or null when it does. */
+export function notMerged(root, slug) {
+  const kit = asDict(K.loadKitJson(root));
+  const base = kget(kit, 'default_branch', 'main');
+  let tip = '';
+  try {
+    tip = pyStrip(K.git(['rev-parse', '--verify', '--quiet', `wt/${slug}`], root));
+  } catch (e) {
+    if (!isCalledProcessError(e)) throw e;
+  }
+  const startC = kget(kget(kget(kit, 'lanes', {}), slug, null) || {}, 'start_commit', null);
+  if (tip && (tip === startC || spawnSync('git', ['merge-base', '--is-ancestor', tip, base], { cwd: root }).status !== 0)) {
+    return `wt/${slug} is not merged into ${base} yet (no lane commits in ${base})`;
+  }
+  return null;
+}
+
+/** What is missing for a move that needs `why` (see MOVES); [] when nothing is. */
+function justify(root, slug, wt, why) {
+  if (why === 'red' || why === 'green') {
+    const runs = laneRuns(wt);
+    if (!runs.criteria) return ['progress.md has no done-criteria rows'];
+    return why === 'red' ? runs.problems.red : [...runs.problems.red, ...runs.problems.green];
+  }
+  if (why === 'scoped') {
+    const sp = pjoin(wt, K.findLane(wt).work, `${slug}.md`);
+    if (!K.isFile(sp) || !APPROVAL_RE.test(readText(sp))) return ["the lane's spec is not approved yet"];
+    return laneRuns(wt).criteria ? [] : ['progress.md has no done-criteria rows; kit lane scope copies them from the approved spec'];
+  }
+  if (why === 'merged') {
+    const m = notMerged(root, slug);
+    return m ? [m] : [];
+  }
+  return [];
+}
+
+/**
+ * Write the move to the store, keeping the record's other fields; a lane's first stage starts a new record. Then copy
+ * the stage into the lane's lane.json, which the in-lane hooks read (budget, done-check), with a fresh clock and that
+ * stage's budget, as lane.js stage did.
+ */
+function recordMove(root, slug, wt, from, to, { mirror = true } = {}) {
+  const now = K.isoSeconds();
+  let commit = null;
+  try {
+    commit = pyStrip(K.git(['rev-parse', 'HEAD'], wt));
+  } catch (e) {
+    if (!isCalledProcessError(e)) throw e;
+  }
+  const p = storePath(root, slug);
+  const prev = from !== null && K.isFile(p) ? asDict(JSON.parse(readText(p))) : {};
+  const moves = Array.isArray(prev.moves) ? prev.moves : [];
+  const rec = { version: 1, slug, ...prev, stage: to, updated: now, moves: [...moves, { from, to, at: now, commit }] };
+  fs.mkdirSync(path.dirname(p), { recursive: true });
+  const tmp = `${p}.${process.pid}.tmp`;
+  writeText(tmp, K.jsonDumps(rec, { indent: 2 }) + '\n');
+  fs.renameSync(tmp, p);
   const lf = pjoin(wt, '.claude', 'lane.json');
-  if (!K.isFile(lf)) return refuse([`no lane.json at ${lf}`]);
+  if (!mirror || !K.isFile(lf)) return;
   const data = asDict(JSON.parse(readText(lf)));
-  data.stage = stage;
-  data.started = K.isoSeconds();
+  data.stage = to;
+  data.started = now;
   // #41: a human's raise (budget_override.<stage>) outlives the stage change; it used to be overwritten by the default.
-  data.budget = { ...asDict(kget(kget(asDict(K.loadKitJson(root)), 'budgets', {}), stage, {})), ...asDict(kget(asDict(kget(data, 'budget_override', {})), stage, {})) };
+  data.budget = { ...asDict(kget(kget(asDict(K.loadKitJson(root)), 'budgets', {}), to, {})), ...asDict(kget(asDict(kget(data, 'budget_override', {})), to, {})) };
   writeText(lf, K.jsonDumps(data, { indent: 2 }) + '\n');
-  process.stdout.write(`lane ${slug}: stage ${stage}\n`);
+}
+
+/** Move a lane to `to` when MOVES allows it and the lane's files justify it. [] when moved, else why not. */
+export function moveLane(root, slug, to) {
+  if (isStopped(root)) return ['kill switch set; kit lane resume-all --by <name> first'];
+  const wt = pjoin(lanesDir(root), slug);
+  if (!K.isFile(pjoin(wt, '.claude', 'lane.json'))) return [`no lane for ${slug}; run kit lane start ${slug} first`];
+  const from = laneStage(root, slug);
+  if (!Object.hasOwn(MOVES, from)) return [`${slug} is at '${from}', which is not a lane stage (${Object.keys(MOVES).join(', ')})`];
+  const allowed = MOVES[from];
+  if (!Object.hasOwn(allowed, to)) return [`${slug}: ${from} → ${to} is not an allowed move; from ${from} a lane may go to ${Object.keys(allowed).join(', ')}`];
+  const missing = justify(root, slug, wt, allowed[to]);
+  if (missing.length) return [`${slug}: ${from} → ${to} refused:`, ...missing.map((m) => `  ${m}`)];
+  recordMove(root, slug, wt, from, to);
+  return [];
+}
+
+/** lane.js advance, and lane.js stage, its old name: the only way a lane's stage moves. */
+export function advance(root, slug, to) {
+  const problems = moveLane(root, slug, to);
+  if (problems.length) return refuse(problems);
+  process.stdout.write(`lane ${slug}: stage ${to}\n`);
   return 0;
 }
 
@@ -1112,8 +1266,7 @@ export function inLanePlanning(root, slug) {
     if (status === 'waiting-approval') return { slug, stage: 'approve', reason: 'spec waits for the human', needs_human: true };
     return { slug, stage: 'plan', reason: `spec status '${status}' is not waiting-approval; finish planning` };
   }
-  const lane = asDict(JSON.parse(readText(lj)));
-  if (['reproduce', 'plan', 'approve'].includes(String(kget(lane, 'stage', '')))) return { slug, stage: 'scope', reason: 'spec approved; kit lane scope copies its criteria and moves the lane to test' };
+  if (['reproduce', 'plan', 'approve'].includes(String(laneStage(root, slug) ?? ''))) return { slug, stage: 'scope', reason: 'spec approved; kit lane scope copies its criteria and moves the lane to test' };
   return null;
 }
 
@@ -1129,7 +1282,9 @@ async function nextStepFeature(root, slug, { KS, kit, rows, row, g }) {
   if (pos === 'ready-to-merge') return { slug, stage: 'wait-merge', reason: 'review PASS for HEAD; human merges', needs_human: true, pr: st.pr ?? null };
   if (pos === 'in-review') return { slug, stage: 'review', reason: 'lane built or review stale; run reviewer' };
   if (pos === 'building') {
-    const prog = st.progress;
+    // a criterion counts only when its cell names a logged run of its test with the right outcome, never for a bare
+    // `#` (#56); lane.js advance checks the same runs before it moves the lane
+    const prog = laneRuns(st.worktree);
     if (prog.criteria && prog.red < prog.criteria) return { slug, stage: 'test', reason: `${prog.red}/${prog.criteria} criteria have a red run; tester first` };
     if (prog.criteria && prog.green === prog.criteria) return { slug, stage: 'review', reason: 'all criteria green; review' };
     return { slug, stage: 'build', reason: `${prog.green}/${prog.criteria} green` };
@@ -1375,8 +1530,10 @@ export async function main(argv = process.argv.slice(2)) {
   }
   let s = sub.addParser('check');
   s.addArgument('slug'); s.addArgument('criterion'); s.addArgument('command', { nargs: '*' }); s.addArgument('--repo', { default: '.' });
-  s = sub.addParser('stage');
-  s.addArgument('slug'); s.addArgument('stage', { choices: ['research', 'reproduce', 'plan', 'test', 'build', 'review'] }); s.addArgument('--repo', { default: '.' });
+  for (const name of ['advance', 'stage']) {
+    s = sub.addParser(name);
+    s.addArgument('slug'); s.addArgument('stage', { choices: Object.keys(MOVES) }); s.addArgument('--repo', { default: '.' });
+  }
   s = sub.addParser('ci');
   s.addArgument('slug', { nargs: '?' }); s.addArgument('--repo', { default: '.' }); s.addArgument('--pr'); s.addArgument('--wait', { action: 'store_true' }); s.addArgument('--timeout-min', { type: parseInt, default: 30 });
   s = sub.addParser('publish');
@@ -1445,7 +1602,7 @@ export async function main(argv = process.argv.slice(2)) {
     return 0;
   }
   if (a.cmd === 'launch') return launch(root, a.slug, { exec: !!a.exec, prompt: a.prompt ?? null });
-  if (a.cmd === 'stage') return setStage(root, a.slug, a.stage);
+  if (a.cmd === 'advance' || a.cmd === 'stage') return advance(root, a.slug, a.stage);
   if (a.cmd === 'finish') return finish(root, a.slug);
   if (a.cmd === 'next-step') {
     process.stdout.write(K.jsonDumps(await nextStep(root, a.slug)) + '\n');
@@ -1502,23 +1659,18 @@ export async function main(argv = process.argv.slice(2)) {
   }
   if (a.cmd === 'merged') {
     // Verify in git before writing the word: refuse to mark a lane merged that is not an ancestor of base.
-    const kit = asDict(K.loadKitJson(root));
-    const base = kget(kit, 'default_branch', 'main');
-    let tip = '';
-    try {
-      tip = pyStrip(K.git(['rev-parse', '--verify', '--quiet', `wt/${a.slug}`], root));
-    } catch (e) {
-      if (!isCalledProcessError(e)) throw e;
-    }
-    const startC = kget(kget(kget(kit, 'lanes', {}), a.slug, null) || {}, 'start_commit', null);
-    if (tip && (tip === startC || spawnSync('git', ['merge-base', '--is-ancestor', tip, base], { cwd: root }).status !== 0)) {
-      return refuse([`wt/${a.slug} is not merged into ${base} yet (no lane commits in ${base})`]);
-    }
+    const unmerged = notMerged(root, a.slug);
+    if (unmerged) return refuse([unmerged]);
     // The worktree is about to go, and with it the gitignored check log every log#N citation points at (#35).
     const gaps = evidenceGaps(root, a.slug);
     if (gaps.length) {
       return refuse([...gaps.map((g) => `evidence: ${g}`),
         `Run: kit lane evidence ${a.slug} --repo <main repo>, then commit the result on the lane branch before merging. Without it the merged progress and review files cite a log nobody can open.`]);
+    }
+    // the lane's stage moves to retro: its evidence is committed and merged (#107 reads this to seal it)
+    if (K.isFile(pjoin(lanesDir(root), a.slug, '.claude', 'lane.json'))) {
+      const moved = moveLane(root, a.slug, 'retro');
+      if (moved.length) return refuse(moved);
     }
     const cols = a.pr ? { pr: a.pr } : {};
     const ok = roadmapSet(root, a.slug, 'merged', { lane: '—', ...cols });

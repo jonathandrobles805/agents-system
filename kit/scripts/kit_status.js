@@ -8,7 +8,7 @@
 //   merged            ROADMAP status merged
 //   escalated         progress.md Escalation filled (Attempts/Failure without placeholders)
 //   ready-to-merge    review report exists, validates, Verdict PASS, Head matches lane HEAD
-//   in-review         review report exists (any verdict) or lane stage == review
+//   in-review         review report exists (any verdict) or the store says stage review
 //   building          worktree exists with lane.json
 //   waiting-approval  spec exists, no approval line
 //   planning          spec exists with status draft, or ROADMAP says planning
@@ -33,7 +33,7 @@ Lane position rules (first match wins):
   merged            ROADMAP status merged
   escalated         progress.md Escalation filled (Attempts/Failure without placeholders)
   ready-to-merge    review report exists, validates, Verdict PASS, Head matches lane HEAD
-  in-review         review report exists (any verdict) or lane stage == review
+  in-review         review report exists (any verdict) or the store says stage review
   building          worktree exists with lane.json
   waiting-approval  spec exists, no approval line
   planning          spec exists with status draft, or ROADMAP says planning
@@ -167,6 +167,8 @@ export function laneState(root, row, kit) {
   const hasWt = K.isFile(pjoin(wt, '.claude', 'lane.json'));
   const base = kget(kit, 'default_branch', 'main');
   const laneJson = hasWt ? L.asDict(JSON.parse(readText(pjoin(wt, '.claude', 'lane.json')))) : {};
+  // the stage is the store's (lane.js advance); a lane started before the store has only its lane.json's
+  const stage = L.readStore(root, slug)?.stage ?? kget(laneJson, 'stage', null);
   const docsRoot = hasWt ? wt : root;
   // inside a lane the artifacts are where that lane recorded them (Lane.work); outside, where the project says now
   const work = hasWt ? (K.findLane(wt)?.work ?? K.workRoot(root)) : K.workRoot(root);
@@ -204,7 +206,7 @@ export function laneState(root, row, kit) {
   if (row.status === 'merged' || mergedInGit) pos = 'merged';
   else if (prog.escalated) pos = 'escalated';
   else if (rev.exists && rev.valid && rev.verdict === 'PASS' && rev.head_matches) pos = 'ready-to-merge';
-  else if (rev.exists || kget(laneJson, 'stage', null) === 'review') pos = 'in-review';
+  else if (rev.exists || stage === 'review') pos = 'in-review';
   else if (hasWt) pos = 'building';
   else if (K.isFile(spec) && !approved) pos = 'waiting-approval';
   else if (K.isFile(spec) && approved) pos = 'approved';
@@ -215,7 +217,7 @@ export function laneState(root, row, kit) {
   return {
     feature: row.feature, slug, milestone: row.milestone, roadmap_status: row.status, position: pos, needs_you: needsYou,
     risk: specHdr.get('risk') ?? null, spec: K.isFile(spec) ? relativeTo(root, spec) : null, approved,
-    worktree: hasWt ? wt : null, branch: kget(laneJson, 'branch', null), stage: kget(laneJson, 'stage', null), started: kget(laneJson, 'started', null),
+    worktree: hasWt ? wt : null, branch: kget(laneJson, 'branch', null), stage, started: kget(laneJson, 'started', null),
     sandbox: hasWt ? L.asDict(kget(laneJson, 'sandbox', {})) : null, // runtime and state, derived at lane start (KIT-SPEC 10.9); never asserted by an agent
     cost: hasWt && showCost(root) ? laneCost(root, slug) : null, // optional (kit.json telemetry.show_cost); from telemetry only (KIT-SPEC 9.4)
     behind_base: behind, ahead_base: ahead, head: head ? headCp(head, 10) : null,

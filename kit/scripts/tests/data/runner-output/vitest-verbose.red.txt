@@ -1,0 +1,53 @@
+
+ RUN  v2.1.9 /tmp/vcap
+
+ × tests/truncate.test.ts > truncate > shortens text longer than max to max characters ending in an ellipsis
+   → expected undefined to be 'hell…' // Object.is equality
+ × tests/nested.test.ts > outer > inner > adds two numbers
+   → expected 2 to be 3 // Object.is equality
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 2 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  tests/nested.test.ts > outer > inner > adds two numbers
+AssertionError: expected 2 to be 3 // Object.is equality
+
+- Expected
++ Received
+
+- 3
++ 2
+
+ ❯ tests/nested.test.ts:4:50
+      2| describe('outer', () => {
+      3|   describe('inner', () => {
+      4|     it('adds two numbers', () => { expect(1 + 1).toBe(3); });
+       |                                                  ^
+      5|     it.skip('is skipped', () => {});
+      6|   });
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/2]⎯
+
+ FAIL  tests/truncate.test.ts > truncate > shortens text longer than max to max characters ending in an ellipsis
+AssertionError: expected undefined to be 'hell…' // Object.is equality
+
+- Expected: 
+"hell…"
+
++ Received: 
+undefined
+
+ ❯ tests/truncate.test.ts:6:42
+      4|   it('shortens text longer than max to max characters ending in an ell…
+      5|     const truncate = (format as { truncate?: (text: string, max: numbe…
+      6|     expect(truncate?.('hello world', 5)).toBe('hell…');
+       |                                          ^
+      7|     expect(truncate?.('hi', 5)).toBe('hi');
+      8|   });
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/2]⎯
+
+ Test Files  2 failed (2)
+      Tests  2 failed | 1 skipped (3)
+   Start at  13:33:35
+   Duration  313ms (transform 32ms, setup 0ms, collect 32ms, tests 10ms, environment 0ms, prepare 71ms)
+

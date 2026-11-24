@@ -786,7 +786,7 @@ test('README counts 19 planted faults; the suite runs 54 [inverts at Step 7]', (
   assert.match(read(REPO, 'README.md'), /the 19 faults from the spec/, 'DEFECT: the count is written by hand');
   const run = read(REPO, 'planted-faults', 'run.js');
   const ids = new Set([...run.matchAll(/\brecord\((\d+),/g)].map((m) => Number(m[1])));
-  assert.equal(ids.size, 54, 'the suite defines 54 (S0 added #46; #68 added #47, #48; 0016 E.11 added #49; 0016 E.7 added #50; hardening plan D3 added #51; #57-#59 added #52; #106 added #53; the shell scope fix added #54)');
+  assert.equal(ids.size, 55, 'the suite defines 55 (S0 added #46; #68 added #47, #48; 0016 E.11 added #49; 0016 E.7 added #50; hardening plan D3 added #51; #57-#59 added #52; #106 added #53; the shell scope fix added #54; hardening plan Step 2 added #55)');
 });
 
 test('the generated audit names a commit that is not HEAD [inverts at Step 7]', () => {
@@ -1299,8 +1299,8 @@ test('#32 the tester\'s red runs are not fix attempts', () => {
   const md = read(KIT, 'skills', 'zi-implement', 'SKILL.md');
   const testerAt = md.indexOf('Spawn the `tester`');
   // decision 0017 step 7: the skill names its argument `$slug`
-  const stageTest = md.indexOf('stage $slug test');
-  const stageBuild = md.indexOf('stage $slug build');
+  const stageTest = md.indexOf('advance $slug test');
+  const stageBuild = md.indexOf('advance $slug build');
   assert.ok(stageTest > 0, 'implement.md sets the test stage');
   assert.ok(stageTest < testerAt, 'before the tester runs');
   assert.ok(stageBuild > testerAt, `and only reaches build after it: test@${stageTest} tester@${testerAt} build@${stageBuild}`);

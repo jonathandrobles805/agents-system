@@ -1,0 +1,35 @@
+
+[1m[7m[36m RUN [39m[27m[22m [36mv2.1.9 [39m[90m/tmp/vcap[39m
+
+ [31m❯[39m tests/truncate.test.ts [2m([22m[2m1 test[22m[2m | [22m[31m1 failed[39m[2m)[22m[90m 4[2mms[22m[39m
+[31m   [31m×[31m truncate[2m > [22mshortens text longer than max to max characters ending in an ellipsis[90m 4[2mms[22m[31m[39m
+[31m     → expected undefined to be 'hell…' // Object.is equality[39m
+
+[31m⎯⎯⎯⎯⎯⎯⎯[1m[7m Failed Tests 1 [27m[22m⎯⎯⎯⎯⎯⎯⎯[39m
+
+[31m[1m[7m FAIL [27m[22m[39m tests/truncate.test.ts[2m > [22mtruncate[2m > [22mshortens text longer than max to max characters ending in an ellipsis
+[31m[1mAssertionError[22m: expected undefined to be 'hell…' // Object.is equality[39m
+
+[32m- Expected:[39m 
+"hell…"
+
+[31m+ Received:[39m 
+undefined
+
+[36m [2m❯[22m tests/truncate.test.ts:[2m6:42[22m[39m
+    [90m  4| [39m  [34mit[39m([32m'shortens text longer than max to max characters ending in an ell[39m…
+    [90m  5| [39m    [35mconst[39m truncate [33m=[39m (format [35mas[39m { truncate[33m?[39m[33m:[39m (text[33m:[39m string[33m,[39m max[33m:[39m numbe…
+    [90m  6| [39m    [34mexpect[39m([34mtruncate[39m[33m?.[39m([32m'hello world'[39m[33m,[39m [34m5[39m))[33m.[39m[34mtoBe[39m([32m'hell…'[39m)[33m;[39m
+    [90m   | [39m                                         [31m^[39m
+    [90m  7| [39m    [34mexpect[39m([34mtruncate[39m[33m?.[39m([32m'hi'[39m[33m,[39m [34m5[39m))[33m.[39m[34mtoBe[39m([32m'hi'[39m)[33m;[39m
+    [90m  8| [39m  })[33m;[39m
+
+[31m[2m⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯[22m[39m
+
+[2m Test Files [22m [1m[31m1 failed[39m[22m[90m (1)[39m
+[2m      Tests [22m [1m[31m1 failed[39m[22m[90m (1)[39m
+[2m   Start at [22m 13:50:50
+[2m   Duration [22m 165ms[2m (transform 28ms, setup 0ms, collect 24ms, tests 4ms, environment 0ms, prepare 34ms)[22m
+
+
+::error file=/tmp/vcap/tests/truncate.test.ts,title=tests/truncate.test.ts > truncate > shortens text longer than max to max characters ending in an ellipsis,line=6,column=42::AssertionError: expected undefined to be 'hell…' // Object.is equality%0A%0A- Expected: %0A"hell…"%0A%0A+ Received: %0Aundefined%0A%0A ❯ tests/truncate.test.ts:6:42%0A%0A

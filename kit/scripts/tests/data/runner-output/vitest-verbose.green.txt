@@ -1,0 +1,11 @@
+
+ RUN  v2.1.9 /tmp/vcap
+
+ ✓ tests/truncate.test.ts > truncate > shortens text longer than max to max characters ending in an ellipsis
+ ✓ tests/nested.test.ts > outer > inner > adds two numbers
+
+ Test Files  2 passed (2)
+      Tests  2 passed | 1 skipped (3)
+   Start at  13:33:37
+   Duration  301ms (transform 37ms, setup 0ms, collect 34ms, tests 3ms, environment 0ms, prepare 68ms)
+

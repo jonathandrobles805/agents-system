@@ -2,7 +2,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
-import { git, commitAll } from './fixtures.js';
+import { spawnSync } from 'node:child_process';
+import { git, commitAll, nodeApi } from './fixtures.js';
 import { runScript, setEnv, tmpPath } from './helpers.js';
 import { project, spec, review } from './testdata.js';
 import * as P from '../permission_probe.js';
@@ -146,8 +147,10 @@ test('stage and finish', (t) => {
   const { root } = project(t);
   const out = JSON.parse(lane('start', 'refund-route', '--repo', root).stdout);
   const wt = out.worktree;
-  assert.equal(lane('stage', 'refund-route', 'review', '--repo', root).returncode, 0);
-  assert.equal(JSON.parse(read(wt, '.claude', 'lane.json')).stage, 'review');
+  // lane.js stage is the old name of advance: the same table, the same store
+  assert.equal(lane('stage', 'refund-route', 'test', '--repo', root).returncode, 0);
+  assert.equal(JSON.parse(read(wt, '.claude', 'lane.json')).stage, 'test');
+  assert.equal(JSON.parse(read(root, '.claude', 'session', 'lanes', 'refund-route.json')).stage, 'test');
   const r = lane('finish', 'refund-route', '--repo', root);
   assert.equal(r.returncode, 0, r.stderr);
   assert.ok(!fs.existsSync(wt));
@@ -156,21 +159,114 @@ test('stage and finish', (t) => {
   assert.ok(!('refund-route' in JSON.parse(read(root, '.claude', 'kit.json')).lanes));
 });
 
-test('#41 a raised review budget survives lane.js stage review', (t) => {
+test('#41 a raised budget survives a stage change', (t) => {
   // A human raised the review budget to 400/4h; the next lane.js stage review put it back to the default and the
   // budget hook stopped the lane again at 250 calls. A raise recorded in budget_override.<stage> outlives the stage change.
   const { root } = project(t);
   const wt = JSON.parse(lane('start', 'refund-route', '--repo', root).stdout).worktree;
   const lf = path.join(wt, '.claude', 'lane.json');
   const d = JSON.parse(fs.readFileSync(lf, 'utf8'));
-  d.budget_override = { review: { tool_calls: 400, hours: 4 } };
+  d.budget_override = { test: { tool_calls: 400, hours: 4 } };
   fs.writeFileSync(lf, JSON.stringify(d, null, 2));
-  assert.equal(lane('stage', 'refund-route', 'review', '--repo', root).returncode, 0);
+  assert.equal(lane('advance', 'refund-route', 'test', '--repo', root).returncode, 0);
   const after = JSON.parse(fs.readFileSync(lf, 'utf8'));
-  assert.equal(after.stage, 'review');
+  assert.equal(after.stage, 'test');
   assert.equal(after.budget.tool_calls, 400, JSON.stringify(after.budget));
   assert.equal(after.budget.hours, 4, JSON.stringify(after.budget));
-  assert.deepEqual(after.budget_override, { review: { tool_calls: 400, hours: 4 } }, 'the override itself is kept');
+  assert.deepEqual(after.budget_override, { test: { tool_calls: 400, hours: 4 } }, 'the override itself is kept');
+});
+
+// hardening plan Step 2: lane.js advance is the only writer of the lane store, through one table of allowed moves
+const storeOf = (root) => JSON.parse(read(root, '.claude', 'session', 'lanes', 'refund-route.json'));
+const LOG_RED = '=== 2026-11-11T10:00:00 test: npx vitest run -> exit 1\nnot ok 1 - exposes refund\n\n';
+const LOG_GREEN = '=== 2026-11-11T10:05:00 test: npx vitest run -> exit 0\nok 1 - exposes refund\n\n';
+
+test('advance: start writes the store; an illegal move is refused with a reason; each legal move is recorded with its commit', (t) => {
+  setEnv(t, 'KIT_STATUS_NO_GH', '1');
+  const { root } = project(t);
+  const wt = JSON.parse(lane('start', 'refund-route', '--repo', root).stdout).worktree;
+  assert.equal(storeOf(root).stage, 'build');
+  assert.deepEqual(storeOf(root).moves.map((m) => [m.from, m.to]), [[null, 'build']]);
+  // the store is in the main checkout, ignored by git, and not in the lane
+  assert.equal(git(['status', '--porcelain'], root).includes('.claude/session'), false);
+  assert.ok(!fs.existsSync(path.join(wt, '.claude', 'session', 'lanes')));
+  let r = lane('advance', 'refund-route', 'retro', '--repo', root);
+  assert.ok(r.returncode === 2 && r.stderr.includes('not merged'), r.stderr);
+  assert.equal(lane('advance', 'refund-route', 'test', '--repo', root).returncode, 0);
+  r = lane('advance', 'refund-route', 'review', '--repo', root);
+  assert.ok(r.returncode === 2 && r.stderr.includes('test → review is not an allowed move') && r.stderr.includes('may go to test, build, retro'), r.stderr);
+  r = lane('advance', 'refund-route', 'plan', '--repo', root);
+  assert.notEqual(r.returncode, 0, 'a stage outside the table is not even accepted as an argument');
+  // the lane's own lane.json is a copy for the in-lane hooks; the store wins where they differ
+  const lf = path.join(wt, '.claude', 'lane.json');
+  assert.equal(JSON.parse(read(lf)).stage, 'test');
+  write(lf, read(lf).replace('"stage": "test"', '"stage": "review"'));
+  const st = JSON.parse(runScript('kit_status.js', ['--repo', root, '--json']).stdout).lanes.find((l) => l.slug === 'refund-route');
+  assert.ok(st.stage === 'test' && st.position === 'building', JSON.stringify({ stage: st.stage, position: st.position }));
+  r = lane('advance', 'refund-route', 'review', '--repo', root);
+  assert.ok(r.returncode === 2 && r.stderr.includes('test → review is not an allowed move'), 'a lane rewriting its lane.json does not move its stage');
+  // fields a later step adds to the record are kept by every move
+  const sp = path.join(root, '.claude', 'session', 'lanes', 'refund-route.json');
+  write(sp, JSON.stringify({ ...storeOf(root), approval: { by: 'Jonathan Robles' } }));
+  write(path.join(wt, '.claude/session/refund-route.log'), LOG_RED + LOG_GREEN);
+  const prog = path.join(wt, 'docs/specs/refund-route.progress.md');
+  write(prog, read(prog).replaceAll('| — | — |', '| refund-route.log#1 | — |'));
+  assert.equal(lane('advance', 'refund-route', 'build', '--repo', root).returncode, 0);
+  write(prog, read(prog).replaceAll('| refund-route.log#1 | — |', '| refund-route.log#1 | refund-route.log#4 |'));
+  assert.equal(lane('advance', 'refund-route', 'review', '--repo', root).returncode, 0);
+  assert.equal(lane('advance', 'refund-route', 'build', '--repo', root).returncode, 0, 'a review FAIL sends the work back');
+  assert.equal(lane('advance', 'refund-route', 'review', '--repo', root).returncode, 0);
+  const rec = storeOf(root);
+  assert.deepEqual(rec.moves.map((m) => m.to), ['build', 'test', 'build', 'review', 'build', 'review']);
+  assert.deepEqual(rec.approval, { by: 'Jonathan Robles' });
+  assert.ok(rec.moves.every((m) => /^[0-9a-f]{40}$/.test(m.commit)));
+  // merged in git: lane.js merged moves the lane to retro, where its evidence is sealed (#107 reads this)
+  write(path.join(wt, 'src', 'api', 'routes.ts'), '// built\n');
+  commitAll(wt, 'D1');
+  lane('evidence', 'refund-route', '--repo', root);
+  commitAll(wt, 'evidence');
+  git(['merge', '-q', '--no-ff', 'wt/refund-route', '-m', 'merge'], root);
+  r = lane('merged', 'refund-route', '--repo', root);
+  assert.equal(r.returncode, 0, r.stderr);
+  assert.equal(storeOf(root).stage, 'retro');
+  assert.equal(JSON.parse(read(lf)).stage, 'retro');
+  // the kill switch refuses every move
+  lane('stop', '--repo', root, '--by', 'Jonathan', '--reason', 'test');
+  r = lane('advance', 'refund-route', 'retro', '--repo', root);
+  assert.ok(r.returncode === 2 && r.stderr.includes('kill switch'), r.stderr);
+});
+
+test('advance (#56): a progress cell containing # moves no stage unless it names a logged run of its test', (t) => {
+  setEnv(t, 'KIT_STATUS_NO_GH', '1');
+  const { root } = project(t);
+  fs.mkdirSync(path.join(root, 'docs', 'goals'));
+  write(path.join(root, 'docs', 'goals', 'refund-route.md'), GOAL);
+  const wt = JSON.parse(lane('start', 'refund-route', '--repo', root).stdout).worktree;
+  assert.equal(lane('advance', 'refund-route', 'test', '--repo', root).returncode, 0);
+  const prog = path.join(wt, 'docs/specs/refund-route.progress.md');
+  write(prog, read(prog).replaceAll('| — | — |', '| see #3 | #4 |'));
+  let r = lane('advance', 'refund-route', 'build', '--repo', root);
+  assert.ok(r.returncode === 2 && r.stderr.includes('test → build refused') && r.stderr.includes('D1: red run ref see #3 points past the end'), r.stderr);
+  // a logged run of another test is no red run for this one
+  write(path.join(wt, '.claude/session/refund-route.log'), LOG_RED.replace('exposes refund', 'charges'));
+  write(prog, read(prog).replace('| see #3 | #4 |', '| refund-route.log#1 | — |'));
+  r = lane('advance', 'refund-route', 'build', '--repo', root);
+  assert.ok(r.returncode === 2 && r.stderr.includes("has no result for '`tests/routes.test.ts::exposes refund`'"), r.stderr);
+  assert.equal(JSON.parse(lane('next-step', 'refund-route', '--repo', root).stdout).stage, 'test', 'next-step agrees: tester first');
+  assert.equal(storeOf(root).stage, 'test');
+  write(path.join(wt, '.claude/session/refund-route.log'), LOG_RED);
+  assert.equal(JSON.parse(lane('next-step', 'refund-route', '--repo', root).stdout).stage, 'build');
+  assert.equal(lane('advance', 'refund-route', 'build', '--repo', root).returncode, 0);
+});
+
+test('advance: a lane started before the store keeps working; its lane.json stage is read until its first move', (t) => {
+  const { root } = project(t);
+  const wt = JSON.parse(lane('start', 'refund-route', '--repo', root).stdout).worktree;
+  fs.rmSync(path.join(root, '.claude', 'session', 'lanes'), { recursive: true });
+  const lf = path.join(wt, '.claude', 'lane.json');
+  write(lf, read(lf).replace('"stage": "build"', '"stage": "review"'));
+  assert.equal(lane('advance', 'refund-route', 'build', '--repo', root).returncode, 0);
+  assert.deepEqual(storeOf(root).moves.map((m) => [m.from, m.to]), [['review', 'build']]);
 });
 
 test('wip count comes from the lane worktrees, not from ROADMAP', (t) => {
@@ -300,8 +396,12 @@ test('next step walks the pipeline from facts', (t) => {
   // lane, no red runs -> test (tester first)
   assert.equal(stage().stage, 'test');
   const prog = path.join(wt, 'docs/specs/refund-route.progress.md');
+  // a cell containing `#` is not a run (#56): it must name a logged run of its own test
   write(path.join(wt, '.claude/session/refund-route.log'), '=== 2026-11-11T10:00:00 test: npm test -> exit 1\n1 failed\n\n=== 2026-11-11T10:05:00 test: npm test -> exit 0\n1 passed\n');
-  write(prog, read(prog).replaceAll('| — | — |', '| refund-route.log#1 | — |'));
+  write(prog, read(prog).replaceAll('| — | — |', '| refund-route.log#1 | refund-route.log#4 |'));
+  assert.equal(stage().stage, 'test');
+  write(path.join(wt, '.claude/session/refund-route.log'), '=== 2026-11-11T10:00:00 test: npx vitest run -> exit 1\nnot ok 1 - exposes refund\n\n=== 2026-11-11T10:05:00 test: npx vitest run -> exit 0\nok 1 - exposes refund\n');
+  write(prog, read(prog).replaceAll('| refund-route.log#1 | refund-route.log#4 |', '| refund-route.log#1 | — |'));
   assert.equal(stage().stage, 'build');
   write(prog, read(prog).replaceAll('| refund-route.log#1 | — |', '| refund-route.log#1 | refund-route.log#4 |'));
   assert.equal(stage().stage, 'review');
@@ -403,4 +503,64 @@ test('the permission probe has a case for every allow rule the kit ships, plus c
   // the "$HOME" form Claude Code did not approve (2026-11-22) is a control, and no shipped rule uses it again
   assert.ok(P.CASES.some((c) => c.id === 'home-form' && c.expect === 'denied'));
   assert.ok(shipped.every((r) => !/\$|"/.test(r)), `a shipped rule relies on a $variable or quotes: ${shipped.join(', ')}`);
+});
+
+// The whole lane, as the agents run it, with the fixture's real vitest and no --reporter flag: the tester runs the
+// test file, the implementer's hook runs the affected tests, then the suite. Nothing may be refused (hardening plan
+// Step 2: a correct lane is never blocked by advance).
+test('end to end: a fix lane goes start → scope → test → build → review → merged → retro with the agents\' own commands', (t) => {
+  setEnv(t, 'KIT_STATUS_NO_GH', '1');
+  const SETUP = path.join(path.dirname(new URL(import.meta.url).pathname), '..', '..', 'eval', 'setups', 'truncate-text');
+  const root = nodeApi(path.join(tmpPath(t), 'node-api'));
+  runScript('bootstrap.js', ['--repo', root]);
+  const kj = path.join(root, '.claude', 'kit.json');
+  write(kj, JSON.stringify({ ...JSON.parse(read(kj)), local_only: true }, null, 2));
+  fs.mkdirSync(path.join(root, 'src', 'text'), { recursive: true });
+  fs.copyFileSync(path.join(SETUP, 'format.ts'), path.join(root, 'src', 'text', 'format.ts'));
+  fs.copyFileSync(path.join(SETUP, 'format.test.ts'), path.join(root, 'tests', 'format.test.ts'));
+  const rm = path.join(root, 'ROADMAP.md');
+  write(rm, read(rm).replaceAll('| TODO(bootstrap: ROADMAP.md — feature) | TODO(bootstrap: ROADMAP.md — slug) | M1 | queued | — | — | — |', '| Truncate text | truncate-text | M1 | queued | — | — | — |'));
+  fs.mkdirSync(path.join(root, 'docs', 'goals'), { recursive: true });
+  write(path.join(root, 'docs', 'goals', 'truncate-text.md'), GOAL.replaceAll('refund-route', 'truncate-text').replace('- Status: agreed', '- Status: agreed\n- Work type: fix\n- Risk: normal\n- Size: S'));
+  const head = commitAll(root, 'truncate-text goal');
+  const ci = spawnSync('npm', ['ci', '--no-audit', '--no-fund', '--prefer-offline'], { cwd: root, encoding: 'utf8' });
+  if (ci.status !== 0) return t.skip(`npm ci could not install the fixture's dependencies: ${(ci.stderr || '').trim().split('\n').pop()}`);
+  const ok = (r, what) => assert.equal(r.returncode, 0, `${what}: ${r.stderr}`);
+  const next = () => JSON.parse(lane('next-step', 'truncate-text', '--repo', root).stdout);
+  const start = lane('start', 'truncate-text', '--repo', root);
+  ok(start, 'start');
+  const wt = JSON.parse(start.stdout).worktree;
+  fs.symlinkSync(path.join(root, 'node_modules'), path.join(wt, 'node_modules'));
+  assert.equal(next().stage, 'reproduce');
+  // the debugger's cause, then the planner's spec, approved by the human
+  const prog = path.join(wt, 'docs/specs/truncate-text.progress.md');
+  write(prog, read(prog).replace('## Current step', 'cause: truncate does not exist yet\n\n## Current step'));
+  write(path.join(wt, 'docs/specs/truncate-text.md'), read(path.join(SETUP, 'spec.approved.md')).replaceAll('{{eval:head}}', head.slice(0, 7)));
+  assert.equal(next().stage, 'scope');
+  ok(lane('scope', 'truncate-text', '--repo', root), 'scope');
+  // tester: writes the test and runs the test file
+  assert.equal(next().stage, 'test');
+  ok(lane('advance', 'truncate-text', 'test', '--repo', root), 'advance test');
+  fs.copyFileSync(path.join(SETUP, 'truncate.test.ts'), path.join(wt, 'tests', 'truncate.test.ts'));
+  const red = JSON.parse(lane('check', 'truncate-text', 'D1', '--repo', root, '--', 'npx vitest run tests/truncate.test.ts').stdout);
+  assert.notEqual(red.exit, 0, 'the red run fails');
+  write(prog, read(prog).replace(/(\| D1 \|[^\n]*\|) — \| — \|/, `$1 ${red.ref} | — |`));
+  // implementer: the post-edit hook runs the affected tests, then the suite once more
+  assert.equal(next().stage, 'build');
+  ok(lane('advance', 'truncate-text', 'build', '--repo', root), 'advance build');
+  fs.copyFileSync(path.join(SETUP, 'format.done.ts'), path.join(wt, 'src', 'text', 'format.ts'));
+  const green = JSON.parse(lane('check', 'truncate-text', 'D1', '--repo', root, '--', 'npx vitest run --changed HEAD').stdout);
+  assert.equal(green.exit, 0, 'the green run passes');
+  write(prog, read(prog).replace(/\| — \|\s*$/m, `| ${green.ref} |`));
+  commitAll(wt, 'truncate-text: D1');
+  assert.equal(JSON.parse(lane('check', 'truncate-text', 'suite', '--repo', root, '--', 'npx vitest run').stdout).exit, 0);
+  // reviewer
+  assert.equal(next().stage, 'review');
+  ok(lane('advance', 'truncate-text', 'review', '--repo', root), 'advance review');
+  ok(lane('evidence', 'truncate-text', '--repo', root), 'evidence');
+  commitAll(wt, 'truncate-text: evidence');
+  // the human merges; the retro starts
+  git(['merge', '-q', '--no-ff', 'wt/truncate-text', '-m', 'merge'], root);
+  ok(lane('merged', 'truncate-text', '--repo', root), 'merged');
+  assert.deepEqual(JSON.parse(read(root, '.claude', 'session', 'lanes', 'truncate-text.json')).moves.map((m) => m.to), ['reproduce', 'test', 'test', 'build', 'review', 'retro']);
 });

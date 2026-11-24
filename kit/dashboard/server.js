@@ -109,6 +109,8 @@ export function watchedFiles(repos) {
     if (K.isDir(specs)) files.push(...listDir(specs, () => true));
     const research = path.join(r, 'docs', 'research');
     if (K.isDir(research)) files.push(...listDir(research, (n) => n.endsWith('.md')));
+    // the lane store: lane.js advance writes each lane's stage there, and kit_status reads it
+    files.push(...listDir(L.storeDir(r), (n) => n.endsWith('.json')));
     const kit = K.loadKitJson(r);
     const lanes = kit.lanes ?? {};
     for (const [slug, info] of Object.entries(lanes)) {

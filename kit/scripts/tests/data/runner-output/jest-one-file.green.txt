@@ -1,0 +1,9 @@
+PASS tests/truncate.test.js
+  truncate
+    ✓ shortens text longer than max to max characters ending in an ellipsis (1 ms)
+
+Test Suites: 1 passed, 1 total
+Tests:       1 passed, 1 total
+Snapshots:   0 total
+Time:        0.118 s, estimated 1 s
+Ran all test suites matching /tests\/truncate.test.js/i.
