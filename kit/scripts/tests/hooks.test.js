@@ -169,6 +169,14 @@ test('guard bash allows normal', (t) => {
   }
 });
 
+test('guard bash names the runnable form of a hyphenated kit script name (agents wrote `kit validate-docs`)', (t) => {
+  const repo = makeRepo(t);
+  const r = run('hook_guard_bash.js', pre(repo, 'Bash', { command: 'kit validate-docs --repo .' }));
+  assert.equal(r.returncode, 2);
+  assert.match(r.stderr, /kit script names use _ not -.*kit validate_docs/);
+  assert.equal(run('hook_guard_bash.js', pre(repo, 'Bash', { command: 'kit validate_docs --repo .' })).returncode, 0);
+});
+
 test('guard bash refuses the owner\'s decisions through kit in forms the permission ask rule does not match (#106)', (t) => {
   const repo = makeRepo(t);
   // Claude Code matches `Bash(kit lane merge *)` against the command as written; these would match only Bash(kit *)

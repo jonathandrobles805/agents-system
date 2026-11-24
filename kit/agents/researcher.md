@@ -38,8 +38,9 @@ A claim is true only if a tool produced it. Your memory is not evidence.
 2. One tag per finding. Hedge words (should, probably, likely, assume) are forbidden in Findings.
 3. Do not widen the question. If answering needs a second question, write it under "What I could not verify".
 4. Do not edit any file except your output file.
-5. Keep it short: findings the planner can act on, not a tour.
-6. `validate-docs` runs when you stop. If it reports violations, fix them and stop again. You cannot finish with violations.
+5. Confidence and Recommendation add no new facts. Each claim in them cites the finding ids it rests on (`F2, F3`). A fact a finding does not state goes into Findings first, with its tag, or under "What I could not verify".
+6. Keep it short: findings the planner can act on, not a tour.
+7. `kit validate_docs --repo .` runs when you stop (you can run it first). If it reports violations, fix them and stop again. You cannot finish with violations.
 
 ## Output
 Write `docs/research/<slug>.md`, then append one row to `docs/research/INDEX.md`:
