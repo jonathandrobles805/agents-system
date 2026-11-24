@@ -718,7 +718,7 @@ process.stderr.write('fake gh: unexpected ' + j); process.exit(9);
     //    would wait out its timeout and protection would block every PR (0016 E.11). The kit's own workflow is the fixture.
     const wf49 = G.workflowChecks(fs.readFileSync(path.join(ROOT, '.github', 'workflows', 'kit.yml'), 'utf8'));
     const bad49 = wf49.required.filter((n) => n.includes('${{'));
-    const ok49 = (wf49.errors ?? []).length === 0 && bad49.length === 0 && wf49.required.includes('script unit tests (node 20)') && wf49.required.includes('script unit tests (node 22)');
+    const ok49 = (wf49.errors ?? []).length === 0 && bad49.length === 0 && wf49.required.includes('script unit tests (node 22)');
     record(49, 'a matrix job is required under its unexpanded name, which no check run ever reports', 'pr_gate workflowChecks expands strategy.matrix into one required name per value, or refuses', ok49, ok49 ? `required: ${wf49.required.join(' | ')}` : `unexpanded: ${bad49.join(' | ')}; errors: ${(wf49.errors ?? []).join('; ')}`);
 
     // 52 a docs goal (a stage nothing runs) is reported done without any work, or a high-risk lane is merged without

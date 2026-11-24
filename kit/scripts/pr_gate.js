@@ -39,7 +39,7 @@ function matrixValue(v) {
 /**
  * The jobs of a GitHub Actions workflow, by the name GitHub reports, with their required/advisory/optional lists.
  * A job with a `strategy.matrix` reports one check per matrix value, with `${{ matrix.<axis> }}` in its name
- * replaced by the value (this repo: `script unit tests (node 20)`, `(node 22)`), so a matrix job expands to one
+ * replaced by the value (this repo: `script unit tests (node 22)`), so a matrix job expands to one
  * entry per value. Before this, the unexpanded name was required, which no run ever reports: `lane.js merge` on
  * this repo waited until its timeout and protection built from it would have blocked every PR (0016 E.11).
  * A matrix this parser cannot expand (an `include`/`exclude`, an expression, more than one axis in the name, or an

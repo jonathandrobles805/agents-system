@@ -73,13 +73,13 @@ MAP
 fi
 place "$KIT_ROOT/kit" "$CLAUDE_HOME/kit"
 
-# Scripts need Node.js 20 or newer (no npm packages); verify once.
+# Scripts need Node.js 22 or newer (package.json engines) (no npm packages); verify once.
 if ! command -v node >/dev/null; then
-  echo "node (v20 or newer) is required for kit scripts" >&2; exit 1
+  echo "node (v22 or newer) is required for kit scripts" >&2; exit 1
 fi
 NODE_MAJOR="$(node -p 'process.versions.node.split(".")[0]')"
-if (( NODE_MAJOR < 20 )); then
-  echo "node v20 or newer is required for kit scripts (found $(node -v))" >&2; exit 1
+if (( NODE_MAJOR < 22 )); then
+  echo "node v22 or newer is required for kit scripts (found $(node -v))" >&2; exit 1
 fi
 
 # The launcher: agents run kit scripts as `kit <script> ...`, which the project's `Bash(kit *)` rule approves (#63).

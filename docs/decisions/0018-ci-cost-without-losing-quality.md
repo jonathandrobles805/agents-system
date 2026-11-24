@@ -1,0 +1,39 @@
+# 0018 CI cost is cut only where no check is lost
+
+Date: 2026-11-24 · Status: accepted · Decided by: the owner, in chat (2026-11-24) · Enforced by: test (`kit/scripts/tests/ci_policy.test.js`)
+
+## Context
+
+The repository is private, so GitHub bills every Actions minute. In November 2026 metered usage reached $38.13, against $18.13 included. Payment failed and GitHub stopped starting jobs. Most of the cost came from three sources:
+- the real-agent eval, after every merge to main and every Sunday;
+- the unit tests, run twice per push, once on Node 20 and once on Node 22;
+- older runs that kept going after a newer push.
+
+The real-agent eval also uses Claude API usage, which is billed separately.
+
+## Decision
+
+1. **The real-agent evals run only by hand.** `eval-smoke-main` (`kit.yml`) and the full set (`kit-eval-weekly.yml`) have no `push` or `schedule` trigger; the owner starts them with `workflow_dispatch` on main. Run them:
+   - after a change to `kit/agents/`, `kit/skills/`, `kit/templates/`, `kit/workflows/` or `kit/eval/`;
+   - before tagging a release;
+   - after a Claude or Claude Code update.
+2. **One supported Node major per matrix value, starting at 22.** Node 20 reached end of life on 2026-04-30, so the kit's minimum is Node 22: `package.json` `engines`, `install.sh` and the README say the same. The unit-test matrix covers every supported major, and no value below the minimum.
+3. **A newer push to a pull request cancels its older run.** Runs on main are never cancelled.
+
+## What stays the same (no check is lost)
+
+Every pull request still runs the unit tests, the planted faults, the docs self-check and the recorded-fixture eval. A merge still needs every required check green.
+
+## What this costs, and how it is covered
+
+- An agent that gets worse is found only at the next real-agent run, not after the merge. Covered by the run rules in decision 1.
+- A model or Claude Code update that hurts an agent is not caught on a schedule. Covered by running the full set after such an update.
+
+## Rule for any later CI change
+
+A CI change that removes or narrows a check must:
+- name what it stops catching;
+- say what covers that instead;
+- be recorded here, with `ci_policy.test.js` updated to match.
+
+A cut that loses a check with nothing to cover it is not made.

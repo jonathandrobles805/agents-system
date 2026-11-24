@@ -10,6 +10,11 @@ on:
 permissions:
   contents: read
 
+# A newer push to the same pull request cancels the older run; runs on main are never cancelled (decision 0018).
+concurrency:
+  group: kit-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   scripts:
     name: script unit tests (node ${{ matrix.node }})
@@ -17,7 +22,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        node: [20, 22]
+        # every Node major the kit supports (package.json engines); 22 is the minimum since Node 20's end of life (0018)
+        node: [22]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4

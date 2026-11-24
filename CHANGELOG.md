@@ -4,7 +4,11 @@ All notable changes to the kit. Each entry names the decision or lesson that cau
 
 ## [0.3.0] - unreleased
 
-### Changed (cost: the real-agent eval on main runs only by hand)
+### Changed (decision 0018: CI cost is cut only where no check is lost)
+- **The full eval no longer runs every Sunday**; it runs by hand (after agent changes, before a release, after a Claude or Claude Code update).
+- **Node 22 is the minimum** (Node 20 reached end of life on 2026-04-30): `package.json` engines, `install.sh`, README and docs; the unit tests run once, on 22.
+- **A newer push to a pull request cancels its older run**; runs on main are never cancelled.
+- `kit/scripts/tests/ci_policy.test.js` holds the workflows to the decision.
 - **`eval-smoke-main` no longer runs after every merge.** Each run started real Claude sessions (API cost) and used paid Actions minutes. It now runs only when the owner starts it on `main` (Actions → kit → Run workflow, `workflow_dispatch`), with the same credentials, sandbox probe and artifacts. Run it after a change to agents, skills, templates, workflows or the eval. Nothing is measured differently: every PR still runs the unit tests, the planted faults and the recorded-fixture eval; only the real-agent run waits for the owner. KIT-SPEC 11A updated.
 
 ### Fixed (#107: hooks appended to a merged lane's committed events)

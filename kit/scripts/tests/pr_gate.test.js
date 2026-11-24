@@ -35,13 +35,14 @@ test('evaluate: green only when every required check reported and passed', () =>
 });
 
 test('workflowChecks: a matrix job is required once per value, named as GitHub reports it (0016 E.11)', () => {
-  // This repo's own workflow: the name GitHub reports is `script unit tests (node 20)`, never the unexpanded form.
+  // This repo's own workflow: the name GitHub reports is `script unit tests (node 22)`, never the unexpanded form.
   const kit = G.workflowChecks(fs.readFileSync(path.join(process.cwd(), '.github', 'workflows', 'kit.yml'), 'utf8'));
   assert.deepEqual(kit.errors, []);
-  assert.ok(kit.required.includes('script unit tests (node 20)') && kit.required.includes('script unit tests (node 22)'));
+  assert.ok(kit.required.includes('script unit tests (node 22)'));
+  assert.ok(!kit.required.includes('script unit tests (node 20)'), 'Node 20 is no longer supported (decision 0018)');
   assert.ok(!kit.required.some((n) => n.includes('${{')), 'no unexpanded matrix expression may be required');
-  // PR #88's real check runs (head 2d18a29) were green on both node values; before the fix this evaluated as pending.
-  const runs = [run(1, 'script unit tests (node 20)'), run(2, 'script unit tests (node 22)'), run(3, 'kit docs validate themselves'), run(4, 'eval smoke set (agents, skills, templates, workflows, eval)')];
+  // PR #88's real check runs (head 2d18a29) were green; before the fix this evaluated as pending.
+  const runs = [run(2, 'script unit tests (node 22)'), run(3, 'kit docs validate themselves'), run(4, 'eval smoke set (agents, skills, templates, workflows, eval)')];
   assert.equal(G.evaluate(runs, kit).state, 'green');
   // Values keep their quoting rules and the job's if:/continue-on-error flags.
   const wf = (name, matrix, extra = '') => `jobs:\n  t:\n    name: ${name}\n${extra}    strategy:\n      matrix:\n${matrix}    steps: []\n`;

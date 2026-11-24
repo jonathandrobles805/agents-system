@@ -13,7 +13,7 @@ AI agents perform bounded reasoning and engineering work. Deterministic software
 |---|---|---|
 | 1 Human | Authority | Objectives and priorities; approves architecture, specs, recovery roadmaps; resolves escalations; authorizes high-risk and destructive operations; signs off security at `risk=high`; merges; approves changes to rules, permissions, skills |
 | 2 AI interface | The conversation | `/work` and the per-kind commands (built on `/start` + `/run`): understands the objective, asks for missing requirements, writes the work record, explains the selected route, presents findings, blockers and approvals. Not an execution authority |
-| 3 Controller `lane.js` | Routing and enforcement | JavaScript with checked types, Node 20+, no build step. Validates work records; reads `work_type / domain / risk / size`; selects the profile from the version-controlled table; names the agent allowed per stage; enforces worktree and file ownership, budgets, retries, pause and stop; records evidence; derives state from files, git, CI and telemetry. Agents recommend classifications; the controller validates. No agent redefines the lifecycle |
+| 3 Controller `lane.js` | Routing and enforcement | JavaScript with checked types, Node 22+, no build step. Validates work records; reads `work_type / domain / risk / size`; selects the profile from the version-controlled table; names the agent allowed per stage; enforces worktree and file ownership, budgets, retries, pause and stop; records evidence; derives state from files, git, CI and telemetry. Agents recommend classifications; the controller validates. No agent redefines the lifecycle |
 | 4 Agents, skills, tools | Bounded work | Agents work from structured assignments and return defined outputs; skills carry procedures; tools give controlled access. None grants itself authority |
 | 5 Enforcement | Verification | Sandbox, scope, permissions, architecture and design lint, tests, CI, security, evidence validation, independent review, audit log, stop and recovery. Never depends on an agent's claim |
 
@@ -236,7 +236,7 @@ Each step: KIT-SPEC amendment → decision file → planted fault → code → k
 
 1. Nothing is built before it is specified: KIT-SPEC amendment and decision file first; the code PR cites them.
 2. Every gate ships with the fault that proves it; a release where any fault is no longer caught is blocked.
-3. Every script has tests; kit CI runs them on Node 20 and 22.
+3. Every script has tests; kit CI runs them on every supported Node major (22; decision 0018).
 4. Every agent, skill or tool change is measured by the eval against a committed baseline; a regression blocks the release.
 5. Projects upgrade with a safety net and a canary project.
 6. Guards fail closed.
