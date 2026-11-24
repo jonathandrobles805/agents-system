@@ -252,6 +252,7 @@ export function kitDecisionDisguised(line, depth = 0) {
     if (kitWord.raw !== 'kit') return `the kit command written in a quoted or escaped form (${kitWord.raw}); write it plainly as \`kit <script> …\``;
     if (words.cont) return 'a kit command continued over a backslash-newline; write it on one line';
     if (script === undefined || (script.raw === script.value && /^(-h|--help)$/.test(script.value))) continue;
+    if (script.raw === script.value && /^[a-z0-9_-]+$/.test(script.value) && script.value.includes('-')) return `kit script names use _ not - (${script.value}); run \`kit ${script.value.replace(/-/g, '_')} …\``;
     if (!plainWord(script, /^[a-z0-9_]+$/)) return `a kit script name written in a computed or quoted form (${script.raw}); write it plainly as \`kit <script> …\``;
     if (script.value === 'lane' && sub !== undefined && !plainWord(sub, /^[a-z][a-z0-9-]*$/)) return `a kit lane subcommand written in a computed or quoted form (${sub.raw}); write it plainly as \`kit lane <subcommand> …\``;
     const decision = DECISIONS.find((d) => d.every((x, i) => words[k + 1 + i]?.value === x));
