@@ -14,9 +14,16 @@ export function main(argv) {
   const spec = C.joinPath(root, work, `${slug}.md`);
   if (!K.isFile(spec)) return C.fail(`scope-diff: lane branch for '${slug}' but ${C.relativeTo(spec, root)} does not exist`);
   const [, change, create] = K.specFileLists(spec);
-  // the lane-owned files come from the same derivation the edit guard uses, so CI cannot allow a file the guard
-  // refuses to let the lane write, which is what happened to <slug>.review.md
-  const allowed = [...change, ...create, ...K.laneArtifacts(work, slug, root), 'ROADMAP.md'];
+  // the lane-owned files come from the same derivation the edit guard and the shell scope check use, so CI cannot
+  // allow a file the guard refuses to let the lane write (which is what happened to <slug>.review.md), nor refuse the
+  // spec a fix or incident lane writes for itself. The lane's own diff starts at the merge-base, as changedFiles' a...b.
+  let mergeBase = null;
+  try {
+    mergeBase = K.git(['merge-base', 'HEAD', a.base], root).trim() || null;
+  } catch {
+    // no common history with the base: changedFiles falls back to a two-dot diff, and the spec is not allowed
+  }
+  const allowed = [...change, ...create, ...K.laneOwnedFiles(work, slug, root, mergeBase), 'ROADMAP.md'];
   const extras = C.changedFiles(root, a.base).filter((f) => !K.globMatch(f, allowed));
   if (extras.length) {
     return C.fail('scope-diff: files changed outside the spec allow-list:\n  ' + extras.join('\n  ') + `\nAllowed: ${[...change, ...create].join(', ')}\nAmend the spec and re-approve, or revert these files.`);
