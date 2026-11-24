@@ -419,7 +419,8 @@ function sessionSettings(lane, home, cwd, file, { laneScratch = true } = {}) {
     ...lane,
     // the session's cwd (the worker's repo, or the judge's empty folder), the lane's scratch for the worker only, the home
     allowWrite: [cwd, ...(laneScratch ? lane.allowWrite.slice(1) : []), ...home.allowWrite],
-    denyWrite: home.denyWrite,
+    // the worker keeps the lane's git protections (sandbox.js gitWritePaths); the judge commits nothing
+    denyWrite: [...(laneScratch ? lane.denyWrite ?? [] : []), ...home.denyWrite],
     denyRead: [...new Set([...lane.denyRead, ...home.denyRead])],
     allowedDomains: [...new Set([...lane.allowedDomains, ...home.allowedDomains])].sort(),
   };
@@ -843,6 +844,33 @@ function fitBytes(bodies, budget) {
  * before the rubric. The whole prompt is at most JUDGE_PROMPT_MAX_BYTES: the data blocks are cut to fit (fitBytes), the
  * instructions and the rubric never.
  */
+/** What the judge is asked to answer: a 1/0 per criterion and, for each 0 only, one sentence of evidence (parseJudge). */
+export const JUDGE_ANSWER = 'Answer ONLY with a JSON object mapping each criterion id to 1 (met) or 0 (not met), and under "why" one sentence for each criterion you scored 0, and only for those, citing the evidence (a file:line, a log#line or a command and its output): {"r1": 1, "r2": 0, "why": {"r2": "<one sentence citing the evidence>"}}.';
+
+/**
+ * The judge's verdict from what it printed: the first `{` to the last `}`, parsed. The 1/0 grades are kept as given
+ * (score.js reads them; anything else is ungraded). `why` is kept only as a map of criterion id to a non-empty string,
+ * each cut to 500 characters; a `why` of any other shape is dropped, never a reason to lose the grades. A plain map
+ * with no `why` (the answer before reasons were asked for) parses as it did.
+ */
+export function parseJudge(stdout) {
+  const m = /\{[\s\S]*\}/.exec(String(stdout ?? ''));
+  if (!m) return {};
+  let v;
+  try {
+    v = JSON.parse(m[0]);
+  } catch {
+    return {};
+  }
+  if (!v || typeof v !== 'object' || Array.isArray(v)) return {};
+  const { why, ...grades } = v;
+  const reasons = {};
+  if (why && typeof why === 'object' && !Array.isArray(why)) {
+    for (const [id, r] of Object.entries(why)) if (typeof r === 'string' && r.trim()) reasons[id] = r.trim().slice(0, 500);
+  }
+  return Object.keys(reasons).length ? { ...grades, why: reasons } : grades;
+}
+
 export function judgePrompt({ task, files, setupFiles, sessionDiff, output, gitLog, bashLog = '', readLog = '', laneLog = null }) {
   const examples = task.calibration ? `\n\nCalibration examples:\n${JSON.stringify(task.calibration, null, 2)}` : '';
   const clip = (t, n) => (t.length > n ? `${t.slice(0, n)}\n[... ${t.length - n} more characters]` : t);
@@ -857,11 +885,11 @@ export function judgePrompt({ task, files, setupFiles, sessionDiff, output, gitL
     ['git-log', 'Git log', gitLog.join('\n')],
   ];
   const head = [
-    'You are grading what one agent session did in a repository, against a rubric. Answer ONLY with a JSON object mapping each criterion id to 1 (met) or 0 (not met).',
+    `You are grading what one agent session did in a repository, against a rubric. ${JUDGE_ANSWER}`,
     'Grade the session by its own changes and what it printed. Files the setup wrote before the session are context: a criterion that only setup-written content meets is not met by the session.',
     DATA_NOTICE,
   ];
-  const tail = [DATA_NOTICE_AGAIN, `Rubric:\n${task.rubric.map((c) => `- ${c.id}: ${c.text}`).join('\n')}${examples}`, 'Answer ONLY with a JSON object mapping each criterion id to 1 (met) or 0 (not met).'];
+  const tail = [DATA_NOTICE_AGAIN, `Rubric:\n${task.rubric.map((c) => `- ${c.id}: ${c.text}`).join('\n')}${examples}`, JUDGE_ANSWER];
   const build = (bodies) => [...head, ...sections.map(([name, label], i) => `${label}:\n<data name="${name}">\n${bodies[i]}\n</data>`), ...tail].join('\n\n');
   const bodies = sections.map(([, , body]) => neutralizeData(body));
   const fixed = Buffer.byteLength(build(bodies.map(() => '')));
@@ -960,14 +988,7 @@ export async function run(task, { attempt = 0, timeoutMs = 20 * 60 * 1000, trans
       const j = headless(prompt, jhome ? jcwd : cwd, { ...base, ...(jhome?.env ?? {}), KIT_EVAL_JUDGE: '1' }, jsettings, 5 * 60 * 1000, null, { stdin: true });
       if (jhome && transcripts) kept.judge = keepTranscripts(jhome.config, path.join(transcripts, 'judge'));
       judgeSession = { status: j.status, signal: j.signal, error: j.error, stderr: j.stderr.slice(-2000) };
-      const m = /\{[\s\S]*\}/.exec(j.stdout);
-      if (m) {
-        try {
-          judge = JSON.parse(m[0]);
-        } catch {
-          judge = {};
-        }
-      }
+      judge = parseJudge(j.stdout);
     }
     // `output`: what the worker printed (its final answer with `claude -p`), redacted; a check may read it (lesson_proposed)
     // `session_diff`, `setup_files`: what the judge was told the session and the setup changed

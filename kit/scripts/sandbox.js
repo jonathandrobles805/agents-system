@@ -77,7 +77,50 @@ function denyReadPaths(wt, floor, kit) {
   return [...out].sort();
 }
 
-/** The sandbox configuration for one lane. Pure. */
+/**
+ * What `git commit` in a lane's linked worktree writes outside the worktree, and what in the shared git directory stays
+ * protected. A linked worktree keeps its index and HEAD under `<common>/worktrees/<name>/` and its objects, branch ref
+ * and reflog in the main repository's `.git`, so with only the worktree writable no lane could commit (eval run
+ * 45299355535: "Unable to create '<repo>/.git/worktrees/<name>/index.lock': Read-only file system"). Found by running
+ * `git commit` under srt 0.0.83 (bubblewrap): it needs the worktree's git dir, `objects/`, the directory holding the
+ * branch's ref (git creates `<ref>.lock` beside it and renames it over the ref) and the branch's reflog file;
+ * `config`, `packed-refs`, `hooks/` and every other ref are not written. The ref directory (`refs/heads/wt/`) holds the
+ * other lanes' branches too, so each ref already in it is write-denied by name. srt skips an allowWrite path that does
+ * not exist, so only existing paths are listed. Nothing is added when the git dir is inside the worktree (an ordinary
+ * clone, already writable) or `wt` is not in a git repository.
+ * @returns {{ common: string, allowWrite: string[], denyWrite: string[] } | null}
+ */
+export function gitWritePaths(wt, branch) {
+  const r = spawnSync('git', ['rev-parse', '--git-dir', '--git-common-dir'], { cwd: wt, encoding: 'utf8', timeout: 10000 });
+  if (r.status !== 0) return null;
+  const [gitDir, common] = r.stdout.trim().split('\n').map((p) => path.resolve(wt, p));
+  if (!gitDir || !common || !path.relative(wt, gitDir).startsWith('..')) return null;
+  const ref = path.join(common, 'refs', 'heads', ...branch.split('/'));
+  const refDir = path.dirname(ref);
+  const exists = (p) => fs.existsSync(p);
+  const allowWrite = [gitDir, path.join(common, 'objects'), refDir, path.join(common, 'logs', 'refs', 'heads', ...branch.split('/'))].filter(exists);
+  let others = [];
+  try {
+    others = fs.readdirSync(refDir).filter((n) => !n.endsWith('.lock')).map((n) => path.join(refDir, n)).filter((p) => p !== ref);
+  } catch {
+    others = [];
+  }
+  const denyWrite = [path.join(common, 'hooks'), path.join(common, 'config'), path.join(common, 'packed-refs'), path.join(common, 'refs', 'tags'), ...others].filter(exists);
+  return { common, allowWrite, denyWrite };
+}
+
+/** The lane's branch: lane.json's `branch`, else `wt/<slug>`, the branch `lane.js start` creates. */
+function laneBranch(wt, slug) {
+  try {
+    const b = JSON.parse(fs.readFileSync(path.join(wt, '.claude', 'lane.json'), 'utf8')).branch;
+    if (typeof b === 'string' && b) return b;
+  } catch {
+    // no lane.json yet: `lane.js start` builds the configuration before it writes one
+  }
+  return `wt/${slug}`;
+}
+
+/** The sandbox configuration for one lane. Reads the floor, kit.json and the worktree's git layout; writes nothing. */
 export function sandboxConfig({ root, wt, slug, agent = 'implementer', env = process.env }) {
   const floor = K.loadFloor();
   const kit = K.loadKitJson(root);
@@ -94,13 +137,17 @@ export function sandboxConfig({ root, wt, slug, agent = 'implementer', env = pro
   const collector = `127.0.0.1:${Number(env.KIT_TELEMETRY_PORT || 4318)}`;
   const domains = [...new Set([...(Array.isArray(net.default_allow) ? net.default_allow : []), ...K.specNetwork(path.join(wt, K.workRoot(root), `${slug}.md`)), collector])].sort();
   const scratch = path.join(os.tmpdir(), `kit-lane-${slug}`);
+  const git = gitWritePaths(wt, laneBranch(wt, slug));
   return {
     runtime,
     state: runtime ? 'contained' : 'degraded',
     how: det.how,
     engine: det.engine ?? null,
     agent,
-    allowWrite: [wt, scratch],
+    // the worktree, the scratch, then what a commit in a linked worktree writes in the main repository's .git
+    allowWrite: [wt, scratch, ...(git?.allowWrite ?? [])],
+    denyWrite: git?.denyWrite ?? [],
+    gitCommon: git?.common ?? null,
     denyRead: denyReadPaths(wt, floor, kit),
     allowedDomains: domains,
     failIfUnavailable: true,
@@ -152,6 +199,12 @@ export function launchCommand(cfg, { wt, settingsPath, prompt, agent = null }) {
   if (cfg.runtime === 'container') {
     const eng = cfg.engine || 'docker';
     const args = [eng, 'run', '--rm', ...(prompt === null ? ['-i'] : []), '--network', 'kit-lane', '-v', `${wt}:${wt}`, '-w', wt, '-v', `${cfg.allowWrite[1]}:${cfg.allowWrite[1]}`];
+    // a linked worktree's git data lives in the main repository's .git: mounted read-only, with what a commit writes
+    // (sandboxConfig's allowWrite after the scratch) mounted writable over it. Not run here: no container engine.
+    if (cfg.gitCommon) {
+      args.push('-v', `${cfg.gitCommon}:${cfg.gitCommon}:ro`);
+      for (const p of cfg.allowWrite.slice(2)) args.push('-v', `${p}:${p}`);
+    }
     for (const d of cfg.allowedDomains) args.push('-e', `KIT_ALLOWED_DOMAIN=${d}`);
     return [...args, 'kit-lane:latest', ...claude];
   }

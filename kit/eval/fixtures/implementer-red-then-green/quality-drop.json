@@ -90,7 +90,10 @@
   "judge_by_attempt": [
     {
       "r1": 0,
-      "r2": 1
+      "r2": 1,
+      "why": {
+        "r1": "src/truncate.ts:3 adds an options object and a helper the spec does not ask for."
+      }
     },
     {
       "r1": 0,

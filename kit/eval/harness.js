@@ -152,7 +152,7 @@ export async function runSet({ set, runner = 'fixture', n = set === 'full' ? 3 :
       const kept = outcome.transcripts ? { transcripts: { worker: rel(outcome.transcripts.worker), judge: rel(outcome.transcripts.judge) } } : {};
       attempts.push({ attempt: i, runner: outcome.runner, variant: outcome.variant ?? null, ms: outcome.ms, worker, judge_session: outcome.judge_session ?? null, ...kept, ...(warnings.length ? { warnings } : {}), scored });
       if (!scored.hard_ok) violations.push({ task: task.id, attempt: i, checks: scored.violations, why: scored.violations.map((v) => `${v}: ${scored.hard[v].why}`) });
-      if (scored.rubric.failed.length) rubricFails.push({ task: task.id, attempt: i, items: scored.rubric.failed });
+      if (scored.rubric.failed.length) rubricFails.push({ task: task.id, attempt: i, items: scored.rubric.failed, why: scored.rubric.why ?? {} });
       if (scored.rubric.ungraded.length) ungraded.push({ task: task.id, attempt: i, items: scored.rubric.ungraded, judge_ran: outcome.judge_session ? outcome.judge_session.status === 0 : outcome.runner === 'fixture' });
     }
     results[task.id] = { role: task.role ?? null, kind: task.kind ?? null, runner, attempts, summary: summarize(attempts) };
@@ -186,7 +186,7 @@ export function fmt(rep) {
   for (const [id, r] of Object.entries(rep.results)) lines.push(r.summary.score.n ? `  ${id.padEnd(34)} score ${r.summary.score.mean.toFixed(2)} ±${r.summary.score.std.toFixed(2)}  hard ${r.summary.hard_ok.mean === 1 ? 'ok' : 'VIOLATION'}` : `  ${id.padEnd(34)} not scored: the harness could not run it`);
   for (const h of rep.harness_errors ?? []) lines.push(`  HARNESS ERROR ${h.task} attempt ${h.attempt}: ${h.why.split('\n')[0].slice(0, 400)}`);
   for (const v of rep.violations) lines.push(`  VIOLATION ${v.task} attempt ${v.attempt}: ${v.why.join('; ')}`);
-  for (const f of rep.rubric_fails ?? []) lines.push(`  RUBRIC ${f.task} attempt ${f.attempt}: the judge failed ${f.items.join(', ')}${rep.set === 'smoke' ? '' : ' (reported; the full set gates on regressions against the baseline)'}`);
+  for (const f of rep.rubric_fails ?? []) lines.push(`  RUBRIC ${f.task} attempt ${f.attempt}: the judge failed ${f.items.map((id) => (f.why?.[id] ? `${id} (${f.why[id]})` : id)).join(', ')}${rep.set === 'smoke' ? '' : ' (reported; the full set gates on regressions against the baseline)'}`);
   for (const u of rep.ungraded ?? []) lines.push(`  NOT GRADED ${u.task} attempt ${u.attempt}: ${u.judge_ran ? 'the judge gave no 0/1 for' : 'the judge did not run; ungraded:'} ${u.items.join(', ')}`);
   for (const r of rep.regressions) lines.push(`  REGRESSION ${r.task} ${r.metric}: ${r.run.toFixed(2)} < ${r.baseline.toFixed(2)} − ${r.allowed.toFixed(2)}`);
   // a real session that did not exit 0 (non-zero, timed out, or never spawned) is the first thing to read when

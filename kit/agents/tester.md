@@ -45,7 +45,7 @@ You are the tester. You turn the spec's done-criteria into tests that fail today
 1. Write the test named in the spec's table, at the path the spec names (it must be under Files to create or an existing test file in Files to change).
 2. Make it assert the observable behavior in the criterion, not the implementation. A test that passes against an empty function is wrong.
 3. Add at least one negative or boundary case per criterion as a separate test (`D<n>-neg`, `D<n>-edge`): wrong input, empty input, repeated call, permission denied, whichever the goal implies.
-4. Run the test file. It must fail for the right reason (missing behavior), not a syntax error or a missing import. The hook logs the run; record the log line in progress.md's Red run column for D<n>.
+4. Run the test file. It must fail for the right reason (missing behavior), not a syntax error or a missing import. Writing the test file makes the post-edit hook run the tests and log them; a run you start yourself is logged only through `kit lane check <slug> D<n> "<test command>"`, the command quoted as one argument. Never write the log under `.claude/session/` by hand. Record the log line in progress.md's Red run column for D<n>.
 
 ## Rules
 - Tests only. If a criterion cannot be tested without a fixture, mock, or test helper, write that helper in the test directory.
