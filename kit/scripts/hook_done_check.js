@@ -34,7 +34,7 @@ export function main() {
     const attempts = ATTEMPTS.exec(t);
     const failure = FAILURE.exec(t);
     if (attempts && failure && !t.includes('{{') && !['', '—', '-'].includes(failure[1].trim())) {
-      K.appendEvent(lane.eventsPath, { event: 'stop', tool: 'hook', result: 'ok', summary: 'stopped with escalation' });
+      K.appendEvent(lane.eventLogPath, { event: 'stop', tool: 'hook', result: 'ok', summary: 'stopped with escalation' });
       return 0;
     }
   }
@@ -44,12 +44,12 @@ export function main() {
   // post-edit-check offers.
   const flagged = S.reconcile(lane, { d }); // from git, on the lane's own diff; flagged.json is only a cache
   if (flagged.noBase) {
-    K.appendEvent(lane.eventsPath, { event: 'stop_refused', tool: 'hook', result: 'fail', summary: 'no base to judge the lane\'s changes against' });
+    K.appendEvent(lane.eventLogPath, { event: 'stop_refused', tool: 'hook', result: 'fail', summary: 'no base to judge the lane\'s changes against' });
     return K.feedbackBlock(`done-check: the lane's changes cannot be checked against the spec: ${flagged.noBase}. ` +
       'Record the commit the lane started from as base_commit in .claude/lane.json (kit lane start writes it), or fetch the base branch, then stop.');
   }
   if (flagged.length) {
-    K.appendEvent(lane.eventsPath, { event: 'stop_refused', tool: 'hook', result: 'fail', summary: 'out-of-spec shell changes still there: ' + flagged.slice(0, 5).map((f) => f.rel).join(', ') });
+    K.appendEvent(lane.eventLogPath, { event: 'stop_refused', tool: 'hook', result: 'fail', summary: 'out-of-spec shell changes still there: ' + flagged.slice(0, 5).map((f) => f.rel).join(', ') });
     return K.feedbackBlock(`done-check: files outside the spec's allow-list that the lane changed (its own diff from the branch it targets) are still changed: ${flagged.map((f) => f.rel).join(', ')}. ` +
       'Undo them as post-edit-check said, or record under Escalation that the spec needs amending, then stop.');
   }
@@ -71,11 +71,11 @@ export function main() {
     }
   }
   if (missing.length) {
-    K.appendEvent(lane.eventsPath, { event: 'stop_refused', tool: 'hook', result: 'fail', summary: `${missing.length} criteria incomplete` });
+    K.appendEvent(lane.eventLogPath, { event: 'stop_refused', tool: 'hook', result: 'fail', summary: `${missing.length} criteria incomplete` });
     const need = stage === 'test' ? 'a red run (tests written and failing)' : 'a red run and a green run in the log';
     return K.feedbackBlock('done-check: not done.\n- ' + missing.join('\n- ') + `\nEither finish the criteria (each needs ${need}) or fill in the Escalation section, then stop.`);
   }
-  K.appendEvent(lane.eventsPath, { event: 'stop', tool: 'hook', result: 'ok', summary: 'all done-criteria green' });
+  K.appendEvent(lane.eventLogPath, { event: 'stop', tool: 'hook', result: 'ok', summary: 'all done-criteria green' });
   return 0;
 }
 

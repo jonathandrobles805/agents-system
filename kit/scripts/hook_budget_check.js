@@ -79,7 +79,7 @@ export function main() {
   const reason = `budget exceeded for stage '${stage}': ` + over.join('; ');
   const hint = raiseHint(lane, stage);
   ensureEscalation(lane.progressPath, reason, hint);
-  K.appendEvent(lane.eventsPath, { event: 'budget_exceeded', tool: 'hook', result: 'fail', summary: reason });
+  K.appendEvent(lane.eventLogPath, { event: 'budget_exceeded', tool: 'hook', result: 'fail', summary: reason });
   return K.feedbackBlock(reason + `.\nStop working. Make sure progress.md Escalation describes the state, then end the turn. A human will ${hint}.`);
 }
 

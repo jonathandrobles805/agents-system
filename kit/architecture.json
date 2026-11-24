@@ -563,6 +563,7 @@
     {"file": "planted-faults/run.js", "from": "tool:planted-faults", "kind": "runs", "to": "hook:budget_check"},
     {"file": "planted-faults/run.js", "from": "tool:planted-faults", "kind": "runs", "to": "hook:config_guard"},
     {"file": "planted-faults/run.js", "from": "tool:planted-faults", "kind": "runs", "to": "hook:done_check"},
+    {"file": "planted-faults/run.js", "from": "tool:planted-faults", "kind": "runs", "to": "hook:event_log"},
     {"file": "planted-faults/run.js", "from": "tool:planted-faults", "kind": "runs", "to": "hook:guard_bash"},
     {"file": "planted-faults/run.js", "from": "tool:planted-faults", "kind": "runs", "to": "hook:guard_edit"},
     {"file": "planted-faults/run.js", "from": "tool:planted-faults", "kind": "runs", "to": "hook:guard_read"},
