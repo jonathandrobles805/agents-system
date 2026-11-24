@@ -9,9 +9,12 @@
 //   merging a PR directly (gh pr merge, gh api PUT …/merge, GraphQL mergePullRequest): lane.js merge waits for CI,
 //   and the owner's decisions through `kit` (merge, resume-all, bootstrap) in any form the permission ask rule misses.
 // In a lane additionally: git worktree remove/prune, git branch -D, checkout/switch to another branch.
+// In a lane, a call that is let through has the worktree's state recorded first, so post-edit-check can tell what the
+// call itself changed (shell_changes.js).
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import * as K from './kitlib.js';
+import { recordBefore } from './shell_changes.js';
 
 // The patterns were written for Python's re, where \s and \b are Unicode-aware; JS's are not, so they are spelled out.
 const WS = '\\t-\\r\\x1c-\\x20\\x85\\xa0\\u1680\\u2000-\\u200a\\u2028\\u2029\\u202f\\u205f\\u3000';
@@ -377,6 +380,15 @@ export function main() {
   if (GIT_COMMIT.test(cmd)) {
     const hits = stagedSecrets(cwd);
     if (hits.length) return deny('staged files look like secrets: ' + hits.join('; '));
+  }
+  // The call goes ahead: record the lane's state for post-edit-check, which reports only what changed during the call
+  // (shell_changes.js). Taken here because every session that runs Bash in a lane, from the project's settings or an
+  // agent's frontmatter, registers this hook. A failure only costs post-edit-check its best baseline, so it never
+  // blocks the command.
+  try {
+    recordBefore(d);
+  } catch {
+    // post-edit-check falls back to the lane's last known state
   }
   return 0;
 }

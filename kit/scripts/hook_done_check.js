@@ -1,8 +1,10 @@
 #!/usr/bin/env node
-// Stop hook inside a lane: refuse to end the turn while done-criteria lack a green run and no escalation is written.
+// Stop hook inside a lane: refuse to end the turn while done-criteria lack a green run and no escalation is written,
+// or while the lane's own changes include a file outside the spec (shell_changes.js reconcile).
 // Allows the stop when: every done-criterion row in progress.md has a green run ref that exists in the log,
 // or the Escalation section is filled in, or stop_hook_active is set (we already asked once).
 import * as K from './kitlib.js';
+import * as S from './shell_changes.js';
 
 export const ATTEMPTS = /^- Attempts:\s*(\S.*)$/m;
 export const FAILURE = /^- Failure:\s*(\S.*)$/m;
@@ -35,6 +37,21 @@ export function main() {
       K.appendEvent(lane.eventsPath, { event: 'stop', tool: 'hook', result: 'ok', summary: 'stopped with escalation' });
       return 0;
     }
+  }
+  // A file outside the spec that the lane changed (by a shell command, or in a commit) and nobody undid is part of the
+  // lane's diff: not done while it is there.
+  // After the escalation check on purpose: leaving them and recording that the spec needs amending is the other way out
+  // post-edit-check offers.
+  const flagged = S.reconcile(lane, { d }); // from git, on the lane's own diff; flagged.json is only a cache
+  if (flagged.noBase) {
+    K.appendEvent(lane.eventsPath, { event: 'stop_refused', tool: 'hook', result: 'fail', summary: 'no base to judge the lane\'s changes against' });
+    return K.feedbackBlock(`done-check: the lane's changes cannot be checked against the spec: ${flagged.noBase}. ` +
+      'Record the commit the lane started from as base_commit in .claude/lane.json (kit lane start writes it), or fetch the base branch, then stop.');
+  }
+  if (flagged.length) {
+    K.appendEvent(lane.eventsPath, { event: 'stop_refused', tool: 'hook', result: 'fail', summary: 'out-of-spec shell changes still there: ' + flagged.slice(0, 5).map((f) => f.rel).join(', ') });
+    return K.feedbackBlock(`done-check: files outside the spec's allow-list that the lane changed (its own diff from the branch it targets) are still changed: ${flagged.map((f) => f.rel).join(', ')}. ` +
+      'Undo them as post-edit-check said, or record under Escalation that the spec needs amending, then stop.');
   }
   const rows = sections.get('done-criteria')?.tableRows() ?? [];
   if (!rows.length) return K.feedbackBlock('done-check: progress.md has no done-criteria rows. Copy them from the spec before stopping.');

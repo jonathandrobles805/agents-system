@@ -52,8 +52,21 @@ export function stripChars(s, chars) {
   return s.slice(a, b);
 }
 
+/** Compiled fnmatch patterns: the same few spec patterns are matched against every changed path of a lane. */
+const FNMATCH_CACHE = new Map();
+
 /** Python fnmatch.fnmatchcase on POSIX: '*' matches everything including '/', '?', '[seq]', '[!seq]'. */
 export function fnmatch(name, pat) {
+  let compiled = FNMATCH_CACHE.get(pat);
+  if (!compiled) {
+    compiled = fnmatchRegExp(pat);
+    if (FNMATCH_CACHE.size > 4096) FNMATCH_CACHE.clear();
+    FNMATCH_CACHE.set(pat, compiled);
+  }
+  return compiled.test(name);
+}
+
+function fnmatchRegExp(pat) {
   let re = '';
   let i = 0;
   const n = pat.length;
@@ -85,7 +98,7 @@ export function fnmatch(name, pat) {
       re += c.replace(/[.*+?^${}()|[\]\\/]/g, '\\$&');
     }
   }
-  return new RegExp(`^(?:${re})$`, 's').test(name);
+  return new RegExp(`^(?:${re})$`, 's');
 }
 
 /** Local time as Python's datetime.now().isoformat(timespec="seconds"), e.g. 2026-11-08T10:00:00. */
@@ -966,6 +979,25 @@ export function laneArtifacts(work, slug, root) {
     `${work}/${slug}.checks.txt`,
     `${decisionsRoot(root)}/*.md`,
   ];
+}
+
+/**
+ * The files a lane may change beyond its spec's lists, on its own diff from `base` (the merge-base of HEAD with the
+ * branch it targets): laneArtifacts, plus the lane's own spec when the lane created it, as a fix or incident lane does
+ * (KIT-SPEC 10.12: it opens before its spec exists, and the planner writes the spec inside it). A spec the base already
+ * has is not the lane's to change: guard-edit freezes it once approved. Shared by ci_scope_diff and the shell scope
+ * check (shell_changes.js), so CI and the hooks allow the same files. `base` null: the spec is not allowed.
+ */
+export function laneOwnedFiles(work, slug, root, base) {
+  const own = laneArtifacts(work, slug, root);
+  const spec = `${work}/${slug}.md`;
+  if (!base) return own;
+  try {
+    git(['cat-file', '-e', `${base}:${spec}`], root);
+    return own;
+  } catch {
+    return [...own, spec];
+  }
 }
 
 /** Files a review commit may touch without making the review stale: the lane's own artifacts under `work`, and tests. */
