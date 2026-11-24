@@ -2136,7 +2136,7 @@ export const CHECKS = {
     const ctx = evidenceContext(outcome);
     const thin = rows.map(([, c]) => [c, c[2].toUpperCase() === 'PASS' ? reviewEvidence(c[0], c[3], ctx) : { ok: true }]).filter(([, r]) => !r.ok);
     return thin.length
-      ? { ok: false, why: `${thin.length} PASS row(s) without real evidence (a file:line in the end state, a log#line the lane recorded, or a command the session ran and its output): ${thin.slice(0, 3).map(([c, r]) => `${c[0]} ${r.why}`).join('; ')}` }
+      ? { ok: false, why: `${thin.length} PASS row(s) without real evidence (a file:line in the end state, a log#line the lane recorded, or a command the session ran and its output): ${thin.slice(0, 3).map(([c, r]) => `${c[0]} ${r.why} (evidence: ${JSON.stringify(String(c[3] ?? '').slice(0, 160))})`).join('; ')}` }
       : { ok: true, why: `${rows.length} rows, each PASS or FAIL, every PASS with evidence` };
   },
   /**

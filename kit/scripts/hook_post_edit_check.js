@@ -246,7 +246,7 @@ export function main() {
   const seconds = Math.trunc(Number(kit.timeouts?.check ?? 180));
   const timeout = Number.isFinite(seconds) ? seconds : 180;
   const rel = fp0 ? K.relTo(root, path.isAbsolute(fp0) ? fp0 : path.join(cwd, fp0)) : null;
-  const events = lane ? lane.eventsPath : path.join(root, '.claude', 'session', 'events.jsonl');
+  const events = lane ? lane.eventLogPath : path.join(root, '.claude', 'session', 'events.jsonl');
 
   // What this Bash call changed is measured before any check runs, so a file the checks themselves write (coverage,
   // build info) is never blamed on the command, and on every Bash call, not only those SHELL_WRITES recognises: an

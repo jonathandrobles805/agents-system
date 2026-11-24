@@ -814,6 +814,32 @@ process.stderr.write('fake gh 52: merge reached GitHub'); process.exit(9);
     const caught55 = test55.returncode === 0 && ns55.stage === 'test' && build55.returncode === 2 && /test → build refused/.test(build55.stderr) && review55.returncode === 2 && /not an allowed move/.test(review55.stderr) && kept55;
     record(55, 'a lane\'s stage moves on a progress cell that merely contains #, or by a move the table does not allow', 'lane.js next-step counts only logged runs of the row\'s test; lane.js advance (and stage, its old name) checks the table and the runs (hardening plan Step 2, #56)', caught55, `next-step -> ${ns55.stage}; test -> build: exit ${build55.returncode} (${(build55.stderr || '').trim().split('\n')[0]}); test -> review: exit ${review55.returncode} (${(review55.stderr || '').trim().split('\n')[0]}); store kept at test: ${kept55}`);
 
+    // 56 a session after the lane's merge (the retro) appends its events to the lane's committed events file (#107)
+    //    -> once the store has the lane at retro, the hooks write that session's events to .claude/session/ instead
+    const r56 = path.join(tmp, 'node-api-56');
+    F.nodeApi(r56);
+    run('bootstrap.js', ['--repo', r56]);
+    write(path.join(r56, 'ROADMAP.md'), read(path.join(r56, 'ROADMAP.md')).replaceAll('| TODO(bootstrap: ROADMAP.md — feature) | TODO(bootstrap: ROADMAP.md — slug) | M1 | queued | — | — | — |', '| Refund route | refund-route | M1 | queued | — | — | — |'));
+    const kj56 = path.join(r56, '.claude', 'kit.json');
+    write(kj56, K.jsonDumps({ ...JSON.parse(read(kj56)), local_only: true }));
+    const c56 = F.commitAll(r56, 'bootstrap');
+    write(path.join(r56, 'docs', 'specs', 'refund-route.md'), SPEC({ commit: c56.slice(0, 7) }));
+    F.commitAll(r56, 'spec');
+    F.approveSpec(r56, 'refund-route');
+    const wt56 = JSON.parse(run('lane.js', ['start', 'refund-route', '--repo', r56]).stdout || '{}').worktree;
+    const ev56 = path.join(wt56, 'docs', 'specs', 'refund-route.events.jsonl');
+    write(ev56, '{"event":"test","result":"ok","ts":"2026-11-24T10:00:00"}\n');
+    F.commitAll(wt56, 'refund-route: evidence (events)');
+    const sealed56 = read(ev56);
+    F.git(['merge', '--no-ff', '-q', '-m', 'merge refund-route', 'wt/refund-route'], r56);
+    const retro56 = run('lane.js', ['advance', 'refund-route', 'retro', '--repo', r56]);
+    hook('hook_event_log.js', { hook_event_name: 'PostToolUse', session_id: 'retro-56', cwd: wt56, tool_name: 'Bash', tool_input: { command: 'npm test' }, tool_response: 'Tests: 2 passed' });
+    const dirty56 = F.git(['status', '--porcelain', '--', 'docs'], wt56).trim();
+    const session56 = path.join(wt56, '.claude', 'session', 'events.jsonl');
+    const kept56 = fs.existsSync(session56) && K.splitlines(read(session56)).some((l) => JSON.parse(l).session_id === 'retro-56');
+    const caught56 = retro56.returncode === 0 && read(ev56) === sealed56 && dirty56 === '' && kept56;
+    record(56, 'a session after the lane\'s merge (the retro) appends its events to the lane\'s committed events file', 'the hooks read the lane\'s stage from the store; at retro they write to .claude/session/ (#107)', caught56, `advance -> retro: exit ${retro56.returncode} (${(retro56.stderr || '').trim().split('\n')[0]}); committed events unchanged: ${read(ev56) === sealed56}; worktree docs: ${dirty56 || 'clean'}; session log has the event: ${kept56}`);
+
     // 57 an agent writes the spec's approval line, or a fix lane scopes its in-lane spec before its spec/<slug> PR is
     //    merged (hardening plan Step 2, D1 "The approval line") -> lane.js start and lane.js scope accept only the
     //    owner's yes that lane.js merge recorded when it merged the spec PR; after that merge both go ahead

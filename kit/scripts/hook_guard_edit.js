@@ -36,7 +36,7 @@ export function main() {
     root = lane.root;
   }
   const rel = K.relTo(root, absPath);
-  const events = lane ? lane.eventsPath : path.join(root, '.claude', 'session', 'events.jsonl');
+  const events = lane ? lane.eventLogPath : path.join(root, '.claude', 'session', 'events.jsonl');
 
   const deny = (reason) => {
     K.appendEvent(events, { event: 'blocked', tool: d.tool_name ?? null, path: rel, result: 'blocked', summary: reason.split('\n')[0] });

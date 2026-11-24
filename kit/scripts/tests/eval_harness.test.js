@@ -178,6 +178,7 @@ test('hard checks fail for the right reasons', () => {
   assert.equal(CHECKS.review_has_evidence(rv('| R1 | Named test | PASS | tests/x.ts:2 asserts it |\n| R2 | Red run | FAIL | progress.md D1 has no red run |\n'), R).ok, true);
   assert.equal(CHECKS.review_has_evidence(rv('| R1 | Named test | PASS | ok |\n'), R).ok, false);
   assert.equal(CHECKS.review_has_evidence(rv('| R1 | Named test | PASS | looks good |\n'), R).ok, false, 'long enough for the validator, still no evidence');
+  assert.match(CHECKS.review_has_evidence(rv('| R1 | Named test | PASS | looks good |\n'), R).why, /R1 .*\(evidence: "looks good"\)/, 'the reason shows the row\'s evidence');
   // reviewer.md: evidence is `file:line`, `log#line`, or the command and its output; "Looks fine is not evidence"
   for (const e of ['looks fine to me', 'verified', 'Verified by running the tests, all good', '`npx vitest run`', '`tests/truncate.test.ts::name` exists']) assert.equal(CHECKS.review_has_evidence(rv(`| R1 | Named test | PASS | ${e} |\n`), R).ok, false, e);
   for (const e of ['tests/x.ts:2-4 asserts it', 'progress.md D1 green truncate-text.log#26', '`npx vitest run`: 2 passed']) assert.equal(CHECKS.review_has_evidence(rv(`| R1 | Named test | PASS | ${e} |\n`), R).ok, true, e);
@@ -1415,6 +1416,17 @@ test('transcriptSummary keeps the prompt, each tool call with its input and resu
   assert.match(s, /## Text\n\nI added one critique item\./);
   assert.equal(s.split('src/a.ts:1:truncate').length - 1, 1, 'each result once, not three times');
   assert.ok(s.length < lines.length, 'shorter than the transcript');
+});
+
+test('transcriptSummary shows what the session wrote whole, inside a fence longer than its own', () => {
+  const body = `| R3 | PASS | ${'x'.repeat(3000)} |\n\`\`\`\ninner fence\n\`\`\`\nEND-OF-REVIEW`;
+  const lines = [
+    { type: 'user', message: { role: 'user', content: 'Review.' } },
+    { type: 'assistant', message: { content: [{ type: 'tool_use', id: 'w', name: 'Write', input: { file_path: 'docs/specs/x.review.md', content: body } }] } },
+  ].map((l) => JSON.stringify(l)).join('\n');
+  const s = claude.transcriptSummary(lines);
+  assert.ok(s.includes(body), 'the written file is not clipped');
+  assert.match(s, /Wrote:\n\n````\n\| R3/, 'a four-backtick fence around a file holding a three-backtick one');
 });
 
 test('keepTranscripts writes a summary beside each kept transcript', () => {

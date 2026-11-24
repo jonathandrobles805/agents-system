@@ -41,7 +41,7 @@ export function main() {
   const r = K.laneForHook(d);
   const lane = r.lane;
   const root = lane ? lane.root : K.repoRoot(cwd);
-  const file = lane ? lane.eventsPath : path.join(root, '.claude', 'session', 'events.jsonl');
+  const file = lane ? lane.eventLogPath : path.join(root, '.claude', 'session', 'events.jsonl');
   const ev = text(d.hook_event_name);
   const tool = text(d.tool_name);
   const ti = d.tool_input && typeof d.tool_input === 'object' ? d.tool_input : {};
