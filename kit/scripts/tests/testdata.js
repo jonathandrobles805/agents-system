@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { jsonDumps } from '../kitlib.js';
-import { nodeApi, commitAll } from './fixtures.js';
+import { nodeApi, commitAll, approveSpec } from './fixtures.js';
 import { runScript, tmpPath } from './helpers.js';
 
 const DATA = path.join(path.dirname(fileURLToPath(import.meta.url)), 'data');
@@ -33,7 +33,7 @@ export function write(repo, rel, text) {
   return p;
 }
 
-/** A bootstrapped node project with a queued roadmap and an approved (or not) "refund-route" spec. */
+/** A bootstrapped node project with a queued roadmap and an approved (or not: no recorded approval) "refund-route" spec. */
 export function project(t, { status = 'approved', approved = true, wipLimit = 2, dir } = {}) {
   const root = nodeApi(path.join(dir ?? tmpPath(t), 'node-api'));
   runScript('bootstrap.js', ['--repo', root]);
@@ -57,6 +57,8 @@ export function project(t, { status = 'approved', approved = true, wipLimit = 2,
   if (!approved) text = text.replaceAll(`Approved by: Jonathan Robles on 2026-11-08 at ${commit.slice(0, 7)}`, 'Approved by: — on — at —');
   write(root, 'docs/specs/refund-route.md', text);
   commitAll(root, 'spec');
+  // approved = the owner merged the spec PR (kit lane merge records it); the fixture commits the spec on main itself
+  if (approved) approveSpec(root, 'refund-route');
   return { root, commit };
 }
 

@@ -91,8 +91,8 @@ File count is not a size signal; a one-line change across thirty-three declared 
 | State | Evidence |
 |---|---|
 | draft | goal file, no spec |
-| validated | spec, validation passed, no approval line |
-| approved | approval line |
+| validated | spec, validation passed, no recorded approval |
+| approved | the spec PR merged with `kit lane merge`, which records your yes in the lane store |
 | executing | worktree, progress file, no review |
 | testing | red runs recorded, green incomplete |
 | reviewing | review report for HEAD, CI pending |

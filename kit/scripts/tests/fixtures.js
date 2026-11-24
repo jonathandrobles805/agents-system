@@ -4,6 +4,7 @@ import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { jsonDumps } from '../kitlib.js';
+import { recordSpecApproval } from '../lane.js';
 
 // Hermetic git: the developer's global config (commit signing, hooks) must not affect test repositories.
 process.env.GIT_CONFIG_COUNT = '1';
@@ -20,6 +21,15 @@ export function commitAll(root, msg) {
   git(['add', '-A'], root);
   git(['commit', '-q', '-m', msg], root);
   return git(['rev-parse', 'HEAD'], root).trim();
+}
+
+/**
+ * Stand-in for the owner's merge of a spec/<slug> PR with kit lane merge: record the approval lane.js reads (hardening
+ * plan D1), for a fixture whose spec was committed on its base directly. `commit` (default HEAD) must be on the base.
+ */
+export function approveSpec(root, slug, { by = 'Jonathan Robles', commit = null, pr = null } = {}) {
+  const c = commit ?? git(['rev-parse', 'HEAD'], root).trim();
+  return recordSpecApproval(root, slug, { by, at: new Date().toISOString().slice(0, 19), merged_at: null, pr, head: null, commit: c });
 }
 
 const write = (p, text) => {

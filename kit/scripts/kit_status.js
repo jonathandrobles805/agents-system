@@ -10,7 +10,7 @@
 //   ready-to-merge    review report exists, validates, Verdict PASS, Head matches lane HEAD
 //   in-review         review report exists (any verdict) or the store says stage review
 //   building          worktree exists with lane.json
-//   waiting-approval  spec exists, no approval line
+//   waiting-approval  spec exists, no recorded approval (kit lane merge of its spec PR)
 //   planning          spec exists with status draft, or ROADMAP says planning
 //   researching       research INDEX has a row whose slug/keywords match the feature, no spec
 //   queued            otherwise
@@ -35,12 +35,12 @@ Lane position rules (first match wins):
   ready-to-merge    review report exists, validates, Verdict PASS, Head matches lane HEAD
   in-review         review report exists (any verdict) or the store says stage review
   building          worktree exists with lane.json
-  waiting-approval  spec exists, no approval line
+  waiting-approval  spec exists, no recorded approval (kit lane merge of its spec PR)
   planning          spec exists with status draft, or ROADMAP says planning
   researching       research INDEX has a row whose slug/keywords match the feature, no spec
   queued            otherwise`;
 
-const { pjoin, pyStrip, headCp, kget, pyStr, pyTruthy, relativeTo, readText, PYS_IN, APPROVAL_RE } = L;
+const { pjoin, pyStrip, headCp, kget, pyStr, pyTruthy, relativeTo, readText, PYS_IN } = L;
 const S = `[${PYS_IN}]`; // Python \s
 const NS = `[^${PYS_IN}]`; // Python \S
 
@@ -177,7 +177,8 @@ export function laneState(root, row, kit) {
   const rev = reviewInfo(docsRoot, pjoin(docsRoot, work, `${slug}.review.md`), head);
   const ev = eventsSummary(pjoin(docsRoot, work, `${slug}.events.jsonl`));
   const specHdr = K.isFile(spec) ? L.specHeader(spec) : new Map();
-  const approved = Boolean(K.isFile(spec) && APPROVAL_RE.test(readText(spec)));
+  // approved: the owner merged the spec/<slug> PR with kit lane merge, which recorded it (an approval line does not count)
+  const approved = Boolean(K.isFile(spec) && L.specApproval(root, slug));
   let behind = null;
   let ahead = null;
   if (hasWt) {

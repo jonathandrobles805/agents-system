@@ -107,6 +107,7 @@ function project(tmp, name = 'node-api') {
   const commit = F.commitAll(root, 'bootstrap');
   write(path.join(root, 'docs', 'specs', 'refund-route.md'), SPEC({ commit: commit.slice(0, 7), deps: 'none', extra: '' }));
   F.commitAll(root, 'spec approved');
+  F.approveSpec(root, 'refund-route'); // the owner's merge of the spec PR, as kit lane merge records it (hardening plan D1)
   const bare = path.join(tmp, `${name}-origin.git`);
   gitCheck(['init', '-q', '--bare', bare]);
   F.git(['remote', 'add', 'origin', bare], root);
@@ -340,6 +341,7 @@ export function main(argv) {
     const c23 = F.commitAll(root23, 'bootstrap');
     write(path.join(root23, 'docs', 'specs', 'refund-route.md'), SPEC({ commit: c23.slice(0, 7) }));
     F.commitAll(root23, 'spec');
+    F.approveSpec(root23, 'refund-route');
     r = run('lane.js', ['start', 'refund-route', '--repo', root23], { env: { KIT_SANDBOX_RUNTIME: 'none' } });
     const refusedHigh = r.returncode === 2 && r.stderr.includes('requires the container sandbox runtime') && !fs.existsSync(path.join(tmp, 'node-api-23-lanes', 'refund-route'));
     write(kj23, K.jsonDumps({ ...JSON.parse(read(kj23)), sandbox: { high_risk_waiver: { by: 'planted-fault', reason: 'prove the degraded state is recorded' } } }));
@@ -401,6 +403,7 @@ export function main(argv) {
     write(spec34, SPEC({ commit: F.commitAll(root34, 'provisional').slice(0, 7) }).replace(/^- Risk:.*$/m, '- Risk: low').replaceAll('src/domain/payment.ts', 'src/util/f.ts').replaceAll('src/api/routes.ts', 'src/util/f.ts'));
     write(path.join(root34, 'src', 'util', 'f.ts'), 'export const a = 1;\nexport const b = 2;\nexport const c = 3;\n');
     F.commitAll(root34, 'spec');
+    F.approveSpec(root34, 'refund-route');
     run('lane.js', ['roadmap-set', 'refund-route', 'waiting-approval', '--repo', root34]);
     const s37 = run('lane.js', ['start', 'refund-route', '--repo', root34]);
     const wt37 = JSON.parse(s37.stdout).worktree;
@@ -762,6 +765,7 @@ process.stderr.write('fake gh 52: merge reached GitHub'); process.exit(9);
     const c51 = F.commitAll(r51, 'bootstrap');
     write(path.join(r51, 'docs', 'specs', 'refund-route.md'), SPEC({ commit: c51.slice(0, 7) }));
     F.commitAll(r51, 'spec');
+    F.approveSpec(r51, 'refund-route');
     const lanes51 = path.join(tmp, 'node-api-51-lanes', 'refund-route');
     F.git(['remote', 'add', 'origin', path.join(tmp, 'gone-51.git')], r51);
     const fetchFail51 = run('lane.js', ['start', 'refund-route', '--repo', r51]);
@@ -797,6 +801,7 @@ process.stderr.write('fake gh 52: merge reached GitHub'); process.exit(9);
     const c55 = F.commitAll(r55, 'goal');
     write(path.join(r55, 'docs', 'specs', 'refund-route.md'), SPEC({ commit: c55.slice(0, 7) }));
     F.commitAll(r55, 'spec');
+    F.approveSpec(r55, 'refund-route');
     const wt55 = JSON.parse(run('lane.js', ['start', 'refund-route', '--repo', r55]).stdout || '{}').worktree;
     const test55 = run('lane.js', ['stage', 'refund-route', 'test', '--repo', r55]);
     const prog55 = path.join(wt55, 'docs', 'specs', 'refund-route.progress.md');
@@ -808,6 +813,60 @@ process.stderr.write('fake gh 52: merge reached GitHub'); process.exit(9);
     const kept55 = fs.existsSync(store55) && JSON.parse(read(store55)).stage === 'test';
     const caught55 = test55.returncode === 0 && ns55.stage === 'test' && build55.returncode === 2 && /test → build refused/.test(build55.stderr) && review55.returncode === 2 && /not an allowed move/.test(review55.stderr) && kept55;
     record(55, 'a lane\'s stage moves on a progress cell that merely contains #, or by a move the table does not allow', 'lane.js next-step counts only logged runs of the row\'s test; lane.js advance (and stage, its old name) checks the table and the runs (hardening plan Step 2, #56)', caught55, `next-step -> ${ns55.stage}; test -> build: exit ${build55.returncode} (${(build55.stderr || '').trim().split('\n')[0]}); test -> review: exit ${review55.returncode} (${(review55.stderr || '').trim().split('\n')[0]}); store kept at test: ${kept55}`);
+
+    // 57 an agent writes the spec's approval line, or a fix lane scopes its in-lane spec before its spec/<slug> PR is
+    //    merged (hardening plan Step 2, D1 "The approval line") -> lane.js start and lane.js scope accept only the
+    //    owner's yes that lane.js merge recorded when it merged the spec PR; after that merge both go ahead
+    const gh57 = path.join(tmp, 'gh-57');
+    const ghEnv57 = (answer) => {
+      writeP(path.join(gh57, 'answer.json'), JSON.stringify(answer));
+      writeP(path.join(gh57, 'gh'), `#!/usr/bin/env node
+const a = process.argv.slice(2);
+if (a[0] === 'pr' && a[1] === 'view') { process.stdout.write(require('fs').readFileSync(${JSON.stringify(path.join(gh57, 'answer.json'))}, 'utf8')); process.exit(0); }
+process.stderr.write('fake gh 57: unexpected ' + a.join(' ')); process.exit(9);
+`);
+      fs.chmodSync(path.join(gh57, 'gh'), 0o755);
+      return { env: { PATH: `${gh57}${path.delimiter}${process.env.PATH}` } };
+    };
+    // a spec PR the owner merged on GitHub's page; kit lane merge records it (the open-PR path is in pr_gate.test.js)
+    const specPr57 = (n, oid) => ({ number: n, url: `https://github.com/o/p/pull/${n}`, state: 'MERGED', isDraft: false, headRefOid: 'd'.repeat(40), headRefName: 'spec/refund-route', baseRefName: 'main', title: 'spec: refund route', mergeCommit: { oid }, mergedAt: '2026-11-24T10:00:00Z' });
+    const repo57 = (name, workType) => {
+      const r = path.join(tmp, name);
+      F.nodeApi(r);
+      run('bootstrap.js', ['--repo', r]);
+      write(path.join(r, 'ROADMAP.md'), read(path.join(r, 'ROADMAP.md')).replaceAll('| TODO(bootstrap: ROADMAP.md — feature) | TODO(bootstrap: ROADMAP.md — slug) | M1 | queued | — | — | — |', '| Refund route | refund-route | M1 | queued | — | — | — |'));
+      const kj = path.join(r, '.claude', 'kit.json');
+      write(kj, K.jsonDumps({ ...JSON.parse(read(kj)), local_only: true }));
+      writeP(path.join(r, 'docs', 'goals', 'refund-route.md'), `# Goal: refund route\n\n- Status: agreed\n- Agreed by: Jonathan Robles on 2026-11-24\n- Work type: ${workType}\n- Risk: high\n- Size: S\n- Domain: api\n\n## Outcome\n\nA refund route.\n`);
+      return [r, F.commitAll(r, 'goal')];
+    };
+    // a feature: the agent sets Status: approved and fills the approval line itself, on main
+    const [r57, c57] = repo57('node-api-57', 'feature');
+    const spec57 = SPEC({ commit: c57.slice(0, 7) });
+    write(path.join(r57, 'docs', 'specs', 'refund-route.md'), spec57);
+    const onMain57 = F.commitAll(r57, 'agent: spec approved by Jonathan Robles');
+    const start57 = run('lane.js', ['start', 'refund-route', '--repo', r57]);
+    const none57 = !fs.existsSync(path.join(tmp, 'node-api-57-lanes', 'refund-route'));
+    // the owner's yes: kit lane merge records the merged spec PR, and the lane starts
+    const mg57 = run('lane.js', ['merge', '--pr', '7', '--repo', r57, '--by', 'Jonathan Robles'], ghEnv57(specPr57(7, onMain57)));
+    const after57 = run('lane.js', ['start', 'refund-route', '--repo', r57]);
+    // a fix lane: it opens from the goal, the planner writes the spec in the lane, approved with a line
+    const [r57f] = repo57('node-api-57f', 'fix');
+    const open57 = run('lane.js', ['start', 'refund-route', '--repo', r57f]);
+    const wt57 = JSON.parse(open57.stdout || '{}').worktree ?? path.join(tmp, 'node-api-57f-lanes', 'refund-route');
+    const prog57 = path.join(wt57, 'docs', 'specs', 'refund-route.progress.md');
+    if (fs.existsSync(prog57)) write(prog57, read(prog57).replace('## Current step', 'cause: no refund route\n\n## Current step'));
+    writeP(path.join(wt57, 'docs', 'specs', 'refund-route.md'), spec57);
+    const scope57 = run('lane.js', ['scope', 'refund-route', '--repo', r57f]);
+    // the spec PR: the same file merged to main, and kit lane merge records the owner's yes; then scope goes ahead
+    writeP(path.join(r57f, 'docs', 'specs', 'refund-route.md'), spec57);
+    const merged57f = F.commitAll(r57f, 'spec: refund route (#8)');
+    const mgf57 = run('lane.js', ['merge', '--pr', '8', '--repo', r57f, '--by', 'Jonathan Robles'], ghEnv57(specPr57(8, merged57f)));
+    const scoped57 = run('lane.js', ['scope', 'refund-route', '--repo', r57f]);
+    const caught57 = start57.returncode === 2 && /no recorded approval for refund-route: merge the spec PR first/.test(start57.stderr) && none57 &&
+      mg57.returncode === 0 && after57.returncode === 0 && open57.returncode === 0 &&
+      scope57.returncode === 2 && /no recorded approval for refund-route/.test(scope57.stderr) && mgf57.returncode === 0 && scoped57.returncode === 0;
+    record(57, "an agent writes the spec's approval line, or a fix lane scopes its in-lane spec before its spec/<slug> PR is merged", "lane.js start and scope accept only the owner's yes that lane.js merge recorded when it merged the spec PR (hardening plan Step 2, D1)", caught57, `line only: start -> exit ${start57.returncode} (${(start57.stderr || '').trim().split('\n')[0].slice(0, 90)}); after the recorded merge -> exit ${after57.returncode}; fix lane scope before the merge -> exit ${scope57.returncode}, after -> exit ${scoped57.returncode}`);
   } finally {
     if (a.keep) process.stderr.write(`fixtures kept at ${tmp}\n`);
     else fs.rmSync(tmp, { recursive: true, force: true });
