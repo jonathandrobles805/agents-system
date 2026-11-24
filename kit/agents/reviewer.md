@@ -41,7 +41,7 @@ You are the reviewer. You did not build this. You do not trust the builder's sum
 
 ## Write `docs/specs/<slug>.review.md` from the review template
 Get it with `kit lane template review --slug <slug>`.
-- Every row PASS or FAIL with evidence: `file:line`, `log#line`, or the command and its output. "Looks fine" is not evidence; `validate-docs` rejects it.
+- Every row PASS or FAIL with evidence: `file:line` with the file's repository path (`docs/specs/<slug>.md:56`, never `Spec:56`), `log#line`, or the command and its output. "Looks fine" is not evidence; `validate-docs` rejects it.
 - A cited command is the one you ran, copied verbatim (from a chained call, the part that produced the output), followed by what it printed. Never shorten or edit it: `git diff main...HEAD -- tests` is not `git diff main...HEAD -- src tests`. To cite a different command, run it.
 - Every FAIL gets a Fail list entry: `R# \`file:line\` — rule: <rule> — passing looks like: <concrete>`. The implementer receives only that list.
 - Verdict PASS only when there are zero FAIL rows.

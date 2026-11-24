@@ -501,13 +501,56 @@ export function keepTranscripts(config, out) {
       else if (e.name.endsWith('.jsonl')) {
         const dest = path.join(out, path.relative(src, p));
         fs.mkdirSync(path.dirname(dest), { recursive: true });
-        fs.writeFileSync(dest, redactJsonl(fs.readFileSync(p, 'utf8')));
+        const redacted = redactJsonl(fs.readFileSync(p, 'utf8'));
+        fs.writeFileSync(dest, redacted);
+        fs.writeFileSync(dest.replace(/\.jsonl$/, '.summary.md'), transcriptSummary(redacted));
         kept.push(dest);
       }
     }
   };
   walk(src);
   return kept;
+}
+
+const clip = (s, n) => (s.length > n ? `${s.slice(0, n)}… [${s.length - n} more characters]` : s);
+
+/**
+ * A short, readable account of one (already redacted) transcript, kept beside it: the prompt, each tool call with its
+ * main input and the start of its result, and the final answer. Claude Code's JSONL stores every tool result three
+ * times and repeats the system prompt and tool schemas; the summary keeps only what a reader needs to see what the
+ * session did. The JSONL stays the record.
+ */
+export function transcriptSummary(jsonl) {
+  const out = [];
+  const results = new Map();
+  const rows = [];
+  for (const line of jsonl.split('\n')) {
+    let r;
+    try { r = JSON.parse(line); } catch { continue; }
+    const content = r?.message?.content;
+    if (r.type === 'user' && typeof content === 'string' && !out.length) out.push(`# Prompt\n\n${clip(content, 2000)}\n`);
+    if (r.type === 'user' && Array.isArray(content))
+      for (const b of content)
+        if (b?.type === 'tool_result') {
+          const text = typeof b.content === 'string' ? b.content : (b.content ?? []).map((c) => c?.text ?? '').join('\n');
+          results.set(b.tool_use_id, `${b.is_error ? '(error) ' : ''}${text}`);
+        }
+    if (r.type === 'assistant' && Array.isArray(content))
+      for (const b of content) {
+        if (b?.type === 'tool_use') rows.push({ id: b.id, name: b.name, input: b.input ?? {} });
+        if (b?.type === 'text' && b.text?.trim()) rows.push({ text: b.text });
+      }
+  }
+  out.push('# Steps\n');
+  let n = 0;
+  for (const row of rows) {
+    if (row.text) { out.push(`## Text\n\n${clip(row.text, 4000)}\n`); continue; }
+    const i = row.input;
+    const main = i.command ?? i.file_path ?? i.pattern ?? i.url ?? i.query ?? JSON.stringify(i);
+    const body = i.content ?? i.new_string;
+    out.push(`## ${++n}. ${row.name}: \`${clip(String(main), 600)}\`${body ? `\n\nWrote:\n\n\`\`\`\n${clip(String(body), 1500)}\n\`\`\`` : ''}\n\nResult:\n\n\`\`\`\n${clip(results.get(row.id) ?? '(no result)', 800)}\n\`\`\`\n`);
+  }
+  return out.join('\n');
 }
 
 /** Hook events from line `from` on: the lines a session appended, never the ones the setup wrote before it. */
