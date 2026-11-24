@@ -4,6 +4,8 @@ on:
   push:
     branches: [main]
   pull_request:
+  # the real-agent smoke set (eval-smoke-main) runs only when started by hand from main: Actions → kit → Run workflow
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -98,15 +100,17 @@ jobs:
           BASE_REF: ${{ github.base_ref }}
         run: |
           FILES=$(git diff --name-only "origin/$BASE_REF"...HEAD | grep -E '^kit/(agents|skills|templates|workflows|eval)/' | grep -Ev '^kit/eval/(results|fixtures)/' | tr '\n' ',' || true)
-          if [ -n "$FILES" ]; then echo "::notice::this PR changes ${FILES}. The real-agent smoke set runs on main after the merge (eval-smoke-main); to see it before merging, run it locally: npm run eval:smoke -- --runner claude. KIT-SPEC 11A."; else echo "touched: none"; fi
+          if [ -n "$FILES" ]; then echo "::notice::this PR changes ${FILES}. The real-agent smoke set runs on main only when started by hand (Actions → kit → Run workflow); to see it before merging, run it locally: npm run eval:smoke -- --runner claude. KIT-SPEC 11A."; else echo "touched: none"; fi
 
-  # main: the real-agent smoke set over what the merge touched, with the credentials from the `main` environment.
+  # main, by hand only (workflow_dispatch): the real-agent smoke set, with the credentials from the `main` environment.
+  # Not run after every merge: each run starts real Claude sessions (API cost) and takes paid Actions minutes. Run it
+  # after a change to agents, skills, templates, workflows or the eval: Actions → kit → Run workflow on main.
   # The environment is limited to the main branch, so no other ref can read the keys. Missing keys fail the job:
   # a silent skip here would mean the real-agent set never runs anywhere in CI.
   eval-smoke-main:
     name: eval smoke set against the real agents (main)
     runs-on: ubuntu-latest
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'
     environment: main
     steps:
       - uses: actions/checkout@v4
@@ -117,6 +121,8 @@ jobs:
       - name: which gated paths this push touches
         id: touched
         run: |
+          # started by hand: run the smoke set's core roles whatever the last commit touched
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then echo "files=manual" >> "$GITHUB_OUTPUT"; echo "touched: manual run"; exit 0; fi
           BEFORE="${{ github.event.before }}"
           if [ -z "$BEFORE" ] || ! git cat-file -e "$BEFORE^{commit}" 2>/dev/null; then BEFORE="HEAD~1"; fi
           FILES=$(git diff --name-only "$BEFORE"...HEAD | grep -E '^kit/(agents|skills|templates|workflows|eval)/' | grep -Ev '^kit/eval/(results|fixtures)/' | tr '\n' ',' || true)
