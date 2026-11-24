@@ -355,7 +355,7 @@ export function main() {
   // alone. Closing it needs a session-to-lane record, which the kit does not keep.
   const r = K.laneForHook(d);
   const lane = r.lane;
-  const events = lane ? lane.eventsPath : path.join(root, '.claude', 'session', 'events.jsonl');
+  const events = lane ? lane.eventLogPath : path.join(root, '.claude', 'session', 'events.jsonl');
   if (r.via === 'ambiguous') {
     K.appendEvent(events, { event: 'lane_unresolved', tool: 'Bash', result: 'ok', summary: `${r.slugs.length} lanes open (${r.slugs.join(', ')}); lane rules not applied` });
   }

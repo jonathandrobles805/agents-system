@@ -267,6 +267,52 @@ test('event log writes lane events', (t) => {
   assert.ok(e2.event === 'bash' && e2.summary.startsWith('Tests: 2 passed'));
 });
 
+// #107: once the lane is merged (the store at retro), its committed events file is evidence and no hook appends to it
+const storeAt = (repo, stage) => write(repo, '.claude/session/lanes/refund-endpoint.json', JSON.stringify({ version: 1, slug: 'refund-endpoint', stage }));
+const commitEvents = (repo) => {
+  write(repo, 'docs/specs/refund-endpoint.events.jsonl', '{"event":"test","result":"ok"}\n');
+  git(['add', 'docs/specs/refund-endpoint.events.jsonl'], repo);
+  git(['-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-q', '-m', 'evidence'], repo);
+  return read(repo, 'docs/specs/refund-endpoint.events.jsonl');
+};
+
+test('a retro-stage session writes its events to the session log, not the committed events file (#107)', (t) => {
+  const repo = makeRepo(t);
+  makeLane(repo); // lane.json still says build: the store wins
+  const before = commitEvents(repo);
+  storeAt(repo, 'retro');
+  run('hook_event_log.js', post(repo, 'Bash', { command: 'npm test' }, 'Tests: 2 passed'));
+  assert.equal(read(repo, 'docs/specs/refund-endpoint.events.jsonl'), before);
+  assert.equal(git(['status', '--porcelain', '--', 'docs'], repo).trim(), '');
+  const session = lines(read(repo, '.claude/session/events.jsonl').trim()).map((l) => JSON.parse(l));
+  assert.ok(session.length === 1 && session[0].event === 'bash' && session[0].lane === 'refund-endpoint', JSON.stringify(session));
+});
+
+test('a build-stage session still writes the committed events file (#107)', (t) => {
+  const repo = makeRepo(t);
+  makeLane(repo, GOOD_SPEC, 'retro'); // a stale lane.json; the store says build
+  commitEvents(repo);
+  storeAt(repo, 'build');
+  run('hook_event_log.js', post(repo, 'Edit', { file_path: 'src/routes.ts' }, 'ok'));
+  const evs = lines(read(repo, 'docs/specs/refund-endpoint.events.jsonl').trim()).map((l) => JSON.parse(l));
+  assert.deepEqual(evs.map((e) => e.event), ['test', 'edit']);
+  assert.ok(!fs.existsSync(path.join(repo, '.claude/session/events.jsonl')));
+});
+
+test('a lane started before the store goes by its lane.json stage (#107)', (t) => {
+  const repo = makeRepo(t);
+  makeLane(repo, GOOD_SPEC, 'retro'); // no store record
+  const before = commitEvents(repo);
+  run('hook_event_log.js', post(repo, 'Read', { file_path: 'src/routes.ts' }, 'ok'));
+  assert.equal(read(repo, 'docs/specs/refund-endpoint.events.jsonl'), before);
+  assert.equal(JSON.parse(read(repo, '.claude/session/events.jsonl').trim()).event, 'read');
+  // at build, with no store record, the committed file as before ('event log writes lane events' above)
+  const built = makeRepo(t);
+  makeLane(built);
+  run('hook_event_log.js', post(built, 'Read', { file_path: 'src/routes.ts' }, 'ok'));
+  assert.equal(JSON.parse(read(built, 'docs/specs/refund-endpoint.events.jsonl').trim()).event, 'read');
+});
+
 // ---------------- post-edit-check ----------------
 
 test('post edit check runs commands and blocks on failure', (t) => {
