@@ -1,5 +1,5 @@
 // Decision 0018: CI cost is cut only where no check is lost. These tests hold the kit's own workflows to it, so a later
-// edit that brings back a paid trigger, drops a supported Node version or cancels runs on main fails here.
+// edit that brings back a paid trigger, starts the agent eval on merges that cannot change it, drops a supported Node version or cancels runs on main fails here.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -14,18 +14,27 @@ const onBlock = (yml) => /^on:\n((?:[ \t#].*\n|\n)*)/m.exec(yml)?.[1] ?? '';
 const job = (yml, id) => new RegExp(`^  ${id}:\\n((?:    .*\\n|\\n)*)`, 'm').exec(yml)?.[1] ?? '';
 const minNode = () => Number(/>=\s*(\d+)/.exec(JSON.parse(read('package.json')).engines.node)[1]);
 
-test('0018: the real-agent evals start only by hand, never on push or a schedule', () => {
-  const weekly = read('.github', 'workflows', 'kit-eval-weekly.yml');
-  assert.doesNotMatch(onBlock(weekly).replace(/#.*$/gm, ''), /\bschedule:|\bpush:|\bpull_request:/, 'the full set has no automatic trigger');
-  assert.match(onBlock(weekly), /workflow_dispatch:/);
+test('0018: the real-agent smoke set starts on main only when a push changes what it measures, or by hand', () => {
+  const main = read('.github', 'workflows', 'kit-eval-main.yml');
+  const on = onBlock(main).replace(/#.*$/gm, '');
+  assert.match(on, /push:\n\s+branches: \[main\]\n\s+paths:/, 'push to main, path-filtered');
+  for (const p of ['kit/agents/**', 'kit/skills/**', 'kit/templates/**', 'kit/workflows/**', 'kit/eval/**', '!kit/eval/results/**', '!kit/eval/fixtures/**']) assert.ok(on.includes(`'${p}'`), p);
+  assert.match(on, /workflow_dispatch:/);
+  assert.doesNotMatch(on, /\bschedule:|\bpull_request:/, 'no schedule; never on a pull request (its credentials are main-only)');
+  const job = /^  eval-smoke-main:\n((?:    .*\n|\n)*)/m.exec(main)?.[1] ?? '';
+  assert.match(job, /^    if: github\.ref == 'refs\/heads\/main'$/m);
+  assert.match(job, /^    environment: main$/m);
+  // the gated set is the same one kit.yml's PR notice names
   const kit = read('.github', 'workflows', 'kit.yml');
-  assert.match(onBlock(kit), /workflow_dispatch:/);
-  const main = job(kit, 'eval-smoke-main');
-  assert.ok(main, 'eval-smoke-main exists');
-  const cond = /^    if: (.*)$/m.exec(main)?.[1] ?? '';
-  assert.match(cond, /github\.event_name == 'workflow_dispatch'/, cond);
-  assert.match(cond, /refs\/heads\/main/, cond);
-  assert.doesNotMatch(cond, /'push'|'schedule'|'pull_request'/, cond);
+  assert.match(kit, /\^kit\/\(agents\|skills\|templates\|workflows\|eval\)\//);
+  assert.doesNotMatch(kit, /^  eval-smoke-main:/m, 'one copy of the job');
+  assert.doesNotMatch(onBlock(kit), /workflow_dispatch/, 'kit.yml runs on its own triggers only');
+});
+
+test('0018: the full set (n=3) starts only by hand', () => {
+  const weekly = read('.github', 'workflows', 'kit-eval-weekly.yml');
+  assert.doesNotMatch(onBlock(weekly).replace(/#.*$/gm, ''), /\bschedule:|\bpush:|\bpull_request:/);
+  assert.match(onBlock(weekly), /workflow_dispatch:/);
 });
 
 test('0018: the unit tests run on every supported Node major, none below the minimum, and the minimum is stated alike', () => {

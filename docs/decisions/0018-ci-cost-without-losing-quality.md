@@ -13,12 +13,13 @@ The real-agent eval also uses Claude API usage, which is billed separately.
 
 ## Decision
 
-1. **The real-agent evals run only by hand.** `eval-smoke-main` (`kit.yml`) and the full set (`kit-eval-weekly.yml`) have no `push` or `schedule` trigger; the owner starts them with `workflow_dispatch` on main. Run them:
-   - after a change to `kit/agents/`, `kit/skills/`, `kit/templates/`, `kit/workflows/` or `kit/eval/`;
+1. **The real-agent smoke set runs exactly when it can catch something.** `eval-smoke-main` lives in its own workflow, `kit-eval-main.yml`. It starts on a push to main only when that push changes `kit/agents/`, `kit/skills/`, `kit/templates/`, `kit/workflows/` or `kit/eval/` (a `paths` filter), and by hand. Any other merge starts nothing, so it costs no minutes and no Claude usage. The check is never skipped where it matters and never left to memory.
+2. **The full set (all tasks, n=3) runs only by hand** (`kit-eval-weekly.yml`, `workflow_dispatch`, no `schedule`). Run it:
    - before tagging a release;
-   - after a Claude or Claude Code update.
-2. **One supported Node major per matrix value, starting at 22.** Node 20 reached end of life on 2026-04-30, so the kit's minimum is Node 22: `package.json` `engines`, `install.sh` and the README say the same. The unit-test matrix covers every supported major, and no value below the minimum.
-3. **A newer push to a pull request cancels its older run.** Runs on main are never cancelled.
+   - after a Claude or Claude Code update;
+   - when the smoke set or a change calls for a closer measure.
+3. **One supported Node major per matrix value, starting at 22.** Node 20 reached end of life on 2026-04-30, so the kit's minimum is Node 22: `package.json` `engines`, `install.sh` and the README say the same. The unit-test matrix covers every supported major, and no value below the minimum.
+4. **A newer push to a pull request cancels its older run.** Runs on main are never cancelled.
 
 ## What stays the same (no check is lost)
 
@@ -26,8 +27,7 @@ Every pull request still runs the unit tests, the planted faults, the docs self-
 
 ## What this costs, and how it is covered
 
-- An agent that gets worse is found only at the next real-agent run, not after the merge. Covered by the run rules in decision 1.
-- A model or Claude Code update that hurts an agent is not caught on a schedule. Covered by running the full set after such an update.
+- A model or Claude Code update that hurts an agent is not caught on a schedule. Covered by running the full set after such an update (decision 2), and by the smoke set on the next agent change.
 
 ## Rule for any later CI change
 
