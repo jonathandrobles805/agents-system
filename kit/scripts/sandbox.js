@@ -86,7 +86,10 @@ function denyReadPaths(wt, floor, kit) {
  * branch's ref (git creates `<ref>.lock` beside it and renames it over the ref) and the branch's reflog file;
  * `config`, `packed-refs`, `hooks/` and every other ref are not written. The ref directory (`refs/heads/wt/`) holds the
  * other lanes' branches too, so each ref already in it is write-denied by name. srt skips an allowWrite path that does
- * not exist, so only existing paths are listed. Nothing is added when the git dir is inside the worktree (an ordinary
+ * not exist, so only existing paths are listed. `packed-refs` stays read-only on purpose: it holds every packed branch,
+ * main's included. Where a checkout packed its refs (CI), a commit can print "Unable to create
+ * '<repo>/.git/packed-refs.lock': Read-only file system" and still succeed (eval run 45495840978); that line is expected.
+ * Nothing is added when the git dir is inside the worktree (an ordinary
  * clone, already writable) or `wt` is not in a git repository.
  * @returns {{ common: string, allowWrite: string[], denyWrite: string[] } | null}
  */
