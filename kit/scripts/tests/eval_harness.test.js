@@ -1392,3 +1392,33 @@ test('claude runner setup: a lane step runs a kit hook as Claude Code would (its
   assert.throws(() => claude.fixtureRepo({ ...task, setup: { ...task.setup, lane: { slug: 'truncate-text', steps: [{ stage: 'build' }, { hook: 'hook_guard_edit.js', tool: 'Write', tool_input: { file_path: 'src/text/format.ts' }, exit: 0 }] } } }, path.join(dir, 'b'), path.join(dir, 'b', 'home', '.claude'), stubs), /exited 2, expected 0/);
   assert.throws(() => claude.fixtureRepo({ ...task, setup: { ...task.setup, lane: { slug: 'truncate-text', steps: [{ hook: '../lane.js', tool: 'Write' }] } } }, path.join(dir, 'c'), path.join(dir, 'c', 'home', '.claude'), stubs), /not one of the kit's hook scripts/);
 });
+
+test('transcriptSummary keeps the prompt, each tool call with its input and result, and the final answer, once', () => {
+  const lines = [
+    { type: 'user', message: { role: 'user', content: 'Critique docs/specs/x.md.' } },
+    { type: 'assistant', message: { content: [{ type: 'tool_use', id: 't1', name: 'Bash', input: { command: 'git grep -n truncate' } }] } },
+    { type: 'user', message: { content: [{ type: 'tool_result', tool_use_id: 't1', content: 'src/a.ts:1:truncate' }] }, toolUseResult: { stdout: 'src/a.ts:1:truncate' } },
+    { type: 'api-request-blob', message: { content: [{ type: 'tool_result', tool_use_id: 't1', content: 'src/a.ts:1:truncate' }] } },
+    { type: 'assistant', message: { content: [{ type: 'tool_use', id: 't2', name: 'Edit', input: { file_path: 'docs/specs/x.md', new_string: '- C1. gap →' } }] } },
+    { type: 'user', message: { content: [{ type: 'tool_result', tool_use_id: 't2', content: 'updated' }] } },
+    { type: 'assistant', message: { content: [{ type: 'text', text: 'I added one critique item.' }] } },
+  ].map((l) => JSON.stringify(l)).join('\n');
+  const s = claude.transcriptSummary(lines);
+  assert.match(s, /# Prompt\n\nCritique docs\/specs\/x\.md\./);
+  assert.match(s, /## 1\. Bash: `git grep -n truncate`[\s\S]*src\/a\.ts:1:truncate/);
+  assert.match(s, /## 2\. Edit: `docs\/specs\/x\.md`[\s\S]*- C1\. gap →[\s\S]*updated/);
+  assert.match(s, /## Text\n\nI added one critique item\./);
+  assert.equal(s.split('src/a.ts:1:truncate').length - 1, 1, 'each result once, not three times');
+  assert.ok(s.length < lines.length, 'shorter than the transcript');
+});
+
+test('keepTranscripts writes a summary beside each kept transcript', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'kit-summary-'));
+  const config = path.join(dir, 'config');
+  fs.mkdirSync(path.join(config, 'projects', 'p'), { recursive: true });
+  fs.writeFileSync(path.join(config, 'projects', 'p', 's.jsonl'), JSON.stringify({ type: 'user', message: { content: 'hello ghp_' + 'a'.repeat(36) } }) + '\n');
+  const [copy] = claude.keepTranscripts(config, path.join(dir, 'out'));
+  const summary = fs.readFileSync(copy.replace(/\.jsonl$/, '.summary.md'), 'utf8');
+  assert.match(summary, /# Prompt\n\nhello /);
+  assert.ok(!summary.includes('a'.repeat(36)), 'the summary is built from the redacted transcript');
+});
