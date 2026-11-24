@@ -5,6 +5,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { spawnSync } from 'node:child_process';
 import * as K from '../kitlib.js';
 import { ALLOW_MARKER, SRT_REQUIRED_KEYS, credentialScan, detectRuntime, launchCommand, probe, sandboxConfig, specNetwork, srtSettings } from '../sandbox.js';
 import * as F from './fixtures.js';
@@ -255,4 +256,95 @@ test('max_concurrent_lanes is the limit; wip_limit remains as the older name', (
   const r = runScript('lane.js', ['wip', '--repo', root]);
   assert.equal(r.returncode, 0, r.stderr);
   assert.equal(JSON.parse(r.stdout).limit, 5);
+});
+
+/** A main checkout with two lane worktrees (wt/demo, wt/other), the way lane.js start lays them out. */
+function laneRepos(t) {
+  const base = fs.realpathSync(tmpPath(t));
+  const root = path.join(base, 'repo');
+  const git = (cwd, ...args) => {
+    const r = spawnSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@t', '-c', 'commit.gpgsign=false', ...args], { cwd, encoding: 'utf8', env: GIT_ENV });
+    assert.equal(r.status, 0, `git ${args.join(' ')}: ${r.stderr}`);
+    return r.stdout.trim();
+  };
+  fs.mkdirSync(root);
+  git(root, 'init', '-q', '-b', 'main');
+  git(root, 'commit', '-q', '--allow-empty', '-m', 'init');
+  const wt = path.join(base, 'repo-lanes', 'demo');
+  git(root, 'worktree', 'add', '-q', '-b', 'wt/demo', wt);
+  git(root, 'worktree', 'add', '-q', '-b', 'wt/other', path.join(base, 'repo-lanes', 'other'));
+  return { root, wt, git, common: path.join(root, '.git') };
+}
+// the owner's git configuration (signing, hooksPath) is no part of what the sandbox decides
+const GIT_ENV = { ...process.env, GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_NOSYSTEM: '1' };
+
+test('sandboxConfig: a linked worktree may write what a commit needs in the shared .git, and no other ref', (t) => {
+  const { root, wt, common } = laneRepos(t);
+  const cfg = sandboxConfig({ root, wt, slug: 'demo', env: envWith('srt') });
+  assert.deepEqual(cfg.allowWrite.slice(2), [path.join(common, 'worktrees', 'demo'), path.join(common, 'objects'), path.join(common, 'refs', 'heads', 'wt'), path.join(common, 'logs', 'refs', 'heads', 'wt', 'demo')]);
+  assert.deepEqual(cfg.denyWrite, [path.join(common, 'hooks'), path.join(common, 'config'), path.join(common, 'refs', 'tags'), path.join(common, 'refs', 'heads', 'wt', 'other')]);
+  assert.equal(cfg.gitCommon, common);
+  assert.deepEqual(srtSettings(cfg).filesystem.denyWrite, cfg.denyWrite);
+  // an ordinary checkout keeps its .git inside the worktree: nothing is added
+  const plain = sandboxConfig({ root, wt: root, slug: 'demo', env: envWith('srt') });
+  assert.equal(plain.allowWrite.length, 2);
+  assert.deepEqual(plain.denyWrite, []);
+  // the container mounts the shared .git read-only and the same paths writable over it
+  const c = launchCommand({ ...cfg, runtime: 'container', engine: 'docker' }, { wt, settingsPath: '/x', prompt: 'p' });
+  assert.ok(c.includes(`${common}:${common}:ro`), c.join(' '));
+  for (const p of cfg.allowWrite.slice(2)) assert.ok(c.includes(`${p}:${p}`), p);
+  assert.ok(c.indexOf(`${common}:${common}:ro`) < c.indexOf(`${cfg.allowWrite[2]}:${cfg.allowWrite[2]}`));
+});
+
+// Real srt (bubblewrap on Linux, Seatbelt on macOS), when this machine has a working one: the lane commits, and the
+// shared .git's hooks, config, main and the other lanes' branches stay out of its reach.
+const realSrt = detectRuntime({}).runtime === 'srt' && probe(process.cwd(), { ...process.env, KIT_SANDBOX_RUNTIME: 'srt' }).ok;
+test('real srt: a lane commits in its linked worktree; hooks, config, main, tags and other lanes stay read-only', { skip: realSrt ? false : 'no working srt here' }, (t) => {
+  const { root, wt, git, common } = laneRepos(t);
+  const cfg = sandboxConfig({ root, wt, slug: 'demo', env: envWith('srt') });
+  fs.mkdirSync(cfg.allowWrite[1], { recursive: true });
+  t.after(() => fs.rmSync(cfg.allowWrite[1], { recursive: true, force: true }));
+  const settings = path.join(path.dirname(root), 'sandbox.json');
+  const inSandbox = (c, script) => {
+    fs.writeFileSync(settings, JSON.stringify(srtSettings(c)));
+    return spawnSync('srt', ['--settings', settings, '--', 'sh', '-c', script], { cwd: wt, encoding: 'utf8', env: GIT_ENV, timeout: 60000 });
+  };
+  const id = '-c user.name=t -c user.email=t@t -c commit.gpgsign=false';
+  fs.writeFileSync(path.join(wt, 'a.txt'), 'a\n');
+  // before: with only the worktree and the scratch writable, the commit fails
+  const before = inSandbox({ ...cfg, allowWrite: cfg.allowWrite.slice(0, 2), denyWrite: [] }, `git add a.txt && git ${id} commit -qm a`);
+  assert.notEqual(before.status, 0);
+  assert.match(before.stderr, /index\.lock'?: Read-only file system/);
+  const main0 = git(root, 'rev-parse', 'main');
+  const other0 = git(root, 'rev-parse', 'wt/other');
+  const ok = inSandbox(cfg, `git add a.txt && git ${id} commit -qm a`);
+  assert.equal(ok.status, 0, ok.stderr);
+  assert.equal(git(root, 'log', '-1', '--format=%s', 'wt/demo'), 'a');
+  const denied = {
+    hook: `echo x > ${common}/hooks/pre-commit`,
+    config: `echo x >> ${common}/config`,
+    gitConfig: 'git config user.name evil',
+    mainRef: `echo 0000 > ${common}/refs/heads/main`,
+    branchMain: 'git branch -f main HEAD',
+    updateMain: 'git update-ref refs/heads/main HEAD',
+    checkoutMain: 'git checkout -q main',
+    tag: 'git tag t1',
+    otherLane: 'git -c core.logAllRefUpdates=false update-ref refs/heads/wt/other HEAD',
+    otherLaneRm: `rm -f ${common}/refs/heads/wt/other`,
+  };
+  for (const [what, script] of Object.entries(denied)) {
+    const r = inSandbox(cfg, script);
+    assert.notEqual(r.status, 0, `${what} must fail: ${script}`);
+  }
+  assert.equal(git(root, 'rev-parse', 'main'), main0, 'main did not move');
+  assert.equal(git(root, 'rev-parse', 'wt/other'), other0, 'the other lane did not move');
+  assert.equal(git(root, 'tag'), '');
+  assert.ok(!fs.existsSync(path.join(common, 'hooks', 'pre-commit')));
+  assert.doesNotMatch(fs.readFileSync(path.join(common, 'config'), 'utf8'), /evil|^x$/m);
+  // push is the network's business, not the filesystem's: to a remote the lane may write (its scratch), it goes through
+  const remote = path.join(cfg.allowWrite[1], 'remote.git');
+  git(root, 'init', '-q', '--bare', remote);
+  const push = inSandbox(cfg, `git push -q ${remote} wt/demo`);
+  assert.equal(push.status, 0, push.stderr);
+  assert.equal(git(remote, 'rev-parse', 'wt/demo'), git(root, 'rev-parse', 'wt/demo'));
 });

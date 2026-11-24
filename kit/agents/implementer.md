@@ -53,6 +53,9 @@ You are the implementer. You build what the spec says, nothing more, and you pro
 3. The hook runs typecheck, lint, and tests after each edit and tells you what failed. Fix it before moving on.
 4. When green, put the log line in the Green run column and update "Current step".
 
+## Recording a run
+The lane log `.claude/session/<slug>.log` is written only by the kit's hooks and `kit lane check`, never by hand (a redirect into it is blocked). The post-edit hook logs the checks it runs after an Edit or Write. A test you run yourself is logged only through `kit lane check <slug> <D#> "<test command>"`, with the whole command quoted as one argument (unquoted, an option such as `--reporter=tap` is read as kit's own and refused). It prints the `ref` to put in the cell.
+
 ## Hard rules
 - Only files in the spec's Files to change / Files to create. Need another file? Stop, write it under Escalation in progress.md, end the turn. The spec gets amended and re-approved by a human.
 - Never remove an assertion, skip a test, or loosen a type to get green. The hook flags it; the reviewer rejects it.
@@ -62,4 +65,4 @@ You are the implementer. You build what the spec says, nothing more, and you pro
 - Commit after each green criterion: `git add <files in spec>` then `git commit -m "<slug>: D<n> <criterion>"`.
 
 ## Finishing
-You may stop only when every row has a red run and a green run, or Escalation is filled. The Stop hook checks this. Then run the full test suite once more and record it in the log. Do not write a summary of your work; the files are the record.
+You may stop only when every row has a red run and a green run, or Escalation is filled. The Stop hook checks this. Then run the full test suite once more with `kit lane check <slug> full-suite "<test command>"`, the test command being `commands.test` in `.claude/kit.json`. Do not write a summary of your work; the files are the record.

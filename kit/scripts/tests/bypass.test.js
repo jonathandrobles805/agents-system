@@ -229,12 +229,19 @@ test('post-edit-check catches an interpreter write it cannot recognise from the 
 
 test('sandbox: denyWrite is empty while the key is declared required [inverts at Step 4]', async () => {
   const SB = await import('../sandbox.js');
-  const cfg = SB.sandboxConfig({ root: REPO, wt: REPO, slug: 'x', env: { KIT_SANDBOX_RUNTIME: 'none' } });
-  const s = SB.srtSettings(cfg);
-  assert.deepEqual(s.filesystem.denyWrite, [], 'DEFECT: nothing is denied inside the writable worktree');
-  assert.ok(SB.SRT_REQUIRED_KEYS.filesystem.includes('denyWrite'), 'the key is declared required and passed empty');
-  assert.deepEqual(cfg.allowWrite, [REPO, path.join(os.tmpdir(), 'kit-lane-x')]);
-  assert.equal(cfg.state, 'degraded');
+  // a directory outside any git repository: a linked worktree (a checkout made with `git worktree add`, as a lane is) also gets the
+  // shared .git's commit paths and their denies (sandbox.test.js), which is not what this records
+  const wt = fs.mkdtempSync(path.join(os.tmpdir(), 'kit-bypass-wt-'));
+  try {
+    const cfg = SB.sandboxConfig({ root: REPO, wt, slug: 'x', env: { KIT_SANDBOX_RUNTIME: 'none' } });
+    const s = SB.srtSettings(cfg);
+    assert.deepEqual(s.filesystem.denyWrite, [], 'DEFECT: nothing is denied inside the writable worktree');
+    assert.ok(SB.SRT_REQUIRED_KEYS.filesystem.includes('denyWrite'), 'the key is declared required and passed empty');
+    assert.deepEqual(cfg.allowWrite, [wt, path.join(os.tmpdir(), 'kit-lane-x')]);
+    assert.equal(cfg.state, 'degraded');
+  } finally {
+    fs.rmSync(wt, { recursive: true, force: true });
+  }
 });
 
 test('sandbox: the srt settings file has no environment section [inverts at Step 4]', async () => {

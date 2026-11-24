@@ -390,9 +390,14 @@ test('the smoke verdict fails when the judge clearly fails a rubric item, and an
   // quality-drop: hard checks pass, the judge scores the implementer's r1 0 (finding: rubric scores gated nothing)
   const drop = await runSet({ set: 'smoke', runner: 'fixture', out: path.join(dir, 'drop'), variant: 'quality-drop' });
   assert.equal(drop.violations.length, 0);
-  assert.deepEqual(drop.rubric_fails, [{ task: 'implementer-red-then-green', attempt: 0, items: ['r1'] }]);
+  const why = { r1: 'src/truncate.ts:3 adds an options object and a helper the spec does not ask for.' };
+  assert.deepEqual(drop.rubric_fails, [{ task: 'implementer-red-then-green', attempt: 0, items: ['r1'], why }]);
   assert.equal(drop.ok, false);
-  assert.match(fmt(drop), /RUBRIC implementer-red-then-green attempt 0: the judge failed r1\n[\s\S]*eval: FAIL/);
+  // the judge's reason for each 0 is printed on the RUBRIC line and kept under the attempt's rubric in the report
+  assert.match(fmt(drop), /RUBRIC implementer-red-then-green attempt 0: the judge failed r1 \(src\/truncate\.ts:3 adds an options object and a helper the spec does not ask for\.\)\n[\s\S]*eval: FAIL/);
+  const saved = JSON.parse(fs.readFileSync(path.join(dir, 'drop', 'report.json'), 'utf8'));
+  assert.deepEqual(saved.results['implementer-red-then-green'].attempts[0].scored.rubric.why, why);
+  assert.match(fmt({ ...drop, rubric_fails: [{ task: 'x', attempt: 0, items: ['r1', 'r2'] }] }), /RUBRIC x attempt 0: the judge failed r1, r2\n/, 'a report from before reasons prints as it did');
   // the judge gave nothing: never a pass, and said so
   const none = await runSet({ set: 'smoke', runner: 'fixture', out: path.join(dir, 'none'), variant: 'judge-missing' });
   assert.equal(none.violations.length, 0);
@@ -1421,4 +1426,34 @@ test('keepTranscripts writes a summary beside each kept transcript', () => {
   const summary = fs.readFileSync(copy.replace(/\.jsonl$/, '.summary.md'), 'utf8');
   assert.match(summary, /# Prompt\n\nhello /);
   assert.ok(!summary.includes('a'.repeat(36)), 'the summary is built from the redacted transcript');
+});
+
+test('parseJudge: grades with or without reasons; a malformed why is dropped, never the grades', () => {
+  assert.deepEqual(claude.parseJudge('{"r1": 1, "r2": 0}'), { r1: 1, r2: 0 }, 'a plain map, as before reasons');
+  assert.deepEqual(claude.parseJudge('Here: {"r1":1,"r2":0,"why":{"r2":"  tests/a.test.ts:4 asserts nothing.  "}} done'), { r1: 1, r2: 0, why: { r2: 'tests/a.test.ts:4 asserts nothing.' } });
+  for (const bad of ['"r2 failed"', '["r2"]', 'null', '{"r2": 3}', '{"r2": ""}']) {
+    assert.deepEqual(claude.parseJudge(`{"r1": 0, "r2": 0, "why": ${bad}}`), { r1: 0, r2: 0 }, bad);
+  }
+  assert.deepEqual(claude.parseJudge('{"r1": 0, "why": {"r1": "ok", "r2": 7}}'), { r1: 0, why: { r1: 'ok' } }, 'only string reasons are kept');
+  assert.equal(claude.parseJudge(`{"r1": 0, "why": {"r1": "${'x'.repeat(900)}"}}`).why.r1.length, 500);
+  assert.deepEqual(claude.parseJudge('no json'), {});
+  assert.deepEqual(claude.parseJudge('{"r1": 1,'), {});
+  assert.deepEqual(claude.parseJudge('[1, 0]'), {});
+  // the prompt asks for exactly that shape, at the start and again after the rubric
+  const p = claude.judgePrompt({ task: { rubric: [{ id: 'r1', text: 'x' }] }, files: {}, setupFiles: '', sessionDiff: '', output: '', gitLog: [] });
+  assert.equal(p.split(claude.JUDGE_ANSWER).length, 3);
+  assert.match(claude.JUDGE_ANSWER, /\{"r1": 1, "r2": 0, "why": \{"r2": "<one sentence citing the evidence>"\}\}/);
+});
+
+test('score: the rubric keeps the judge\'s reason for each item it failed, and only those', () => {
+  const task = { rubric: [{ id: 'r1', text: 'a' }, { id: 'r2', text: 'b' }, { id: 'r3', text: 'c' }], checks: [] };
+  const s = score(task, { judge: { r1: 0, r2: 1, r3: 0, why: { r1: 'src/a.ts:1 is unchanged.', r2: 'met anyway', r3: 5 } } });
+  assert.deepEqual(s.rubric.failed, ['r1', 'r3']);
+  assert.deepEqual(s.rubric.why, { r1: 'src/a.ts:1 is unchanged.' });
+  assert.deepEqual(score(task, { judge: { r1: 0, r2: 1, r3: 1 } }).rubric.why, {}, 'a plain map has no reasons');
+  assert.deepEqual(score(task, { judge: { r1: 0, why: 'r1 failed' } }).rubric.why, {}, 'a malformed why');
+  // the report is redacted as a whole (harness.js runSet: redactDeep), reasons included
+  const key = ['ghp_', 'b'.repeat(36)].join('');
+  const red = claude.redactDeep({ rubric: score(task, { judge: { r1: 0, why: { r1: `the session printed ${key}` } } }).rubric });
+  assert.ok(!JSON.stringify(red).includes(key), JSON.stringify(red));
 });

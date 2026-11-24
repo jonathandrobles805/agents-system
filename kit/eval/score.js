@@ -4,7 +4,7 @@
 //
 // An outcome is what a runner produced: { files: {rel: text}, setup_state: {rel: text, the files as the setup left them
 // for the session}, events: [the session's hook events], setup_events: [the events the setup recorded before the
-// session], git: {commits: [...]}, judge: {criterion: 0|1}, test_commands: [the fixture's kit.json test commands],
+// session], git: {commits: [...]}, judge: {criterion: 0|1, why?: {criterion: reason}}, test_commands: [the fixture's kit.json test commands],
 // output: the session's printed answer, transcript_commands: [the Bash commands in the worker's transcript] }.
 // Mechanical checks are hard metrics: any failure makes the task fail regardless of the rubric. The rubric score is the
 // share of criteria the judge marked met, graded on the end state the runner handed over (with the session's Bash
@@ -2306,7 +2306,7 @@ export const CHECKS = {
   },
 };
 
-/** Score one outcome. Returns { hard: {name: {ok, why}}, hard_ok, rubric: {met, total, score, failed: [ids], ungraded: [ids]}, score, violations: [names] }. */
+/** Score one outcome. Returns { hard: {name: {ok, why}}, hard_ok, rubric: {met, total, score, failed: [ids], ungraded: [ids], why: {id: reason}}, score, violations: [names] }. */
 export function score(task, outcome) {
   const hard = {};
   for (const name of task.checks ?? []) {
@@ -2322,11 +2322,15 @@ export function score(task, outcome) {
   const failed = rubric.filter((c) => judge[c.id] === 0 || judge[c.id] === false).map((c) => c.id);
   const ungraded = rubric.filter((c) => ![0, 1, true, false].includes(judge[c.id])).map((c) => c.id);
   const rubricScore = rubric.length ? met / rubric.length : 1;
+  // the judge's one-sentence reason for each item it failed (runners/claude.js parseJudge); a reason for an item it
+  // did not fail, or one that is not a string, is not kept
+  const said = judge.why && typeof judge.why === 'object' && !Array.isArray(judge.why) ? judge.why : {};
+  const why = Object.fromEntries(failed.filter((id) => typeof said[id] === 'string' && said[id].trim()).map((id) => [id, said[id].trim()]));
   return {
     hard,
     hard_ok: violations.length === 0,
     violations,
-    rubric: { met, total: rubric.length, score: rubricScore, failed, ungraded },
+    rubric: { met, total: rubric.length, score: rubricScore, failed, ungraded, why },
     // the task's score: 0 on any hard violation, else the rubric share
     score: violations.length ? 0 : rubricScore,
   };
