@@ -180,12 +180,14 @@ test('#22 audit ratchet: a new advisory fails; accepted with reason and expiry p
 test('#63 an upgrade moves the kit\'s gate commands from the "$HOME" form to the launcher form and keeps another tool called kit', (t) => {
   const root = F.nodeApi(path.join(tmpPath(t), 'node-api'));
   boot(root);
-  // a fresh bootstrap writes the launcher form, and the allow rules come from Bash(kit *), never a "$HOME" rule
+  // a fresh bootstrap writes the launcher form, and the allow rules name each command (hardening plan Step 2: no
+  // Bash(kit *)), never a "$HOME" rule
   let c = kitJson(root).commands;
   assert.equal(c.audit, 'kit ci_audit --repo .');
   assert.equal(c.boundaries, 'kit ci_boundaries_simple --repo .');
   const settings = () => JSON.parse(fs.readFileSync(path.join(root, '.claude', 'settings.json'), 'utf8')).permissions.allow;
-  assert.ok(settings().includes('Bash(kit *)'));
+  assert.ok(!settings().includes('Bash(kit *)'));
+  for (const r of ['Bash(kit ci_audit --repo . *)', 'Bash(kit ci_boundaries_simple --repo . *)', 'Bash(kit lane next-step *)']) assert.ok(settings().includes(r), r);
   assert.ok(settings().every((r) => !r.includes('$HOME')), settings().join(', '));
   // a project an older kit set up: the "$HOME" forms are the kit's old defaults and are migrated
   const kp = path.join(root, '.claude', 'kit.json');

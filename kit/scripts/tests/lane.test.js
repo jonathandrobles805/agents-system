@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
+import os from 'node:os';
 import { spawnSync } from 'node:child_process';
 import { git, commitAll, nodeApi, approveSpec } from './fixtures.js';
 import { runScript, setEnv, tmpPath } from './helpers.js';
@@ -596,22 +597,70 @@ test('lane.js template prints a kit template with slug, date and commit; agents 
   assert.deepEqual(readers, []);
 });
 
-test('the permission probe has a case for every allow rule the kit ships, plus controls that must stay refused (#63)', () => {
+test('the permission probe has a case for every rule the kit ships, plus controls that must stay refused (#63, hardening plan Step 2)', async () => {
+  const SB = await import('../sandbox.js');
   const perms = JSON.parse(fs.readFileSync(P.FRAGMENT, 'utf8')).permissions;
-  const shipped = perms.allow;
-  const caseFor = (kind) => P.CASES.filter((c) => c.kind === kind).map((c) => c.rule).sort();
-  // every allow rule is proved approved; every ask rule is proved refused
-  assert.deepEqual(caseFor('allow'), [...perms.allow].sort());
-  assert.deepEqual(caseFor('ask'), [...perms.ask].sort());
-  assert.ok(P.CASES.every((c) => (c.kind === 'allow' ? c.expect === 'approved' : c.expect === 'denied')), 'allow cases expect approved, all others denied');
+  const floor = JSON.parse(fs.readFileSync(path.join(path.dirname(P.FRAGMENT), '..', 'security', 'floor.json'), 'utf8')).deny;
+  const grants = SB.laneGrants();
+  const rulesOf = (kind) => [...new Set(P.CASES.filter((c) => c.kind === kind).map((c) => c.rule))].sort();
+  // every allow rule is proved approved; every ask rule refused although Bash(kit *) is added to allow (ask beats allow)
+  assert.deepEqual(rulesOf('allow'), [...perms.allow].sort());
+  assert.deepEqual(rulesOf('ask'), [...perms.ask].sort());
+  assert.ok(P.CASES.filter((c) => c.kind === 'ask').every((c) => c.broad?.includes('Bash(kit *)')));
+  // every floor rule about reviews, merges, protection and rulesets is proved refused, although Bash(gh *) is allowed and
+  // without the guard, so the rule itself refused it
+  const gh = floor.filter((r) => r.startsWith('Bash(gh '));
+  assert.ok(gh.length >= 10, gh.join(', '));
+  assert.deepEqual(rulesOf('deny'), [...gh].sort());
+  assert.ok(P.CASES.filter((c) => c.kind === 'deny').every((c) => c.noGuard && c.broad?.includes('Bash(gh *)')));
+  // a lane: every per-run deny is proved over the project's allow rules (trusted, plus Bash(kit *)), and every per-run
+  // allow rule approved through --settings in a repository that is not trusted
+  assert.deepEqual(rulesOf('lane-deny'), [...grants.deny].sort());
+  assert.ok(P.CASES.filter((c) => c.kind === 'lane-deny').every((c) => c.via === 'lane' && c.broad?.includes('Bash(kit *)')));
+  // and in a skill that grants plain Bash, as /zi-run does in a launched lane
+  assert.ok(P.CASES.some((c) => c.kind === 'lane-deny-skill' && c.via === 'lane' && c.ask.startsWith('/') && c.command.startsWith('kit lane advance')));
+  const run = SB.runSettings({ root: os.tmpdir(), wt: '/w', grants, floor: [] }).permissions.allow.map((r) => (r === 'Edit(//w/**)' ? P.WORKTREE_EDIT : r));
+  assert.deepEqual(rulesOf('lane-allow'), [...new Set(run)].sort());
+  assert.ok(P.CASES.filter((c) => c.kind === 'lane-allow').every((c) => c.via === 'flag'));
+  assert.ok(P.CASES.every((c) => (['allow', 'allow-form', 'lane-allow'].includes(c.kind) ? c.expect === 'approved' : c.expect === 'denied')), 'allow cases expect approved, all others denied');
+  assert.equal(new Set(P.CASES.map((c) => c.id)).size, P.CASES.length, 'case ids are unique (--only picks by id)');
   // the xargs form, which Claude Code checks as `kit lane`, is probed against the real guard
   assert.ok(P.CASES.some((c) => c.kind === 'guard' && /xargs kit lane/.test(c.command)));
-  // merging stays the human's: an ask rule covers it, it beats Bash(kit *), and a skill granting plain Bash is probed too
-  assert.ok(perms.ask.includes('Bash(kit lane merge *)') && perms.allow.includes('Bash(kit *)'));
+  // merging stays the human's: an ask rule covers it, no allow rule approves it, and a skill granting plain Bash is probed
+  assert.ok(perms.ask.includes('Bash(kit lane merge *)') && !perms.allow.includes('Bash(kit *)'));
   assert.ok(P.CASES.some((c) => c.kind === 'ask-skill' && c.command.startsWith('kit lane merge')));
-  // the "$HOME" form Claude Code did not approve (2026-11-22) is a control, and no shipped rule uses it again
+  // a variable in a kit command's arguments (`--repo "$PWD"`, as the skills write it) is probed
+  assert.ok(P.CASES.some((c) => c.kind === 'allow-form' && c.command.includes('"$PWD"')));
+  // the "$HOME" form Claude Code did not approve (2026-11-22) is a control, and no shipped rule uses it again; another
+  // tool called kit stays refused
   assert.ok(P.CASES.some((c) => c.id === 'home-form' && c.expect === 'denied'));
-  assert.ok(shipped.every((r) => !/\$|"/.test(r)), `a shipped rule relies on a $variable or quotes: ${shipped.join(', ')}`);
+  assert.ok(P.CASES.some((c) => c.id === 'other-kit' && c.command.startsWith('kit pack') && c.expect === 'denied'));
+  for (const r of [...perms.allow, ...grants.deny, ...Object.values(grants.roles).flat(), ...grants.session]) assert.ok(!/\$|"/.test(r), `a shipped rule relies on a $variable or quotes: ${r}`);
+});
+
+test('the probe runs each case with the rules its via names: project (trusted), lane (trusted plus --settings), flag (--settings only)', (t) => {
+  // a stand-in claude reports its arguments, the project settings, the per-run settings and whether the repo is trusted
+  const bin = path.join(tmpPath(t), 'bin');
+  fs.mkdirSync(bin, { recursive: true });
+  const out = path.join(tmpPath(t), 'seen.jsonl');
+  fs.writeFileSync(path.join(bin, 'claude'), `#!${process.execPath}
+const fs = require('fs'), path = require('path');
+const a = process.argv.slice(2), i = a.indexOf('--settings');
+const cfg = JSON.parse(fs.readFileSync(path.join(process.env.CLAUDE_CONFIG_DIR, '.claude.json'), 'utf8'));
+fs.appendFileSync(${JSON.stringify(out)}, JSON.stringify({ argv: a, project: JSON.parse(fs.readFileSync('.claude/settings.json', 'utf8')), run: i >= 0 ? JSON.parse(fs.readFileSync(a[i + 1], 'utf8')) : null, trusted: Object.keys(cfg.projects ?? {}).length > 0, gh: process.env.GH_TOKEN ?? null }) + '\\n');
+process.stdout.write(JSON.stringify({ result: 'stub', permission_denials: [] }));
+`, { mode: 0o755 });
+  setEnv(t, 'PATH', `${bin}${path.delimiter}${process.env.PATH}`);
+  setEnv(t, 'GH_TOKEN', 'probe-must-not-see-this');
+  const tmp = tmpPath(t);
+  const byId = (id) => P.CASES.find((c) => c.id === id);
+  for (const id of ['merge-asks', 'gh-pr-merge', 'lane-kit-lane-advance', 'lane-kit-lane-check']) assert.equal(P.runCase(byId(id), tmp).got, 'inconclusive', id);
+  const [ask, gh, laneDeny, laneAllow] = fs.readFileSync(out, 'utf8').trim().split('\n').map((l) => JSON.parse(l));
+  assert.ok(ask.trusted && ask.run === null && ask.project.permissions.allow.includes('Bash(kit *)') && ask.project.hooks.PreToolUse.length === 1);
+  assert.ok(gh.trusted && gh.project.permissions.allow.includes('Bash(gh *)') && gh.project.hooks.PreToolUse.length === 0, 'a floor case runs without the guard');
+  assert.ok(laneDeny.trusted && laneDeny.run.permissions.deny.includes('Bash(kit lane advance *)') && laneDeny.project.permissions.allow.includes('Bash(kit lane advance *)'));
+  assert.ok(!laneAllow.trusted && laneAllow.run.permissions.allow.includes('Bash(kit lane check *)') && !('allow' in laneAllow.project.permissions), 'untrusted, and no project allow rule');
+  assert.ok([ask, gh, laneDeny, laneAllow].every((s) => s.gh === null), 'no GitHub token reaches a probe session');
 });
 
 // The whole lane, as the agents run it, with the fixture's real vitest and no --reporter flag: the tester runs the

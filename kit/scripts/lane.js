@@ -814,13 +814,15 @@ export function launch(root, slug, { exec = false, prompt = null } = {}) {
   const settingsPath = pjoin(wt, '.claude', 'session', 'sandbox.json');
   writeText(settingsPath, K.jsonDumps(SB.srtSettings(cfg), { indent: 2 }) + '\n');
   const text = prompt ?? `/zi-run ${slug}`;
-  const cmd = SB.launchCommand(cfg, { wt, settingsPath, prompt: text });
+  // the session's own grants (hardening plan Step 2): only what a lane runs, never advance, gate, start or a merge
+  const claudeSettings = SB.writeRunSettings(pjoin(wt, '.claude', 'session', 'claude-settings.json'), { root, wt });
+  const cmd = SB.launchCommand(cfg, { wt, settingsPath, prompt: text, claudeSettings });
   // telemetry (KIT-SPEC 9.4): exporter on, records tagged with project, lane and stage; the collector runs on the host side
   const project = kget(asDict(K.loadKitJson(root)), 'project', path.basename(root));
   const telemetry = SB.telemetryEnv({ project, slug, stage: kget(data, 'stage', 'build') });
   K.appendEvent(pjoin(wt, '.claude', 'session', 'events.jsonl'), { event: 'launch', runtime: cfg.runtime, state: cfg.state, exec, telemetry: telemetry.OTEL_EXPORTER_OTLP_ENDPOINT, summary: cmd.slice(0, 3).join(' ') });
   if (!exec) {
-    process.stdout.write(K.jsonDumps({ runtime: cfg.runtime, state: cfg.state, cwd: wt, command: cmd, settings: relativeTo(wt, settingsPath), env: telemetry }, { indent: 2 }) + '\n');
+    process.stdout.write(K.jsonDumps({ runtime: cfg.runtime, state: cfg.state, cwd: wt, command: cmd, settings: relativeTo(wt, settingsPath), claude_settings: relativeTo(wt, claudeSettings), env: telemetry }, { indent: 2 }) + '\n');
     return 0;
   }
   const collector = ensureCollector();
@@ -1523,7 +1525,7 @@ export function nextInQueue(root) {
  * commit. Agents get them from here instead of reading ~/.claude/kit/templates/ themselves: that folder is outside the
  * project, so an unattended session (claude -p, nobody to approve) cannot read it, and with a linked install a Read
  * rule would have to name the machine-specific checkout path too (eval evidence 2026-11-22; permissions docs, symlinks).
- * Agents run it as `kit lane template <name>`, which the project's `Bash(kit *)` rule approves (#63). The progress
+ * Agents run it as `kit lane template <name>`, which the project's `Bash(kit lane template *)` rule approves (#63). The progress
  * file is not here: `lane.js start` writes it with the spec's done-criteria rows.
  */
 export const TEMPLATE_NAMES = ['goal', 'spec', 'research', 'review', 'lesson'];

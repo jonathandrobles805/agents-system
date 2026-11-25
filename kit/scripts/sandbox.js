@@ -185,8 +185,54 @@ export function telemetryEnv({ project, slug, stage = 'build', port = Number(pro
   };
 }
 
+/** The per-run grants of a session inside a lane (kit/hooks/settings.lane.json): `deny`, `roles`, `session`. */
+export const LANE_GRANTS = path.join(K.KIT_DIR, 'hooks', 'settings.lane.json');
+export function laneGrants() {
+  return JSON.parse(fs.readFileSync(LANE_GRANTS, 'utf8'));
+}
+
+/** The kit commands one run may use: its role's, or for a lane's own session (no role) every role's plus `session`. */
+export function roleKitRules(role, grants = laneGrants()) {
+  if (role === null || role === undefined) return [...new Set([...Object.values(grants.roles).flat(), ...grants.session])];
+  if (!Object.hasOwn(grants.roles, role)) throw new Error(`no per-run grants for the role '${role}' in ${LANE_GRANTS}`);
+  return grants.roles[role];
+}
+
+/**
+ * The Claude Code settings one run inside a lane gets through `claude --settings <file>` (hardening plan Step 2): a
+ * headless session does not use a project's permissions.allow unless the folder was trusted, and `--settings` rules
+ * were seen approved in an untrusted repository (probe, 2026-11-22). They name only what the run needs: Edit inside
+ * its worktree (`//` is an absolute path; a `/path` rule in a --settings file would anchor at the file's folder), git
+ * add and commit, the project's recorded commands, and its role's kit commands. deny is the floor plus what a lane
+ * never runs (advance, gate, start, merge, ...); deny beats every allow, the project's included. Permission rules only:
+ * the hooks come from the project's settings, which Claude Code runs whether or not the folder is trusted.
+ */
+export function runSettings({ root, wt, role = null, grants = laneGrants(), floor = K.loadFloor().deny }) {
+  const deny = [...new Set([...floor, ...grants.deny])];
+  let real = wt;
+  try {
+    real = fs.realpathSync(wt);
+  } catch {
+    real = wt;
+  }
+  const edits = [...new Set([wt, real])].map((p) => `Edit(/${p.split(path.sep).join('/').replace(/\/+$/, '')}/**)`);
+  const commands = K.commandAllowRules(K.loadKitJson(root)?.commands ?? {});
+  const allow = [...new Set([...edits, 'Bash(git add *)', 'Bash(git commit *)', ...roleKitRules(role, grants), ...commands])]
+    // a recorded command a deny rule covers is never written: it could not take effect
+    .filter((a) => !deny.some((d) => K.ruleOverlapsFloor(a, d)));
+  return { permissions: { allow, deny } };
+}
+
+/** Write a run's settings (runSettings) to `file`; returns the path. */
+export function writeRunSettings(file, opts) {
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  fs.writeFileSync(file, JSON.stringify(runSettings(opts), null, 2) + '\n');
+  return file;
+}
+
 /**
  * The command the host side runs to start a headless lane session inside the sandbox. Argument list, not a shell string.
+ * `claudeSettings` is the run's own Claude Code settings file (runSettings), passed as `--settings`.
  * `agent` runs the whole session as that agent (`claude --agent`): the eval names the kit agent a task measures; a
  * lane names none, so its session is the orchestrator that spawns the agents.
  * `prompt: null` leaves the prompt out of the argument list: the caller writes it to the process's stdin. `claude -p`
@@ -196,8 +242,8 @@ export function telemetryEnv({ project, slug, stage = 'build', port = Number(pro
  * Linux's 128 KiB limit on one argument (E2BIG); stdin has no such limit. srt hands its stdin to the command; a
  * container needs `-i` for it.
  */
-export function launchCommand(cfg, { wt, settingsPath, prompt, agent = null }) {
-  const claude = ['claude', '-p', ...(prompt === null ? [] : [prompt]), '--permission-mode', 'default', ...(agent ? ['--agent', agent] : [])];
+export function launchCommand(cfg, { wt, settingsPath, prompt, agent = null, claudeSettings = null }) {
+  const claude = ['claude', '-p', ...(prompt === null ? [] : [prompt]), '--permission-mode', 'default', ...(claudeSettings ? ['--settings', claudeSettings] : []), ...(agent ? ['--agent', agent] : [])];
   if (cfg.runtime === 'srt') return ['srt', '--settings', settingsPath, '--', ...claude];
   if (cfg.runtime === 'container') {
     const eng = cfg.engine || 'docker';

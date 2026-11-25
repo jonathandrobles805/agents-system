@@ -1,11 +1,33 @@
 {
-  "$comment": "Installed into <repo>/.claude/settings.json by /zi-bootstrap. Versioned with the project. Hooks call kit scripts in ~/.claude/kit/scripts. Edit via /zi-bootstrap --upgrade, not by hand during a lane. permissions.allow is the lane's own working set: a headless `claude -p --permission-mode default` session DENIES any call that needs approval when no human is there to answer, so without it a lane can only read. Reads and read-only commands (ls, cat, grep, find, read-only git) need no rule; Claude Code runs those without a prompt. `Edit(/**)` anchors at the session's working directory, which for a lane is its worktree, mirroring the sandbox's allowWrite. Deny beats allow in every scope, so none of this reaches what the floor denies. Project commands are added by /zi-bootstrap from .claude/kit.json commands. permissions.ask holds the human's own decisions: merging (`kit lane merge`), lifting the kill switch (`kit lane resume-all`) and re-running `/bootstrap` prompt every time. Ask beats allow, so `Bash(kit *)` never approves them, and a headless session cannot run them (#63, hardening plan Step 2). A rule ending in ` *` also matches the bare command. Like every permission rule this matches the command as written, so it is a guardrail, not a wall: the bash guard refuses the disguised forms (`kit lane -- merge`, quoted or double-spaced words), and a command an agent can rewrite (a package.json script) can still run anything until the container (Step 8). A direct `gh pr merge` (and its `gh api` forms) is blocked by the bash guard; merging goes through `kit lane merge`, which waits for CI.",
+  "$comment": "Installed into <repo>/.claude/settings.json by /zi-bootstrap. Versioned with the project. Hooks call kit scripts in ~/.claude/kit/scripts. Edit via /zi-bootstrap --upgrade, not by hand during a lane. These are the rules of a session outside the container (the orchestrator, planning, retro; until Step 8 the lane agents it spawns run in it too). permissions.allow names each kit command such a session is told to run, as `kit lane <subcommand> *` or `kit <script> *`; no longer `Bash(kit *)`, which approved every kit script and also a different tool called `kit` (KitOps). `kit lane gate *` is reserved for the gate (Step 3). Reads and read-only commands (ls, cat, grep, find, read-only git) need no rule; Claude Code runs those without a prompt. `Edit(/**)` anchors at the session's working directory. Project commands are added by /zi-bootstrap from .claude/kit.json commands. A headless session does not use permissions.allow unless the folder was trusted, so an unattended lane and the real-agent eval get their grants per run (`claude --settings`, from kit/hooks/settings.lane.json), which also deny a lane the stage moves, the gate, start and merging; in this session the bash guard refuses those to a lane agent (a subagent). permissions.ask holds the human's own decisions: merging (`kit lane merge`, the only merge a session may run), lifting the kill switch (`kit lane resume-all`) and re-running `/bootstrap` prompt every time. Ask beats allow, and a headless session cannot run them (#63, hardening plan Step 2). permissions.deny is the floor (kit/security/floor.json): besides secrets and destructive commands, an approving review, any other merge and changes to branch protection or rulesets (`gh pr merge`, `gh pr review --approve`/`-a`, and their `gh api` REST and GraphQL forms). Deny beats ask and allow in every scope. A rule ending in ` *` also matches the bare command. Like every permission rule these match the command as written, so they are a guardrail, not a wall: the bash guard refuses the disguised forms of the owner's decisions (`kit lane -- merge`, quoted or double-spaced words) and a merge, approval or protection change at the start of a command, and a command an agent can rewrite (a package.json script) can still run anything until the container (Step 8).",
   "permissions": {
     "allow": [
       "Edit(/**)",
       "Bash(git add *)",
       "Bash(git commit *)",
-      "Bash(kit *)"
+      "Bash(kit lane advance *)",
+      "Bash(kit lane agent-for *)",
+      "Bash(kit lane check *)",
+      "Bash(kit lane ci *)",
+      "Bash(kit lane finish *)",
+      "Bash(kit lane gate *)",
+      "Bash(kit lane goal-set *)",
+      "Bash(kit lane incident *)",
+      "Bash(kit lane index *)",
+      "Bash(kit lane merged *)",
+      "Bash(kit lane next *)",
+      "Bash(kit lane next-step *)",
+      "Bash(kit lane precheck *)",
+      "Bash(kit lane publish *)",
+      "Bash(kit lane roadmap-set *)",
+      "Bash(kit lane scope *)",
+      "Bash(kit lane start *)",
+      "Bash(kit lane template *)",
+      "Bash(kit lane unknowns *)",
+      "Bash(kit lane wip *)",
+      "Bash(kit ci_guards_present *)",
+      "Bash(kit kit_status *)",
+      "Bash(kit validate_docs *)"
     ],
     "ask": [
       "Bash(kit lane merge *)",
@@ -28,7 +50,23 @@
       "Bash(git push -f*)",
       "Bash(git reset --hard*)",
       "Bash(sudo *)",
-      "Bash(rm -rf /*)"
+      "Bash(rm -rf /*)",
+      "Bash(gh pr merge *)",
+      "Bash(gh pr review *--approve*)",
+      "Bash(gh pr review -a *)",
+      "Bash(gh pr review * -a)",
+      "Bash(gh pr review * -a *)",
+      "Bash(gh api *pulls/*/merge*)",
+      "Bash(gh api *pulls/*/reviews*)",
+      "Bash(gh api *repos/*/merges*)",
+      "Bash(gh api *branches/*/protection*)",
+      "Bash(gh api *rulesets*)",
+      "Bash(gh api graphql *mergePullRequest*)",
+      "Bash(gh api graphql *enablePullRequestAutoMerge*)",
+      "Bash(gh api graphql *mergeBranch*)",
+      "Bash(gh api graphql *PullRequestReview*)",
+      "Bash(gh api graphql *BranchProtectionRule*)",
+      "Bash(gh api graphql *RepositoryRuleset*)"
     ]
   },
   "hooks": {

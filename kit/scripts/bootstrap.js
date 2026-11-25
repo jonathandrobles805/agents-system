@@ -58,16 +58,9 @@ export function pruneSubsumed(rules) {
 }
 
 /**
- * permissions.allow rules for the commands this project records in kit.json, so the lane can run its own gates.
- * Derived, never listed: the project answered these at /zi-bootstrap and they are the only commands the kit tells a
- * lane to run. A `{file}` placeholder becomes the wildcard, since that is exactly the part that varies. The `*`
- * always lands after the program and subcommand, which is where Claude Code requires it
- * [docs: https://code.claude.com/docs/en/permissions.md @ 2026-11-13]; a compound command is matched per
- * subcommand, so `npx vitest run && rm -rf /` is not covered by the rule for `npx vitest run`.
- */
-/**
  * Whether an allow rule is the kit's own, so an upgrade may rewrite it: a rule naming the kit's scripts by path (the
- * "$HOME" form older kits wrote, which Claude Code never matched, #63), the launcher rule `Bash(kit *)`, or a
+ * "$HOME" form older kits wrote, which Claude Code never matched, #63), the broad launcher rule `Bash(kit *)` (written
+ * before the narrowing, hardening plan Step 2), or a
  * `Bash(kit <script> …)` rule for one of the kit's own scripts. A project's rules for another tool called `kit`
  * (`Bash(kit pack *)`) are the project's.
  */
@@ -77,19 +70,8 @@ export function kitOwnedAllow(a) {
   return m !== null && K.isFile(path.join(KIT_DIR, 'scripts', `${m[1]}.js`));
 }
 
-export function commandAllowRules(commands) {
-  const rules = new Set();
-  for (const v of Object.values(commands ?? {})) {
-    if (typeof v !== 'string') continue;
-    const cmd = v.trim();
-    if (!cmd || /^none\b/i.test(cmd)) continue; // "none: <reason>" turns a check off on purpose
-    const prefix = cmd.split('{')[0].trim();
-    if (!prefix) continue;
-    rules.add(`Bash(${prefix} *)`);
-    if (prefix === cmd) rules.add(`Bash(${cmd})`); // the exact invocation, with no arguments after it
-  }
-  return [...rules];
-}
+/** permissions.allow rules for a project's recorded commands (kitlib commandAllowRules; per-run settings use them too). */
+export const commandAllowRules = K.commandAllowRules;
 /** gitleaks pinned by version and the sha256 of its linux_x64 release asset (from the release's checksums file). */
 export const GITLEAKS = { version: '8.24.3', sha256: '9991e0b2903da4c8f6122b5c3186448b927a5da4deef1fe45271c3793f4ee29c' };
 export const DEFAULT_KIT_REPO = 'jonathandrobles805/agents-system';
@@ -980,7 +962,7 @@ export class Bootstrap {
       .filter((a) => typeof a === 'string' && a && !floor.some((d) => K.ruleOverlapsFloor(a, d)));
     const kept = pruneSubsumed(allow);
     // ask: the human's own decisions (merge, resume-all, bootstrap). The kit's rules are always written; a project's own
-    // ask rules are kept. Ask beats allow in Claude Code, so `Bash(kit *)` never approves these (#63).
+    // ask rules are kept. Ask beats allow in Claude Code, so no allow rule approves these without the prompt (#63).
     const ask = [...new Set([...get(permsObj, 'ask', []), ...get(req(frag, 'permissions'), 'ask', [])])].filter((a) => typeof a === 'string' && a);
     merged.permissions = { ...permsObj, allow: kept.sort(cpCompare), ask: ask.sort(cpCompare), deny: [...deny].sort(cpCompare) };
     return K.jsonDumps(merged, { indent: 2 }) + '\n';

@@ -7,10 +7,15 @@
 //   writes into .claude/ or .github/workflows via redirection, sed -i, tee, cp, mv,
 //   chmod/chown on .claude/hooks, printing secrets (cat .env), git commit when staged files match secret patterns,
 //   merging a PR directly (gh pr merge, gh api PUT …/merge, GraphQL mergePullRequest): lane.js merge waits for CI,
+//   an approving review (gh pr review --approve / -a) and the API forms of reviews, branch merges, branch protection and
+//   rulesets (the floor's deny rules name the same, hardening plan Step 2),
 //   and the owner's decisions through `kit` (merge, resume-all, bootstrap) in any form the permission ask rule misses.
+// From a lane agent (a subagent, or a lane started by `kit lane launch`): the kit commands a lane never runs (advance,
+//   gate, start, merge, ...; kit/hooks/settings.lane.json deny), which the orchestrator in the main session keeps.
 // In a lane additionally: git worktree remove/prune, git branch -D, checkout/switch to another branch.
 // In a lane, a call that is let through has the worktree's state recorded first, so post-edit-check can tell what the
 // call itself changed (shell_changes.js).
+import fs from 'node:fs';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import * as K from './kitlib.js';
@@ -36,6 +41,10 @@ export const RULES = [
   rule(`(?:^|[\n;&|(]|\\$\\()${S}*gh${S}+pr${S}+merge${E}`, 'merging a PR directly; run kit lane merge <slug> --by <name>, which waits for CI to pass'),
   rule(`(?:^|[\n;&|(]|\\$\\()${S}*gh${S}+api${E}(?=[^|;&\n]*(?:-X${S}*|--method[=${WS}]${S}*)PUT${E})(?=[^|;&\n]*pulls/[^/${WS}]+/merge${E})`, 'merging a PR through the API; run kit lane merge <slug> --by <name>, which waits for CI to pass'),
   rule(`(?:^|[\n;&|(]|\\$\\()${S}*gh${S}+api${S}+graphql${E}[^|;&]*mergePullRequest`, 'merging a PR through GraphQL; run kit lane merge <slug> --by <name>, which waits for CI to pass'),
+  // No agent approves a PR or changes what protects main: the owner's yes is the ask prompt on kit lane merge (0016 E.10)
+  rule(`(?:^|[\n;&|(]|\\$\\()${S}*gh${S}+pr${S}+review${E}[^|;&\n]*${S}(--approve|-a)${E}`, 'approving a pull request; no agent approves: the owner says yes to the merge itself (kit lane merge asks them)'),
+  rule(`(?:^|[\n;&|(]|\\$\\()${S}*gh${S}+api${E}(?=[^|;&\n]*(?:pulls/[^/${WS}]+/reviews|repos/[^${WS}]*/merges${E}|branches/[^${WS}]*/protection|rulesets))`, 'a review, a branch merge, or branch protection or rulesets through the API; these are the owner\'s, and merging is kit lane merge'),
+  rule(`(?:^|[\n;&|(]|\\$\\()${S}*gh${S}+api${S}+graphql${E}[^|;&]*(?:PullRequestReview|enablePullRequestAutoMerge|mergeBranch|BranchProtectionRule|RepositoryRuleset)`, 'a review, a merge, or branch protection or rulesets through GraphQL; these are the owner\'s, and merging is kit lane merge'),
   rule(`${B}sudo${E}`, 'sudo'),
   rule(`${B}(curl|wget)${E}[^|;&]*\\|${S}*(ba|z|da)?sh${E}`, 'piping a download into a shell'),
   rule(`(>|>>|${B}tee${E}|${B}sed${S}+-i|${B}cp${E}|${B}mv${E})[^|;&]*\\.claude/`, 'writing into .claude/ (kit configuration)'),
@@ -268,6 +277,43 @@ export function kitDecisionDisguised(line, depth = 0) {
   return null;
 }
 
+/**
+ * The kit commands a lane never runs, as word lists (`['lane', 'advance']`, `['bootstrap']`), read from the deny list
+ * of the per-run grants (kit/hooks/settings.lane.json), so the guard and the permission rules name the same commands.
+ */
+export function laneDeniedCommands() {
+  const g = JSON.parse(fs.readFileSync(path.join(K.KIT_DIR, 'hooks', 'settings.lane.json'), 'utf8'));
+  return g.deny.map((r) => /^Bash\(kit ([a-z0-9_ -]+?) \*\)$/.exec(r)?.[1]).filter(Boolean).map((s) => s.split(' '));
+}
+
+/**
+ * The kit command a lane agent may not run that this line runs (`kit lane advance`), or null: the stage moves, the
+ * gate, starting, scoping, finishing or merging a lane and the owner's other decisions belong to the orchestrator
+ * (hardening plan Step 2, 0016 E.4). Words are read as the shell reads them (quotes removed, `--` skipped), in every
+ * command of the line and in `$(…)`, so `kit lane 'advance'` counts; `kit` counts only as a command's program. A
+ * guardrail: the shell is parsed only approximately (kitDecisionDisguised lists the known misses).
+ */
+export function laneDeniedKit(line, denied = laneDeniedCommands(), depth = 0) {
+  line = withoutHeredocBodies(line);
+  for (const words of shellCommands(line)) {
+    const k = words.findIndex((w, i) => (w.value === 'kit' || w.raw === 'kit') && words.slice(0, i).every((x) => BEFORE_PROGRAM.test(x.value)));
+    if (k < 0) continue;
+    const rest = words.slice(k + 1).map((w) => w.value).filter((v) => v !== '--');
+    const hit = denied.find((d) => d.every((x, i) => rest[i] === x));
+    if (hit) return ['kit', ...hit].join(' ');
+  }
+  if (depth < 4) for (const body of substitutionBodies(line)) {
+    const hit = laneDeniedKit(body, denied, depth + 1);
+    if (hit) return hit;
+  }
+  return null;
+}
+
+/** Whether a Bash call comes from a lane agent: a subagent (its calls carry agent_id) or a launched lane (KIT_LANE). */
+export function fromLaneAgent(d, env = process.env) {
+  return (typeof d.agent_id === 'string' && d.agent_id !== '') || (typeof env.KIT_LANE === 'string' && env.KIT_LANE !== '');
+}
+
 export function fetchOk(cmd, specPath) {
   if (!FETCH.test(cmd)) return null;
   const declared = K.specNetwork(specPath);
@@ -368,6 +414,11 @@ export function main() {
   for (const [re, why] of RULES) if (re.test(cmd)) return deny(why);
   const disguised = kitDecisionDisguised(cmd);
   if (disguised) return deny(disguised);
+  // a lane agent never moves the stage, gates, starts or merges (hardening plan Step 2): the orchestrator does
+  if (fromLaneAgent(d)) {
+    const own = laneDeniedKit(cmd);
+    if (own) return deny(`${own} from a lane agent; only the orchestrator (the main session, outside the lane) moves, gates, starts or merges a lane`);
+  }
   if (lane) for (const [re, why] of LANE_RULES) if (re.test(cmd)) return deny(why);
   const bad = rmTargetsOk(cmd, root, cwd);
   if (bad) return deny(bad);

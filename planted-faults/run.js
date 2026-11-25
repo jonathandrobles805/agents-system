@@ -946,6 +946,39 @@ process.stderr.write('fake gh 57: unexpected ' + a.join(' ')); process.exit(9);
     const p60 = probe58([o60('http://127.0.0.1:{port}'), o60('http://localhost:{port}'), o60(null), o60('https://evil.example'), o60('null')]);
     const [own60a, own60b, none60, evil60, null60] = p60.statuses;
     record(60, "a cross-site POST to the local dashboard (Origin of another site) is accepted", 'dashboard server originAllowed: a POST with an Origin other than http://127.0.0.1:<port> / http://localhost:<port> gets 403', own60a === 404 && own60b === 404 && none60 === 404 && evil60 === 403 && null60 === 403, `own origins -> ${own60a},${own60b}; no Origin -> ${none60}; evil.example -> ${evil60}; null -> ${null60} ${p60.stderr.trim().split('\n')[0]}`);
+
+    // 63 a lane session may approve the stage moves, start or a merge, or a session may merge or approve another way
+    //    (hardening plan Step 2, #63): main shipped `Bash(kit *)`, which approved every kit command (and a different tool
+    //    called kit), gave an unattended lane no grants of its own, and denied no `gh pr merge` or approving review. The
+    //    rules are read the way Claude Code reads them (deny, then ask, then allow; `*` is any text, a trailing ` *` also
+    //    the bare command), from the files the kit writes: the project's settings and the lane's per-run `--settings`.
+    //    The probe (`npm run permissions:probe`) proves the same rules against Claude Code itself.
+    const decide63 = (perms, command) => {
+      const hit = (rule) => {
+        const m = /^Bash\((.*)\)$/.exec(rule);
+        if (!m) return false;
+        const re = new RegExp(`^${m[1].split('*').map((x) => x.replace(/[.+?^${}()|[\]\\]/g, '\\$&')).join('.*')}$`, 's');
+        return re.test(command) || (m[1].endsWith(' *') && m[1].indexOf('*') === m[1].length - 1 && command === m[1].slice(0, -2));
+      };
+      for (const k of ['deny', 'ask', 'allow']) if ((perms[k] ?? []).some(hit)) return k;
+      return 'unlisted';
+    };
+    const proj63 = JSON.parse(read(path.join(root, '.claude', 'settings.json'))).permissions;
+    const launch63 = run('lane.js', ['launch', 'refund-route', '--repo', root]);
+    const cmd63 = launch63.returncode === 0 ? JSON.parse(launch63.stdout).command : [];
+    const flag63 = cmd63.indexOf('--settings', cmd63.indexOf('claude'));
+    const lanePerms63 = flag63 >= 0 && fs.existsSync(cmd63[flag63 + 1]) ? JSON.parse(read(cmd63[flag63 + 1])).permissions : {};
+    // a lane's session sees the project's rules (its worktree is trusted under the main repo) and its own; deny wins
+    const inLane63 = (c) => decide63({ deny: [...(proj63.deny ?? []), ...(lanePerms63.deny ?? [])], ask: [...(proj63.ask ?? []), ...(lanePerms63.ask ?? [])], allow: [...(proj63.allow ?? []), ...(lanePerms63.allow ?? [])] }, c);
+    const laneMoves63 = ['kit lane advance refund-route build', 'kit lane start refund-route', 'kit lane merge refund-route --by x', 'kit lane gate refund-route'];
+    const laneOk63 = laneMoves63.every((c) => inLane63(c) === 'deny') && ['kit lane check refund-route D1 "npm test"', 'kit lane next-step refund-route --repo .'].every((c) => inLane63(c) === 'allow');
+    const outside63 = { merge: decide63(proj63, 'kit lane merge refund-route --by x'), advance: decide63(proj63, 'kit lane advance refund-route build'), ghMerge: decide63(proj63, 'gh pr merge 4 --squash'), approve: decide63(proj63, 'gh pr review 4 --approve'), apiMerge: decide63(proj63, 'gh api -X PUT repos/o/r/pulls/4/merge'), protection: decide63(proj63, 'gh api -X DELETE repos/o/r/branches/main/protection'), kitops: decide63(proj63, 'kit pack model.yaml') };
+    const outsideOk63 = outside63.merge === 'ask' && outside63.advance === 'allow' && ['ghMerge', 'approve', 'apiMerge', 'protection'].every((k) => outside63[k] === 'deny') && outside63.kitops === 'unlisted';
+    // and the guard: a subagent's (lane agent's) advance is refused, the orchestrator's goes ahead
+    const agent63 = hook('hook_guard_bash.js', { ...base, hook_event_name: 'PreToolUse', tool_name: 'Bash', agent_id: 'pf-agent', agent_type: 'implementer', tool_input: { command: 'kit lane advance refund-route build' } });
+    const main63 = hook('hook_guard_bash.js', { session_id: 'pf', cwd: root, hook_event_name: 'PreToolUse', tool_name: 'Bash', tool_input: { command: 'kit lane advance refund-route build' } });
+    const caught63 = laneOk63 && outsideOk63 && agent63.returncode === 2 && main63.returncode === 0;
+    record(63, 'a lane session may approve advance, start or a merge, or a session may merge or approve another way than kit lane merge', "the lane's per-run --settings (kit/hooks/settings.lane.json) deny the stage moves, gate, start and merges; the project's rules name each kit command, ask on kit lane merge and deny gh pr merge, approving reviews and their gh api forms (floor); guard-bash refuses those kit commands to a subagent (hardening plan Step 2)", caught63, `lane: ${laneMoves63.map((c) => `${c.split(' ').slice(0, 3).join(' ')} -> ${inLane63(c)}`).join(', ')} (--settings ${flag63 >= 0 ? 'passed' : 'missing'}); outside: ${Object.entries(outside63).map(([k, v]) => `${k} ${v}`).join(', ')}; subagent advance -> exit ${agent63.returncode}, main session -> exit ${main63.returncode}`);
   } finally {
     if (a.keep) process.stderr.write(`fixtures kept at ${tmp}\n`);
     else fs.rmSync(tmp, { recursive: true, force: true });

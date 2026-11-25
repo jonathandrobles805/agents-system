@@ -348,3 +348,62 @@ test('real srt: a lane commits in its linked worktree; hooks, config, main, tags
   assert.equal(push.status, 0, push.stderr);
   assert.equal(git(remote, 'rev-parse', 'wt/demo'), git(root, 'rev-parse', 'wt/demo'));
 });
+
+// ---------------- per-run settings (hardening plan Step 2) ----------------
+
+test('runSettings: a run gets only its role\'s kit commands, the project\'s recorded commands and its own worktree; a lane never advances, gates, starts or merges', async (t) => {
+  const SB = await import('../sandbox.js');
+  const { root } = project(t);
+  const g = SB.laneGrants();
+  const tester = SB.runSettings({ root, wt: root, role: 'tester' }).permissions;
+  const real = fs.realpathSync(root);
+  assert.ok(tester.allow.includes(`Edit(/${real}/**)`), 'Edit names the worktree as an absolute path (a /path rule in --settings anchors at the file\'s folder)');
+  assert.ok(tester.allow.includes('Bash(kit lane check *)') && !tester.allow.includes('Bash(kit lane template *)'), tester.allow.join(', '));
+  assert.ok(['Bash(git add *)', 'Bash(git commit *)'].every((r) => tester.allow.includes(r)));
+  for (const r of K.commandAllowRules(K.loadKitJson(root).commands)) assert.ok(tester.allow.includes(r), `the project's recorded command ${r}`);
+  assert.ok(!tester.allow.some((r) => r === 'Bash(kit *)' || /^Bash\(kit lane (advance|stage|gate|start|scope|finish|merge|merged|resume-all|launch) /.test(r)), tester.allow.join(', '));
+  for (const d of [...K.loadFloor().deny, ...g.deny]) assert.ok(tester.deny.includes(d), d);
+  for (const d of ['Bash(kit lane advance *)', 'Bash(kit lane gate *)', 'Bash(kit lane start *)', 'Bash(kit lane merge *)', 'Bash(gh pr merge *)']) assert.ok(tester.deny.includes(d), d);
+  // the lane's own session (no role): every role's commands plus next-step and agent-for, still none of the denied ones
+  const session = SB.runSettings({ root, wt: root }).permissions.allow;
+  for (const r of [...Object.values(g.roles).flat(), ...g.session]) assert.ok(session.includes(r), r);
+  // a recorded command a lane deny covers is never written; an unknown role is refused, not given everything
+  const kj = path.join(root, '.claude', 'kit.json');
+  fs.writeFileSync(kj, JSON.stringify({ ...JSON.parse(read(kj)), commands: { ...JSON.parse(read(kj)).commands, integration: 'kit lane advance x build' } }));
+  assert.ok(!SB.runSettings({ root, wt: root, role: 'tester' }).permissions.allow.some((r) => r.startsWith('Bash(kit lane advance')));
+  assert.throws(() => SB.runSettings({ root, wt: root, role: 'nobody' }), /no per-run grants for the role 'nobody'/);
+});
+
+test('every role the eval runs and every kit agent has per-run grants, and each kit command an agent names is granted to it or denied to every lane', async () => {
+  const SB = await import('../sandbox.js');
+  const g = SB.laneGrants();
+  const agents = fs.readdirSync(path.join(K.KIT_DIR, 'agents')).filter((f) => f.endsWith('.md')).map((f) => f.replace(/\.md$/, ''));
+  assert.deepEqual(Object.keys(g.roles).sort(), agents.sort());
+  // Claude Code's prefix match: `Bash(<p> *)` matches <p> alone or followed by a space
+  const covers = (rule, cmd) => { const p = /^Bash\((.+) \*\)$/.exec(rule)?.[1]; return p !== undefined && (cmd === p || cmd.startsWith(`${p} `)); };
+  for (const a of agents) {
+    const text = read(K.KIT_DIR, 'agents', `${a}.md`);
+    for (const m of text.matchAll(/`(kit (?:lane [a-z][a-z-]*|[a-z_]+))[^`]*`/g)) {
+      const cmd = m[1];
+      assert.ok(g.roles[a].some((r) => covers(r, cmd)) || g.deny.some((r) => covers(r, cmd)), `${a}.md names \`${cmd}\`: neither granted to it nor denied to lanes`);
+    }
+  }
+});
+
+test('launch and the eval pass the run\'s own settings to claude as --settings; without them the command is as before', async (t) => {
+  const SB = await import('../sandbox.js');
+  assert.deepEqual(launchCommand({ runtime: null, allowWrite: [] }, { wt: '/w', settingsPath: 'x', prompt: 'p', agent: 'tester', claudeSettings: '/s.json' }),
+    ['claude', '-p', 'p', '--permission-mode', 'default', '--settings', '/s.json', '--agent', 'tester']);
+  assert.deepEqual(launchCommand({ runtime: null, allowWrite: [] }, { wt: '/w', settingsPath: 'x', prompt: 'p' }), ['claude', '-p', 'p', '--permission-mode', 'default']);
+  const root = approvedRepo(t, { highRisk: false });
+  const env = { ...process.env, KIT_SANDBOX_RUNTIME: 'none' };
+  assert.equal(runScript('lane.js', ['start', 'refund-route', '--repo', root], { env }).returncode, 0);
+  const l = runScript('lane.js', ['launch', 'refund-route', '--repo', root], { env });
+  assert.equal(l.returncode, 0, l.stderr);
+  const out = JSON.parse(l.stdout);
+  const file = out.command[out.command.indexOf('--settings') + 1];
+  assert.equal(path.relative(out.cwd, file), out.claude_settings);
+  const perms = JSON.parse(read(file)).permissions;
+  assert.ok(perms.deny.includes('Bash(kit lane advance *)') && perms.allow.includes('Bash(kit lane next-step *)'));
+  assert.deepEqual(perms, SB.runSettings({ root, wt: out.cwd }).permissions);
+});

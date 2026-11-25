@@ -284,6 +284,34 @@ test('check_projects warns about stale hooks until the project is upgraded', (t)
   assert.equal(r.stdout, '');
 });
 
+test('an upgrade narrows a project set up with Bash(kit *): the explicit kit rules replace it, the floor gains the merge and approval denies, a project\'s own rules stay (hardening plan Step 2)', (t) => {
+  const root = nodeApi(path.join(tmpPath(t), 'node-api'));
+  assert.equal(runScript('bootstrap.js', ['--repo', root]).returncode, 0);
+  const sp = path.join(root, '.claude', 'settings.json');
+  const perms = () => JSON.parse(fs.readFileSync(sp, 'utf8')).permissions;
+  const frag = JSON.parse(fs.readFileSync(path.join(KIT, 'hooks', 'settings.project.json'), 'utf8')).permissions;
+  // what the kit wrote before the narrowing (PR #106): the broad launcher rule and no gh deny rules
+  const s = JSON.parse(fs.readFileSync(sp, 'utf8'));
+  s.permissions.allow = [...s.permissions.allow.filter((r) => !r.startsWith('Bash(kit ')), 'Bash(kit *)', 'Bash(kit pack *)'];
+  s.permissions.deny = s.permissions.deny.filter((r) => !r.startsWith('Bash(gh '));
+  fs.writeFileSync(sp, JSON.stringify(s, null, 2));
+  assert.equal(runScript('bootstrap.js', ['--repo', root, '--upgrade']).returncode, 0);
+  const p = perms();
+  assert.ok(!p.allow.includes('Bash(kit *)'), p.allow.join(', '));
+  for (const r of frag.allow) assert.ok(p.allow.includes(r), r);
+  assert.ok(p.allow.includes('Bash(kit pack *)'), 'another tool called kit is the project\'s and is kept');
+  for (const r of ['Bash(gh pr merge *)', 'Bash(gh pr review *--approve*)', 'Bash(gh api *pulls/*/merge*)', 'Bash(gh api *branches/*/protection*)', 'Bash(gh api *rulesets*)']) assert.ok(p.deny.includes(r), r);
+  for (const r of ['Bash(kit lane merge *)', 'Bash(kit lane resume-all *)', 'Bash(kit bootstrap *)']) assert.ok(p.ask.includes(r) && !p.allow.includes(r), r);
+  assert.equal(runScript('ci_security_floor.js', ['--repo', root]).returncode, 0);
+  // a project's own allow rule for gh that the floor now denies is dropped, so the file cannot disagree with the floor
+  const s2 = JSON.parse(fs.readFileSync(sp, 'utf8'));
+  s2.permissions.allow.push('Bash(gh pr merge *)');
+  fs.writeFileSync(sp, JSON.stringify(s2, null, 2));
+  assert.equal(runScript('ci_security_floor.js', ['--repo', root]).returncode, 1, 'the loosened file fails the floor check');
+  assert.equal(runScript('bootstrap.js', ['--repo', root, '--upgrade']).returncode, 0);
+  assert.ok(!perms().allow.includes('Bash(gh pr merge *)'));
+});
+
 test('an upgrade owns only the kit\'s own allow rules: the old "$HOME" form, Bash(kit *) and rules naming a kit script (#63)', async () => {
   const { kitOwnedAllow } = await import('../bootstrap.js');
   for (const rule of ['Bash(node "$HOME/.claude/kit/scripts/*)', 'Bash(kit *)', 'Bash(kit lane next-step *)', 'Bash(kit lane)', 'Bash(kit kit_status)']) {

@@ -51,6 +51,24 @@ test('commands reference real scripts and subcommands', () => {
   }
 });
 
+test('every kit command a skill tells the session to run is allowed or asks in the session\'s settings; none is denied (hardening plan Step 2)', () => {
+  // the skills run in the session outside the container; the narrowing must not stop any of their own commands
+  const perms = JSON.parse(fs.readFileSync(path.join(KIT, 'hooks', 'settings.project.json'), 'utf8')).permissions;
+  const covers = (rule, cmd) => { const p = /^Bash\((.+) \*\)$/.exec(rule)?.[1]; return p !== undefined && (cmd === p || cmd.startsWith(`${p} `)); };
+  const seen = new Set();
+  for (const p of COMMANDS) {
+    for (const m of read(p).matchAll(/`(kit (?:lane [a-z][a-z-]*|[a-z_]+))|^\s*(kit (?:lane [a-z][a-z-]*|[a-z_]+))/gm)) {
+      const cmd = m[1] ?? m[2];
+      seen.add(cmd);
+      assert.ok([...perms.allow, ...perms.ask].some((r) => covers(r, cmd)), `${rel(p)} runs \`${cmd}\`, which no allow or ask rule names`);
+      assert.ok(!perms.deny.some((r) => covers(r, cmd)), `${rel(p)} runs \`${cmd}\`, which a deny rule refuses`);
+    }
+  }
+  for (const c of ['kit lane advance', 'kit lane start', 'kit lane merge', 'kit lane next-step', 'kit validate_docs', 'kit bootstrap']) assert.ok(seen.has(c), c);
+  // merging through kit asks every time: the merge command is in ask, never in allow
+  assert.ok(perms.ask.includes('Bash(kit lane merge *)') && !perms.allow.some((r) => covers(r, 'kit lane merge')));
+});
+
 test('every description and argument-hint is one double-quoted YAML string', () => {
   // unquoted, a `: ` or a leading `[` makes the line invalid YAML; Claude Code then loads the skill with no metadata
   const DQ = /^"(?:[^"\\]|\\.)*"$/;
