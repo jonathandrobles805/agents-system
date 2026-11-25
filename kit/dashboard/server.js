@@ -139,7 +139,11 @@ export function fingerprint(files) {
   return parts.join('|');
 }
 
-/** New events of an events.jsonl since byte `offset`: [events, newOffset]. Unparseable lines are skipped. */
+/**
+ * New events of an events.jsonl since byte `offset`: [events, newOffset]. Only complete lines are consumed: the offset
+ * stops after the last newline, so a line a writer has half written is read whole on a later tick. Unparseable
+ * complete lines are skipped.
+ */
 export function tailEvents(p, offset) {
   if (!K.isFile(p)) return [[], 0];
   const fd = fs.openSync(p, 'r');
@@ -158,15 +162,16 @@ export function tailEvents(p, offset) {
   } finally {
     fs.closeSync(fd);
   }
+  const end = chunk.lastIndexOf(0x0a) + 1; // 0 when no newline yet: nothing complete to read
   const out = [];
-  for (const line of K.splitlines(chunk.toString('utf8'))) {
+  for (const line of K.splitlines(chunk.subarray(0, end).toString('utf8'))) {
     try {
       out.push(JSON.parse(line));
     } catch {
       // not JSON: skip
     }
   }
-  return [out, offset + chunk.length];
+  return [out, offset + end];
 }
 
 const laneEventsPath = (l) => path.join(l.worktree, 'docs', 'specs', `${l.slug}.events.jsonl`);
@@ -188,8 +193,8 @@ function watchTick(state) {
     for (const l of s.lanes) {
       if (!l.worktree) continue;
       const [fresh, off] = tailEvents(laneEventsPath(l), state.eventOffsets.get(l.slug) ?? 0);
+      state.eventOffsets.set(l.slug, off);
       if (fresh.length) {
-        state.eventOffsets.set(l.slug, off);
         for (const e of fresh) state.broadcast({ type: 'event', lane: l.slug, project: s.project, root: s.root, data: e });
       }
     }
@@ -203,7 +208,7 @@ export function startWatcher(state, interval) {
     for (const l of s.lanes) {
       if (l.worktree) {
         const p = laneEventsPath(l);
-        state.eventOffsets.set(l.slug, K.isFile(p) ? fs.statSync(p).size : 0);
+        state.eventOffsets.set(l.slug, K.isFile(p) ? tailEvents(p, 0)[1] : 0);
       }
     }
   }
