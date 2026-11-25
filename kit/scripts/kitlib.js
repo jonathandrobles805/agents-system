@@ -642,6 +642,28 @@ export function splitRule(rule) {
   return [m[1], (m[2] ?? '').trim()];
 }
 
+/**
+ * permissions.allow rules for the commands this project records in kit.json, so the lane can run its own gates.
+ * Derived, never listed: the project answered these at /zi-bootstrap and they are the only commands the kit tells a
+ * lane to run. A `{file}` placeholder becomes the wildcard, since that is exactly the part that varies. The `*`
+ * always lands after the program and subcommand, which is where Claude Code requires it
+ * [docs: https://code.claude.com/docs/en/permissions.md @ 2026-11-13]; a compound command is matched per
+ * subcommand, so `npx vitest run && rm -rf /` is not covered by the rule for `npx vitest run`.
+ */
+export function commandAllowRules(commands) {
+  const rules = new Set();
+  for (const v of Object.values(commands ?? {})) {
+    if (typeof v !== 'string') continue;
+    const cmd = v.trim();
+    if (!cmd || /^none\b/i.test(cmd)) continue; // "none: <reason>" turns a check off on purpose
+    const prefix = cmd.split('{')[0].trim();
+    if (!prefix) continue;
+    rules.add(`Bash(${prefix} *)`);
+    if (prefix === cmd) rules.add(`Bash(${cmd})`); // the exact invocation, with no arguments after it
+  }
+  return [...rules];
+}
+
 /** True when an allow rule grants something a floor deny rule forbids. */
 export function allowLoosens(allowRule, denyRule) {
   const a = splitRule(allowRule);

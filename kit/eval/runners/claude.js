@@ -481,9 +481,9 @@ export function trustWorkspace(config, root) {
  * One headless `claude -p` session in the sandbox. With `stdin`, the prompt goes to the session's stdin, not its
  * argument list (SB.launchCommand, `prompt: null`): the judge's prompt can pass Linux's 128 KiB limit on one argument.
  */
-export function headless(prompt, cwd, env, settingsPath, timeoutMs, agent = null, { stdin = false } = {}) {
+export function headless(prompt, cwd, env, settingsPath, timeoutMs, agent = null, { stdin = false, claudeSettings = null } = {}) {
   const cfg = { runtime: SB.detectRuntime(env).runtime, allowWrite: [cwd, os.tmpdir()], allowedDomains: [], engine: process.env.KIT_CONTAINER_ENGINE || 'docker' };
-  const cmd = SB.launchCommand(cfg, { wt: cwd, settingsPath, prompt: stdin ? null : prompt, agent });
+  const cmd = SB.launchCommand(cfg, { wt: cwd, settingsPath, prompt: stdin ? null : prompt, agent, claudeSettings });
   const r = spawnSync(cmd[0], cmd.slice(1), { cwd, env, encoding: 'utf8', timeout: timeoutMs, maxBuffer: 64 * 1024 * 1024, ...(stdin ? { input: prompt } : {}) });
   // status is null when the session timed out (signal) or could not be spawned (error); both are kept
   return { command: cmd.map(redact), status: r.status, signal: r.signal ?? null, error: r.error ? (r.error.code || r.error.message) : null, stdout: r.stdout ?? '', stderr: redact(r.stderr ?? '') };
@@ -965,7 +965,11 @@ export async function run(task, { attempt = 0, timeoutMs = 20 * 60 * 1000, trans
     const agent = kitAgent(task, home);
     // a role task that runs as no kit agent measures plain Claude Code, not the kit's agent: the report says so
     const warnings = task.role && !agent ? [`ran without --agent ${task.role}: ${home ? `the session's home has no agents/${task.role}.md` : `the ${SB.detectRuntime(process.env).runtime} runtime gets no session home with the kit's agents`}; this attempt measures plain Claude Code, not the kit's ${task.role}`] : [];
-    const work = headless(task.goal, cwd, env, settings, timeoutMs, agent);
+    // the worker's own grants, per run (hardening plan Step 2): its role's kit commands and the fixture's recorded
+    // commands, never advance, gate, start or a merge. Written outside the repo the worker can change (the eval's
+    // scratch folder, under the temp directory a container mounts too)
+    const claudeSettings = SB.writeRunSettings(path.join(dir, 'claude-settings.json'), { root, wt: cwd, role: task.role ?? null });
+    const work = headless(task.goal, cwd, env, settings, timeoutMs, agent, { claudeSettings });
     const kept = { worker: home && transcripts ? keepTranscripts(home.config, path.join(transcripts, 'worker')) : [], judge: [] };
     const files = snapshot(cwd);
     const nodeModules = nodeModulesLines(cwd, files);

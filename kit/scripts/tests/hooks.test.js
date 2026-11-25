@@ -213,6 +213,45 @@ test('guard bash refuses the owner\'s decisions through kit in forms the permiss
   }
 });
 
+test('guard bash refuses a lane agent the stage moves, the gate, start and merging; the orchestrator keeps them (hardening plan Step 2)', (t) => {
+  const repo = makeRepo(t);
+  const agent = (command) => ({ ...pre(repo, 'Bash', { command }), agent_id: 'a4521003423292d69', agent_type: 'implementer' });
+  // a subagent's call carries agent_id (observed, docs/research/claude-code-hook-probe-2.payloads.jsonl)
+  for (const c of ['kit lane advance s build', 'kit lane stage s build', 'kit lane gate s', 'kit lane start s', 'kit lane scope s', 'kit lane finish s',
+    'kit lane merge s --by j', 'kit lane merged s', 'kit lane resume-all --by j', 'kit lane signoff s --by j', 'kit lane launch s --exec', 'kit bootstrap --repo .',
+    "kit lane 'advance' s build", 'cd ../wt && kit lane advance s build', 'echo "$(kit lane start s)"', 'timeout 60 kit lane advance s build']) {
+    const r = run('hook_guard_bash.js', agent(c));
+    // a quoted word is refused as a disguised form first, whoever runs it
+    assert.ok(r.returncode === 2 && /from a lane agent; only the orchestrator|write it plainly/.test(r.stderr), `${c}: ${r.returncode} ${r.stderr}`);
+  }
+  // what the agents are told to run still goes through, and so does every one of these from the main session
+  for (const c of ['kit lane check s D1 "npx vitest run tests/a.test.ts"', 'kit lane template review --slug s', 'kit validate_docs --repo .', 'kit lane wip --repo .',
+    'kit lane unknowns docs/specs/s.md --repo "$PWD"', 'kit lane next-step s --repo .', 'echo kit lane advance', 'git commit -m "kit lane advance s build"']) {
+    const r = run('hook_guard_bash.js', agent(c));
+    assert.equal(r.returncode, 0, `${c}: ${r.stderr}`);
+  }
+  for (const c of ['kit lane advance s build', 'kit lane start s', 'kit lane merged s', 'kit lane gate s']) assert.equal(run('hook_guard_bash.js', pre(repo, 'Bash', { command: c })).returncode, 0, c);
+  // a lane started by kit lane launch runs with KIT_LANE set; its own session is a lane agent too
+  const launched = runScript('hook_guard_bash.js', [], { stdin: JSON.stringify(pre(repo, 'Bash', { command: 'kit lane advance s build' })), env: { ...process.env, KIT_LANE: 's' } });
+  assert.equal(launched.returncode, 2, launched.stderr);
+});
+
+test('guard bash refuses an approving review and the API forms of reviews, branch merges, protection and rulesets in every session (hardening plan Step 2)', (t) => {
+  const repo = makeRepo(t);
+  for (const c of ['gh pr review 4 --approve', 'gh pr review -a 4', 'gh pr review 4 -a -b ok', 'gh api repos/o/r/pulls/4/reviews -f event=APPROVE',
+    'gh api -X PUT repos/o/r/branches/main/protection --input p.json', 'gh api -X DELETE repos/o/r/rulesets/7', 'gh api repos/o/r/merges -f base=main -f head=x',
+    "gh api graphql -f query='mutation{addPullRequestReview(input:{pullRequestId:\"x\",event:APPROVE}){clientMutationId}}'",
+    "gh api graphql -f query='mutation{enablePullRequestAutoMerge(input:{pullRequestId:\"x\"}){clientMutationId}}'",
+    "gh api graphql -f query='mutation{deleteRepositoryRuleset(input:{repositoryRulesetId:\"x\"}){clientMutationId}}'", 'npm test && gh pr review 4 --approve']) {
+    const r = run('hook_guard_bash.js', pre(repo, 'Bash', { command: c }));
+    assert.equal(r.returncode, 2, `${c}: ${r.stderr}`);
+  }
+  for (const c of ['gh pr comment 4 --body-file f.md', 'gh pr view 4 --json state,mergedAt', 'gh pr review 4 --comment -b "fine"', 'gh api repos/o/r/pulls/4/comments',
+    'git commit -m "no gh pr review --approve from agents"']) {
+    assert.equal(run('hook_guard_bash.js', pre(repo, 'Bash', { command: c })).returncode, 0, c);
+  }
+});
+
 test('lane.js never picks a subcommand after a leading --, so `lane.js -- merge` cannot reach merge (#106)', () => {
   const r = runScript('lane.js', ['--', 'merge', '--by', 'x']);
   assert.notEqual(r.returncode, 0);

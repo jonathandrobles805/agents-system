@@ -1,0 +1,28 @@
+{
+  "$comment": "Per-run permission grants for a session inside a lane: an unattended lane (`kit lane launch`) and the real-agent eval's worker. Kit-owned; never copied into a project. A headless session does not use a project's permissions.allow unless the folder was trusted, so each run gets its grants through `claude --settings <file>` (sandbox.js runSettings), naming only what that run needs: Edit inside its own worktree, `git add` and `git commit`, the project's recorded commands (.claude/kit.json commands), and the kit commands of its role below (`session` is the lane's own session, which runs no single role: every role's commands plus next-step and agent-for). `deny` is what a lane never runs (hardening plan Step 2, 0016 E.4): the stage moves (advance, its old name stage), the gate, starting, scoping and finishing a lane, merging and recording a merge, lifting the kill switch, launching another lane and re-running bootstrap. The orchestrator, outside the lane, keeps them (kit/hooks/settings.project.json); merging stays behind its ask rule there. Deny beats allow in every scope, so a project's own allow rules (trusted or not) never reach these, and the bash guard refuses them in a lane agent's call (a subagent's, or a launched lane's) in any spelling it parses. A guardrail, not a wall: the container (Step 8) is.",
+  "deny": [
+    "Bash(kit lane advance *)",
+    "Bash(kit lane stage *)",
+    "Bash(kit lane gate *)",
+    "Bash(kit lane start *)",
+    "Bash(kit lane scope *)",
+    "Bash(kit lane finish *)",
+    "Bash(kit lane merge *)",
+    "Bash(kit lane merged *)",
+    "Bash(kit lane resume-all *)",
+    "Bash(kit lane signoff *)",
+    "Bash(kit lane launch *)",
+    "Bash(kit bootstrap *)"
+  ],
+  "roles": {
+    "tester": ["Bash(kit lane check *)"],
+    "implementer": ["Bash(kit lane check *)"],
+    "debugger": [],
+    "planner": ["Bash(kit lane template *)", "Bash(kit lane unknowns *)", "Bash(kit lane wip *)", "Bash(kit validate_docs *)"],
+    "spec-critic": [],
+    "researcher": ["Bash(kit lane template *)", "Bash(kit validate_docs *)"],
+    "reviewer": ["Bash(kit lane template *)", "Bash(kit validate_docs *)"],
+    "retro": ["Bash(kit lane template *)", "Bash(kit validate_docs *)"]
+  },
+  "session": ["Bash(kit lane next-step *)", "Bash(kit lane agent-for *)"]
+}

@@ -11,7 +11,7 @@ Bootstrap this repository with agent-kit. Arguments: $ARGUMENTS
 ## Step 1: detect, write nothing
 Run and read the output:
 ```
-kit bootstrap --repo "$PWD" --detect-only --json
+kit bootstrap --repo . --detect-only --json
 ```
 Report in two lines: stacks and frameworks found, commands detected, tools missing (with the install command proposed, not run).
 
@@ -32,25 +32,25 @@ Write the answers to `/tmp/kit-answers.json` in the shape documented at the top 
 
 ## Step 3: generate
 ```
-kit bootstrap --repo "$PWD" --answers /tmp/kit-answers.json --json
+kit bootstrap --repo . --answers /tmp/kit-answers.json --json
 ```
 Then:
 1. Show the human the list of files written and kept.
 2. `grep -rn "TODO(bootstrap" CLAUDE.md ROADMAP.md ARCHITECTURE.md DESIGN.md` and list what remains for them to fill.
 3. Run the project's test command from `.claude/kit.json` once and report the result. Red here is the current state of the code being made visible; it is not caused by bootstrap.
-4. Run `kit ci_guards_present --repo "$PWD" --kit "$HOME/.claude/kit"` and confirm it passes.
+4. Run `kit ci_guards_present --repo .` and confirm it passes.
 5. Show every line of `warnings` from the result (for example: the installed kit has uncommitted changes, or its commit is not pushed, so CI pins a tag). The project's own hooks in `.claude/settings.json` and its own `CLAUDE.md` text are kept; the kit adds its hooks next to them and appends one marked block to `CLAUDE.md`.
 6. If the kit repository is private, tell the human once: in the kit repository, Settings → Actions → General → Access → "Accessible from repositories owned by the user", or the kit's CI jobs cannot load the kit.
 
 ## Step 4: upgrade (only with --upgrade)
 ```
-kit bootstrap --repo "$PWD" --upgrade --json
+kit bootstrap --repo . --upgrade --json
 ```
 Show what was backed up (`.claude/backup/<the version being replaced>/`), what was regenerated, and that human-owned files were left alone except the version stamp. The upgrade runs `guards-present` and `security-floor` itself, before and after, and reports each as `before -> after`; it restores from the backup and exits 1 when a check that passed before fails after, so there is nothing to re-run by hand.
 
 ## Step 5: branch protection (only with --protect, and only on an explicit yes)
 ```
-kit bootstrap --repo "$PWD" --protect --json
+kit bootstrap --repo . --protect --json
 ```
 Report the result, including `read_back` (the protection GitHub holds after the call) and `agent_rulesets` (the two rulesets that keep the agents' GitHub App to `wt/*` and `spec/*` branches, with the owner as the only bypass). Tell the human that merging from the GitHub page will now ask them to bypass the update rule; `kit lane merge` is unaffected. If `ok` is false because the read-back differs, show the differences and stop; do not merge anything until protection matches. If `gh` is missing or the remote is not GitHub, say so and list the required checks the human should configure by hand: tests, typecheck, lint, boundaries, kit-checks, secrets, audit.
 

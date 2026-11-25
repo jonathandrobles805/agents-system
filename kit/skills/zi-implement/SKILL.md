@@ -11,7 +11,7 @@ Implement feature: `$slug`
 
 ## Step 1: start or resume the lane
 ```
-kit lane start $slug --repo "$PWD"
+kit lane start $slug --repo .
 ```
 - Exit 2 with reasons: stop and relay them verbatim. Do not work around a precondition. If the reason is "worktree already exists", this is a resume: read `<worktree>/docs/specs/$slug.progress.md` and continue from "Current step".
 - Exit 0: the JSON names the worktree, branch, spec, and progress file.
