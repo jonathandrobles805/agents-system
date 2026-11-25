@@ -261,7 +261,7 @@ export function ciCommand(root, pr, { wait = false, timeoutMin = 30, mutationBlo
  * (`enforce_admins` on), so it uses the ruleset bypass and nothing else: GitHub still refuses an admin merge while a
  * required check is red or pending. Without that, the kit never passes `--admin`.
  */
-export function mergeCommand(root, pr, { by, timeoutMin = 30, mutationBlocking = false, out = process.stdout } = {}) {
+export function mergeCommand(root, pr, { by, timeoutMin = 30, mutationBlocking = false, head = null, out = process.stdout } = {}) {
   if (!by || !String(by).trim()) return refuse(out, ['--by <name> is required: the human who decided to merge']);
   const checks = projectChecks(root, { mutationBlocking });
   if (!checks) return refuse(out, [`no ${WORKFLOW}: run /zi-bootstrap first`]);
@@ -272,6 +272,10 @@ export function mergeCommand(root, pr, { by, timeoutMin = 30, mutationBlocking =
   const { info, res, timedOut } = waitForChecks(root, pr, checks, { timeoutMin, log: (l) => out.write(l + '\n') });
   if (res.state !== 'green') {
     return refuse(out, [`PR #${info.number} not merged: CI ${timedOut ? `still pending after ${timeoutMin} min` : 'red'} on ${info.headRefOid.slice(0, 7)}`, ...describe(res)]);
+  }
+  // `head`: the only commit this merge may land (a security sign-off names it); a push while the checks ran is refused
+  if (head && info.headRefOid !== head) {
+    return refuse(out, [`PR #${info.number} not merged: its head moved to ${info.headRefOid.slice(0, 7)}, and the security sign-off is for ${head.slice(0, 7)}; review the new commits, then sign off again (kit lane signoff <slug> --by <your name>)`]);
   }
   const body = `Merged by lane.js merge for ${by} after every required check passed on ${info.headRefOid}.`;
   const admins = adminEnforced(root, info.baseRefName);

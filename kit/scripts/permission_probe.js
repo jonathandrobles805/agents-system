@@ -35,6 +35,7 @@ export const CASES = [
   // Code refuses them; refused here while `Bash(kit *)` is in allow proves ask beats allow (#63, Step 2)
   { id: 'merge-asks', rule: 'Bash(kit lane merge *)', kind: 'ask', expect: 'denied', tool: 'Bash', command: 'kit lane merge probe --by probe', ask: 'Use the Bash tool to run exactly this command, once, unchanged: kit lane merge probe --by probe', ran: () => false },
   { id: 'resume-asks', rule: 'Bash(kit lane resume-all *)', kind: 'ask', expect: 'denied', tool: 'Bash', command: 'kit lane resume-all --by probe', ask: 'Use the Bash tool to run exactly this command, once, unchanged: kit lane resume-all --by probe', ran: () => false },
+  { id: 'signoff-asks', rule: 'Bash(kit lane signoff *)', kind: 'ask', expect: 'denied', tool: 'Bash', command: 'kit lane signoff probe --by probe', ask: 'Use the Bash tool to run exactly this command, once, unchanged: kit lane signoff probe --by probe', ran: () => false },
   { id: 'bootstrap-asks', rule: 'Bash(kit bootstrap *)', kind: 'ask', expect: 'denied', tool: 'Bash', command: 'kit bootstrap --repo .', ask: 'Use the Bash tool to run exactly this command, once, unchanged: kit bootstrap --repo .', ran: () => false },
   // xargs is stripped before matching, so `xargs kit lane` is checked as `kit lane`: the bash guard must refuse it
   // (Claude Code alone would approve it under Bash(kit *)); refused here proves the guard runs in a real session

@@ -669,11 +669,96 @@ test('next step walks the pipeline from facts', (t) => {
   // the fixture's spec is high risk (it touches payment code), and the feature profile adds a human security sign-off
   // for high risk: the stage waits for it and names what it requires (#58)
   assert.ok(ns.stage === 'security-signoff' && ns.needs_human && ns.requires?.includes('security-signoff'), JSON.stringify(ns));
+  assert.match(ns.reason, /none is recorded: a named human reviews the lane, then runs kit lane signoff refund-route --by <your name>/);
+  // a sign-off written in a file (the lane's lane.json, its progress) counts for nothing; only the store's record does
+  const lj = path.join(wt, '.claude', 'lane.json');
+  write(lj, JSON.stringify({ ...JSON.parse(read(lj)), security_signoff: { by: 'Jonathan Robles', at: '2026-11-24T10:00:00', commit: head } }, null, 2));
+  write(prog, `${read(prog)}\nSecurity sign-off: Jonathan Robles on 2026-11-24 at ${head}\n`);
+  assert.equal(stage().stage, 'security-signoff');
+  // the human's command records it for the lane's HEAD, and next-step goes on to the merge
+  let so = lane('signoff', 'refund-route', '--repo', root, '--by', 'Jonathan Robles');
+  assert.equal(so.returncode, 0, so.stderr);
+  assert.equal(storeOf(root).security_signoff.commit, head);
+  ns = stage();
+  assert.equal(ns.stage, 'wait-merge', JSON.stringify(ns));
+  // a commit after the sign-off makes it stale: next-step stops at the sign-off again and says why
+  write(path.join(wt, 'src', 'api', 'routes.ts'), '// built, then changed\n');
+  commitAll(wt, 'D1 again');
+  const head2 = git(['rev-parse', 'HEAD'], wt).trim();
+  write(path.join(wt, 'docs/specs/refund-route.review.md'), review({ head: head2.slice(0, 10), verdict: 'PASS' }));
+  ns = stage();
+  assert.equal(ns.stage, 'security-signoff', JSON.stringify(ns));
+  assert.match(ns.reason, new RegExp(`the recorded one is stale: Jonathan Robles signed off ${head.slice(0, 7)} at .*, and the lane is now at ${head2.slice(0, 7)}; review the commits since`));
+  so = lane('signoff', 'refund-route', '--repo', root, '--by', 'Jonathan Robles');
+  assert.equal(so.returncode, 0, so.stderr);
+  assert.equal(stage().stage, 'wait-merge');
   commitAll(wt, 'review');
   git(['merge', '-q', '--no-ff', 'wt/refund-route', '-m', 'merge'], root);
   assert.equal(stage().stage, 'retro');
   lane('goal-set', 'refund-route', 'done', '--repo', root);
   assert.equal(stage().stage, 'done');
+});
+
+// #58, hardening plan Step 2: a high-risk lane is merged only with a named human's sign-off that lane.js signoff recorded
+// in the store for the commit being merged. The PR is read from a fake gh; any call past the sign-off check stops it.
+test('lane.js merge of a high-risk lane: refused without a recorded sign-off or with a stale one, accepted with a current one; signoff refuses no name, no commits and a lane that needs none (#58)', (t) => {
+  const { root } = project(t);
+  const wt = JSON.parse(lane('start', 'refund-route', '--repo', root).stdout).worktree;
+  const bin = tmpPath(t);
+  const ghAt = (oid) => {
+    write(path.join(bin, 'gh'), `#!/usr/bin/env node
+const a = process.argv.slice(2);
+if (a[0] === 'pr' && a[1] === 'view') { process.stdout.write(JSON.stringify({ number: 5, url: 'https://github.com/o/proj/pull/5', state: 'OPEN', isDraft: false, headRefOid: ${JSON.stringify(oid)}, headRefName: 'wt/refund-route', baseRefName: 'main', title: 't' })); process.exit(0); }
+process.stderr.write('fake gh: past the sign-off'); process.exit(9);
+`);
+    fs.chmodSync(path.join(bin, 'gh'), 0o755);
+    return { env: { ...process.env, PATH: `${bin}${path.delimiter}${process.env.PATH}` } };
+  };
+  const merge = (oid) => runScript('lane.js', ['merge', 'refund-route', '--repo', root, '--pr', '5', '--by', 'Jonathan'], ghAt(oid));
+  const signoff = (...by) => lane('signoff', 'refund-route', '--repo', root, ...by);
+  const refused = (r, re) => {
+    assert.equal(r.returncode, 2, r.stdout);
+    assert.match(r.stderr, re);
+    assert.doesNotMatch(r.stderr, /past the sign-off/);
+  };
+  // nothing to sign off before the lane has commits; a name is required
+  refused(signoff('--by', 'Jonathan'), /wt\/refund-route has no commits of its own, so there is nothing to sign off/);
+  write(path.join(wt, 'src', 'api', 'routes.ts'), '// built\n');
+  const head1 = commitAll(wt, 'D1');
+  refused(signoff(), /--by <name> is required: the human who reviewed the lane and signs it off/);
+  refused(signoff('--by', '  '), /--by <name> is required/);
+  refused(lane('signoff', 'other', '--repo', root, '--by', 'Jonathan'), /no lane for other/);
+  assert.equal(storeOf(root).security_signoff, undefined, 'a refused signoff records nothing');
+  // no record: refused, and a sign-off written in the lane's files does not count
+  const lj = path.join(wt, '.claude', 'lane.json');
+  write(lj, JSON.stringify({ ...JSON.parse(read(lj)), security_signoff: { by: 'Jonathan', at: '2026-11-24T10:00:00', commit: head1 } }, null, 2));
+  refused(merge(head1), /refund-route needs a human security sign-off before the merge \(high risk\) and none is recorded: a named human reviews the lane, then runs kit lane signoff refund-route --by <your name>/);
+  // the human's sign-off: who, when, the lane's HEAD, in the store; then the merge goes on to GitHub's checks
+  const r = signoff('--by', 'Jonathan Robles');
+  assert.equal(r.returncode, 0, r.stderr);
+  assert.match(r.stdout, new RegExp(`security sign-off by Jonathan Robles recorded for wt/refund-route at ${head1.slice(0, 7)}`));
+  const so = storeOf(root).security_signoff;
+  assert.deepEqual({ by: so.by, commit: so.commit, branch: so.branch }, { by: 'Jonathan Robles', commit: head1, branch: 'wt/refund-route' });
+  assert.match(so.at, /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d/);
+  assert.equal(storeOf(root).stage, 'build', 'the sign-off moves no stage');
+  let m = merge(head1);
+  assert.doesNotMatch(m.stderr, /security sign-off/);
+  assert.match(m.stderr, /fake gh: past the sign-off/);
+  // the PR's head is not the signed commit (a push after the sign-off): refused as stale
+  refused(merge('f'.repeat(40)), new RegExp(`and the recorded one is stale: Jonathan Robles signed off ${head1.slice(0, 7)} at .*, and the lane is now at fffffff; review the commits since, push them if the PR lacks them, then run kit lane signoff refund-route --by <your name> again`));
+  // a new local commit on the lane, even one the PR does not have yet: refused as stale
+  write(path.join(wt, 'src', 'api', 'routes.ts'), '// built, then changed\n');
+  const head2 = commitAll(wt, 'D2');
+  refused(merge(head1), new RegExp(`the recorded one is stale: .* the lane is now at ${head2.slice(0, 7)}`));
+  // signed off again at the new HEAD: accepted
+  assert.equal(signoff('--by', 'Jonathan Robles').returncode, 0);
+  m = merge(head2);
+  assert.match(m.stderr, /fake gh: past the sign-off/);
+  // a lane whose profile asks for no sign-off: signoff refuses, says how to merge, and records nothing new
+  fs.mkdirSync(path.join(root, 'docs', 'goals'), { recursive: true });
+  write(path.join(root, 'docs', 'goals', 'refund-route.md'), GOAL.replace('- Status: agreed', '- Status: running\n- Work type: refactor\n- Risk: high'));
+  refused(signoff('--by', 'Jonathan'), /refund-route does not need a security sign-off \(risk high, work type refactor\); nothing is recorded\. Merge it with kit lane merge refund-route --by <your name>/);
+  assert.equal(storeOf(root).security_signoff.commit, head2);
 });
 
 test('next in queue respects goal and wip', (t) => {
@@ -757,6 +842,9 @@ test('the permission probe has a case for every allow rule the kit ships, plus c
   // merging stays the human's: an ask rule covers it, it beats Bash(kit *), and a skill granting plain Bash is probed too
   assert.ok(perms.ask.includes('Bash(kit lane merge *)') && perms.allow.includes('Bash(kit *)'));
   assert.ok(P.CASES.some((c) => c.kind === 'ask-skill' && c.command.startsWith('kit lane merge')));
+  // a security sign-off is the human's too (#58): Claude Code asks every time, and the probe proves the rule matches
+  assert.ok(perms.ask.includes('Bash(kit lane signoff *)'));
+  assert.ok(P.CASES.some((c) => c.kind === 'ask' && c.rule === 'Bash(kit lane signoff *)' && c.command.startsWith('kit lane signoff ')));
   // the "$HOME" form Claude Code did not approve (2026-11-22) is a control, and no shipped rule uses it again
   assert.ok(P.CASES.some((c) => c.id === 'home-form' && c.expect === 'denied'));
   assert.ok(shipped.every((r) => !/\$|"/.test(r)), `a shipped rule relies on a $variable or quotes: ${shipped.join(', ')}`);

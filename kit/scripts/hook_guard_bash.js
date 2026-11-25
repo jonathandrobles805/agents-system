@@ -229,7 +229,7 @@ export function withoutHeredocBodies(line) {
 // what may stand before the program in a simple command: assignments, the wrappers Claude Code strips (and env/exec),
 // their options and the plain values those options take
 const BEFORE_PROGRAM = /^(!|\{|if|then|else|elif|do|while|until|[A-Za-z_][A-Za-z0-9_]*=.*|timeout|time|nice|nohup|stdbuf|command|builtin|noglob|xargs|env|exec|-.*|[0-9.]+[smhd]?|[A-Z]+)$/;
-const DECISIONS = [['bootstrap'], ['lane', 'merge'], ['lane', 'resume-all']];
+const DECISIONS = [['bootstrap'], ['lane', 'merge'], ['lane', 'resume-all'], ['lane', 'signoff']];
 
 /**
  * Why a line runs a kit command in a form Claude Code's ask rules (`Bash(kit lane merge *)`, …) might not match, or
