@@ -486,6 +486,7 @@
     {"file": "kit/scripts/tests/commands_and_pipeline.test.js", "from": "test:commands_and_pipeline", "kind": "tests", "to": "script:validate_docs"},
     {"file": "kit/scripts/tests/dashboard_model.test.js", "from": "test:dashboard_model", "kind": "tests", "to": "script:arch_manifest"},
     {"file": "kit/scripts/tests/dashboard_security.test.js", "from": "test:dashboard_security", "kind": "tests", "to": "script:dashboard/server"},
+    {"file": "kit/scripts/tests/dashboard_security.test.js", "from": "test:dashboard_security", "kind": "tests", "to": "script:lane"},
     {"file": "kit/scripts/tests/dashboard.test.js", "from": "test:dashboard", "kind": "tests", "to": "script:dashboard/server"},
     {"file": "kit/scripts/tests/dashboard.test.js", "from": "test:dashboard", "kind": "tests", "to": "script:kitlib"},
     {"file": "kit/scripts/tests/dashboard.test.js", "from": "test:dashboard", "kind": "tests", "to": "script:lane"},

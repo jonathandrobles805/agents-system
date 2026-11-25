@@ -255,11 +255,11 @@ async function laneStages(proj) {
   for (const l of proj.lanes ?? []) {
     let step = null;
     try {
-      step = await L.nextStep(proj.root, l.slug);
+      step = await L.nextStep(proj.root, l.slug, { reroute: false }); // a GET never writes: no reroute, no event
     } catch {
       // a lane whose files are unreadable shows without a stage
     }
-    out.push({ slug: l.slug, position: l.position, stage: step?.stage ?? null, needs_human: Boolean(step?.needs_human), last_check: l.last_check ?? null, blocked: l.events?.blocked ?? 0 });
+    out.push({ slug: l.slug, position: l.position, stage: step?.stage ?? null, reroute_pending: step?.reroute_pending ?? null, needs_human: Boolean(step?.needs_human), last_check: l.last_check ?? null, blocked: l.events?.blocked ?? 0 });
   }
   return out;
 }
