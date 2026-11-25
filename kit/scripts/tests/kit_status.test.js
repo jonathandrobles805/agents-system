@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
-import { git, commitAll } from './fixtures.js';
+import { git, commitAll, approveSpec } from './fixtures.js';
 import { runScript } from './helpers.js';
 import { project, review } from './testdata.js';
 
@@ -31,6 +31,9 @@ test('positions follow files not claims', (t) => {
   const sp = path.join(root, 'docs', 'specs', 'refund-route.md');
   write(sp, read(sp).replaceAll('- Status: waiting-approval', '- Status: approved').replaceAll('Approved by: — on — at —', `Approved by: Jonathan Robles on 2026-11-08 at ${commit.slice(0, 7)}`));
   commitAll(root, 'approve');
+  // a filled approval line approves nothing: only the owner's merge of the spec PR, recorded by kit lane merge (D1)
+  assert.equal(laneOf(status(root), 'refund-route').position, 'waiting-approval');
+  approveSpec(root, 'refund-route');
   assert.equal(laneOf(status(root), 'refund-route').position, 'approved');
 
   // start lane -> building, derived from the worktree + lane.json

@@ -178,6 +178,9 @@ function startLane(root, dir, lane, env, head, install = installDeps) {
   // lane.js start fetches the base from origin and refuses a repo without one; the fixture's origin is a bare clone
   F.git(['clone', '-q', '--bare', root, path.join(dir, 'origin.git')], dir);
   F.git(['remote', 'add', 'origin', path.join(dir, 'origin.git')], root);
+  // the setup commits the approved spec on main itself, with no spec PR for the owner to merge: record the approval
+  // that merge would have recorded (hardening plan D1), so lane.js start builds the setup's spec
+  F.approveSpec(root, lane.slug, { by: 'kit-eval' });
   const wt = last(laneJs(['start', lane.slug, '--repo', root])).worktree;
   // node_modules is gitignored, so the worktree has none: installed before any step, so the setup's own `check` runs
   // and the session use the project's tools
@@ -517,7 +520,7 @@ const clip = (s, n) => (s.length > n ? `${s.slice(0, n)}… [${s.length - n} mor
 
 /**
  * A short, readable account of one (already redacted) transcript, kept beside it: the prompt, each tool call with its
- * main input and the start of its result, and the final answer. Claude Code's JSONL stores every tool result three
+ * main input, what it wrote (whole) and the start of its result, and the final answer. Claude Code's JSONL stores every tool result three
  * times and repeats the system prompt and tool schemas; the summary keeps only what a reader needs to see what the
  * session did. The JSONL stays the record.
  */
@@ -549,7 +552,10 @@ export function transcriptSummary(jsonl) {
     const i = row.input;
     const main = i.command ?? i.file_path ?? i.pattern ?? i.url ?? i.query ?? JSON.stringify(i);
     const body = i.content ?? i.new_string;
-    out.push(`## ${++n}. ${row.name}: \`${clip(String(main), 600)}\`${body ? `\n\nWrote:\n\n\`\`\`\n${clip(String(body), 1500)}\n\`\`\`` : ''}\n\nResult:\n\n\`\`\`\n${clip(results.get(row.id) ?? '(no result)', 800)}\n\`\`\`\n`);
+    // what the session wrote is shown whole: it is what a check or the judge graded, and a clipped copy hides the row
+    // that failed; the fence is longer than any backtick run inside it, so a written file's own fences stay inside
+    const fence = '`'.repeat(Math.max(3, ...[...String(body ?? '').matchAll(/`+/g)].map((m) => m[0].length + 1)));
+    out.push(`## ${++n}. ${row.name}: \`${clip(String(main), 600)}\`${body ? `\n\nWrote:\n\n${fence}\n${String(body)}\n${fence}` : ''}\n\nResult:\n\n\`\`\`\n${clip(results.get(row.id) ?? '(no result)', 800)}\n\`\`\`\n`);
   }
   return out.join('\n');
 }

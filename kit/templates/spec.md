@@ -96,4 +96,6 @@
 
 ## Approval
 
-Approved by: {{name}} on {{date}} at {{commit}}
+<!-- Nobody writes this section. The owner approves the spec by saying yes to merging its spec/<slug> PR (kit lane merge), and lane.js records who, when and the merged commit in the lane store. A name written here approves nothing. -->
+
+Approved by: — (recorded by kit lane merge when the owner merges the spec PR)

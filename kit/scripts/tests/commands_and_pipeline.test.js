@@ -165,9 +165,9 @@ test('pipeline mechanics end to end', (t) => {
   F.commitAll(root, 'spec');
   assert.equal(runScript('lane.js', ['start', 'refund-route', '--repo', root]).returncode, 2);
 
-  // --- human approves
+  // --- human approves: the spec PR sets Status: approved, and the owner's merge of it (kit lane merge) is recorded
   fs.writeFileSync(specPath, makeSpec({ commit: short }));
-  F.commitAll(root, 'approve');
+  F.approveSpec(root, 'refund-route', { commit: F.commitAll(root, 'approve') });
   const out = JSON.parse(runScript('lane.js', ['start', 'refund-route', '--repo', root]).stdout);
   const wt = out.worktree;
   const base = { session_id: 'lane-session', cwd: wt };

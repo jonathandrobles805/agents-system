@@ -17,7 +17,7 @@ export function main() {
     return K.block(`config-guard: ${r.slugs.length} lanes are open (${r.slugs.join(', ')}); settings cannot change while any lane is active.`);
   }
   if (lane && ['project_settings', 'local_settings', ''].includes(source)) {
-    K.appendEvent(lane.eventsPath, { event: 'blocked', tool: 'ConfigChange', result: 'blocked', summary: `settings change during lane (${source || 'unknown source'})` });
+    K.appendEvent(lane.eventLogPath, { event: 'blocked', tool: 'ConfigChange', result: 'blocked', summary: `settings change during lane (${source || 'unknown source'})` });
     return K.block('config-guard: settings cannot change while a lane is active. Finish or escalate the lane, then change settings by hand.');
   }
   return 0;

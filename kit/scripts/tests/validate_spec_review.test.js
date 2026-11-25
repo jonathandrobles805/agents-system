@@ -60,15 +60,11 @@ test('risk flag required when touching payments', (t) => {
   assert.ok(r.returncode === 2 && r.stderr.includes('risk-flag'));
 });
 
-test('approved status requires approval line', (t) => {
+test('approved status needs no approval line: the owner approves by merging the spec PR (hardening plan D1)', (t) => {
   const repo = makeRepo(t);
-  const bad = GOOD_SPEC.replaceAll('- Status: draft', '- Status: approved');
-  let p = write(repo, 'docs/specs/refund-endpoint.md', bad);
-  let r = runScript('validate_docs.js', [p, '--repo', repo]);
-  assert.ok(r.returncode === 2 && r.stderr.includes('approval-line'));
-  const good = bad.replaceAll('Approved by: — on — at —', 'Approved by: Jonathan Robles on 2026-11-08 at abc1234');
-  p = write(repo, 'docs/specs/refund-endpoint.md', good);
-  r = runScript('validate_docs.js', [p, '--repo', repo]);
+  const approved = GOOD_SPEC.replaceAll('- Status: draft', '- Status: approved');
+  const p = write(repo, 'docs/specs/refund-endpoint.md', approved);
+  const r = runScript('validate_docs.js', [p, '--repo', repo]);
   assert.equal(r.returncode, 0, r.stderr);
 });
 

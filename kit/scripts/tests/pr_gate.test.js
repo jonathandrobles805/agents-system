@@ -35,13 +35,14 @@ test('evaluate: green only when every required check reported and passed', () =>
 });
 
 test('workflowChecks: a matrix job is required once per value, named as GitHub reports it (0016 E.11)', () => {
-  // This repo's own workflow: the name GitHub reports is `script unit tests (node 20)`, never the unexpanded form.
+  // This repo's own workflow: the name GitHub reports is `script unit tests (node 22)`, never the unexpanded form.
   const kit = G.workflowChecks(fs.readFileSync(path.join(process.cwd(), '.github', 'workflows', 'kit.yml'), 'utf8'));
   assert.deepEqual(kit.errors, []);
-  assert.ok(kit.required.includes('script unit tests (node 20)') && kit.required.includes('script unit tests (node 22)'));
+  assert.ok(kit.required.includes('script unit tests (node 22)'));
+  assert.ok(!kit.required.includes('script unit tests (node 20)'), 'Node 20 is no longer supported (decision 0018)');
   assert.ok(!kit.required.some((n) => n.includes('${{')), 'no unexpanded matrix expression may be required');
-  // PR #88's real check runs (head 2d18a29) were green on both node values; before the fix this evaluated as pending.
-  const runs = [run(1, 'script unit tests (node 20)'), run(2, 'script unit tests (node 22)'), run(3, 'kit docs validate themselves'), run(4, 'eval smoke set (agents, skills, templates, workflows, eval)')];
+  // PR #88's real check runs (head 2d18a29) were green; before the fix this evaluated as pending.
+  const runs = [run(2, 'script unit tests (node 22)'), run(3, 'kit docs validate themselves'), run(4, 'eval smoke set (agents, skills, templates, workflows, eval)')];
   assert.equal(G.evaluate(runs, kit).state, 'green');
   // Values keep their quoting rules and the job's if:/continue-on-error flags.
   const wf = (name, matrix, extra = '') => `jobs:\n  t:\n    name: ${name}\n${extra}    strategy:\n      matrix:\n${matrix}    steps: []\n`;
@@ -208,6 +209,30 @@ test('lane.js merge waits through "no checks reported" and merges at the checked
   assert.deepEqual(merge.args.slice(0, 5), ['pr', 'merge', '4', '--squash', '--match-head-commit']);
   assert.equal(merge.args[5], PR.headRefOid);
   assert.ok(merge.args.join(' ').includes('for Jonathan'));
+});
+
+test('lane.js merge of a spec/<slug> PR merges at the checked head, then records the owner\'s yes in the lane store (hardening plan D1)', (t) => {
+  const root = project(t);
+  const merged = 'c'.repeat(40);
+  // views: the head check, mergeCommand's first read, the checks poll, the re-read; the 5th, after the merge, is merged
+  const spec = { ...PR, number: 6, url: 'https://github.com/o/proj/pull/6', headRefName: 'spec/footer', title: 'spec: footer' };
+  const { env, calls } = fakeGh(t, { pr: spec, prAfter: { after: 4, pr: { state: 'MERGED', mergeCommit: { oid: merged }, mergedAt: '2026-11-24T10:00:00Z' } }, polls: [all()] });
+  const r = lane(root, env, 'merge', '--pr', '6', '--by', 'Jonathan');
+  assert.equal(r.returncode, 0, r.stderr + r.stdout);
+  assert.match(r.stdout, /merged \(squash\) at head aaaaaaa/);
+  assert.match(r.stdout, /spec footer: approval by Jonathan recorded \(PR #6, merged as ccccccc\)/);
+  assert.ok(calls().some((c) => c.args[0] === 'pr' && c.args[1] === 'merge'));
+  const ap = JSON.parse(fs.readFileSync(path.join(root, '.claude', 'session', 'lanes', 'footer.json'), 'utf8')).spec_approval;
+  assert.deepEqual({ by: ap.by, pr: ap.pr, head: ap.head, commit: ap.commit }, { by: 'Jonathan', pr: 6, head: PR.headRefOid, commit: merged });
+});
+
+test('lane.js merge records no approval when a spec PR is not merged (red CI)', (t) => {
+  const root = project(t);
+  const spec = { ...PR, number: 6, headRefName: 'spec/footer' };
+  const { env } = fakeGh(t, { pr: spec, polls: [all('failure')] });
+  const r = lane(root, env, 'merge', '--pr', '6', '--by', 'Jonathan');
+  assert.equal(r.returncode, 2);
+  assert.ok(!fs.existsSync(path.join(root, '.claude', 'session', 'lanes', 'footer.json')), 'nothing recorded');
 });
 
 test('lane.js merge uses the owner\'s ruleset bypass (--admin) only after every check is green and only where GitHub enforces protection for admins', (t) => {

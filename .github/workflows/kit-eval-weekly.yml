@@ -1,10 +1,8 @@
 name: kit eval weekly
 
 on:
-  schedule:
-    # weekly, not nightly: on a subscription the full set (all tasks, n=3) draws on the same usage limits as your own
-    # work; run it by hand (workflow_dispatch) before tagging a release. KIT-SPEC 11A.
-    - cron: '17 6 * * 0'
+  # by hand only (decision 0018): Actions → kit eval weekly → Run workflow, after a change to agents, skills, templates,
+  # workflows or the eval, before tagging a release, and after a Claude or Claude Code update. KIT-SPEC 11A.
   workflow_dispatch:
 
 permissions:
@@ -15,7 +13,7 @@ jobs:
     name: eval full set (n=3) against the committed baseline
     runs-on: ubuntu-latest
     # Credentials come from the `main` environment, which only the main branch can use (0016 E.11 item 3).
-    # A scheduled run uses the default branch, so it qualifies; a missing key fails instead of skipping.
+    # Started by hand on main, it qualifies; a missing key fails instead of skipping.
     environment: main
     steps:
       - uses: actions/checkout@v4

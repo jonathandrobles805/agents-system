@@ -64,7 +64,7 @@ The agent's belief is never evidence. Evidence is the output of something that r
 |---|---|---|
 | You rubber-stamp because the spec is long | Spec has a one-screen summary at the top: goal, files changed, risks, open questions, done-criteria. Details below | Template |
 | You miss the risky part | Spec has a `Risks` section ranked; anything touching auth, payments, data deletion, or public APIs is flagged `high-risk` automatically by a keyword and path check | `validate-docs` |
-| Approval is ambiguous | Approval is a line in the spec: `Approved by <you> on <date> at commit <hash>`. `/zi-implement` refuses without it | `/zi-implement` command |
+| Approval is ambiguous | You approve a spec by saying yes to merging its `spec/<slug>` PR; `kit lane merge` records who, when and the merged commit in the lane store. A line in the spec counts for nothing. `lane.js start` and `scope` refuse without the record (planted fault 57) | `lane.js merge`, `start`, `scope` |
 
 ---
 

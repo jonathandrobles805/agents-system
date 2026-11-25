@@ -10,7 +10,7 @@ git clone https://github.com/jonathandrobles805/agents-system ~/agents-system
 (cd ~/agents-system && npm test)                             # 124 tests
 node ~/agents-system/planted-faults/run.js               # 19/19
 ```
-Requirements: Claude Code, git, Node 20+, `gh` logged in. In Claude Code, `/agents` should list the six kit agents and `/help` the nine commands.
+Requirements: Claude Code, git, Node 22+, `gh` logged in. In Claude Code, `/agents` should list the six kit agents and `/help` the nine commands.
 
 ## 1. Pick the project and freeze the drift (you, 20 minutes)
 
@@ -30,7 +30,7 @@ Then `/zi-dashboard`. You should see every feature queued and nothing in flight.
 Pick the smallest real feature on the roadmap: one that changes two or three files and has obvious tests.
 
 1. `/zi-research <slug>` — watch the dashboard: researchers appear as subagent events; files land in `docs/research/`. Read one. Every finding has a tag and a line number you can check.
-2. `/zi-plan <slug>` — the planner writes the spec, the critic adds items, the planner answers them. It opens a `spec/<slug>` PR. Read the Summary and the Files to change. Fix anything wrong in the PR itself. Set `Status: approved`, fill the approval line, merge.
+2. `/zi-plan <slug>` — the planner writes the spec, the critic adds items, the planner answers them. It opens a `spec/<slug>` PR. Read the Summary and the Files to change. Fix anything wrong in the PR itself. To approve, say so: Claude sets `Status: approved` and runs `kit lane merge`, which asks you, merges, and records your yes. That record is the approval; nobody fills the spec's approval line.
 3. `/zi-implement <slug>` — a worktree appears under `../<repo>-lanes/<slug>`. On the dashboard, the lane sits on Build; events stream: reads, a blocked edit if it strays, red test runs, green runs. Do not help it. If it escalates, read the Escalation section; that is the system telling you what it needs.
 4. `/zi-review <slug>` runs automatically after the implementer stops green. The lane moves to Review. If the verdict is FAIL, the fail list goes to the PR and the implementer fixes exactly those items. When PASS and CI is green, the lane moves to "You merge".
 5. Merge the PR. `/zi-retro <slug>`. Accept, edit, or drop each proposed lesson. Anything accepted becomes a check or is listed as debt.

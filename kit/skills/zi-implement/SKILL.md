@@ -1,6 +1,6 @@
 ---
 name: zi-implement
-description: "Builds an approved spec in its own worktree: the tester writes failing tests, then the implementer makes them pass under the lane hooks. Refuses without an approval line, with open questions, past the WIP limit, or on file overlap. Use when a spec is approved, or to continue a lane."
+description: "Builds an approved spec in its own worktree: the tester writes failing tests, then the implementer makes them pass under the lane hooks. Refuses unless the owner merged the spec PR (kit lane merge records it), with open questions, past the WIP limit, or on file overlap. Use when a spec is approved, or to continue a lane."
 argument-hint: "<feature slug>"
 allowed-tools: Bash, Read, Agent
 disable-model-invocation: true

@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
-import { git, commitAll, nodeApi } from './fixtures.js';
+import { git, commitAll, nodeApi, approveSpec } from './fixtures.js';
 import { runScript, setEnv, tmpPath } from './helpers.js';
 import { project, spec, review } from './testdata.js';
 import * as P from '../permission_probe.js';
@@ -21,7 +21,7 @@ test('precheck passes for approved spec', (t) => {
 test('precheck refuses unapproved', (t) => {
   const { root } = project(t, { status: 'waiting-approval', approved: false });
   const r = lane('precheck', 'refund-route', '--repo', root);
-  assert.ok(r.returncode === 2 && r.stderr.includes('approval line') && r.stderr.includes("needs 'approved'"));
+  assert.ok(r.returncode === 2 && r.stderr.includes('no recorded approval for refund-route: merge the spec PR first') && r.stderr.includes("needs 'approved'"), r.stderr);
 });
 
 test('precheck refuses open question', (t) => {
@@ -48,6 +48,7 @@ test('precheck refuses when the WIP limit is already taken by a live lane', (t) 
   write(path.join(root, 'src', 'api', 'other.ts'), "import { PaymentService } from '../domain/payment';\nexport function other(s: PaymentService) {\n  return { charge: (u: string) => s.charge(u) };\n}\n");
   write(path.join(root, 'docs', 'specs', 'other.md'), other);
   commitAll(root, 'second spec');
+  approveSpec(root, 'other');
   // WIP is the number of worktrees holding a lane.json, not a word in ROADMAP (decision 0006): starting one takes it
   assert.equal(JSON.parse(lane('wip', '--repo', root).stdout).in_flight, 0);
   assert.equal(lane('start', 'other', '--repo', root).returncode, 0);
@@ -368,6 +369,110 @@ Expose refunds over the routes module.
 - none
 `;
 
+// Hardening plan Step 2, D1 "The approval line": the owner approves a spec by saying yes to merging its spec/<slug> PR,
+// and lane.js merge records that yes in the lane store. lane.js start builds only such a spec, on the base it starts from.
+test('start builds only a spec the owner approved by merging its spec PR (D1): not on main, not approved, a written line', (t) => {
+  const { root } = project(t, { approved: false });
+  const lanes = path.join(path.dirname(root), `${path.basename(root)}-lanes`, 'refund-route');
+  const sp = path.join(root, 'docs', 'specs', 'refund-route.md');
+  const refused = (r, text) => {
+    assert.equal(r.returncode, 2, r.stdout);
+    assert.ok(r.stderr.includes(text), r.stderr);
+    assert.ok(!fs.existsSync(lanes), 'no worktree');
+    assert.equal(git(['branch', '--list', 'wt/refund-route'], root).trim(), '', 'no lane branch');
+  };
+  const specText = read(sp);
+  // the spec PR is open: its branch holds the spec, main does not, nothing is recorded
+  git(['branch', 'spec/refund-route'], root);
+  git(['reset', '-q', '--hard', 'HEAD~1'], root);
+  git(['checkout', '-q', 'spec/refund-route'], root);
+  refused(lane('start', 'refund-route', '--repo', root), 'no recorded approval for refund-route: merge the spec PR first, with kit lane merge --pr <the spec/refund-route PR> --by <your name>');
+  // an approval line written into the spec (by an agent, say) approves nothing
+  write(sp, read(sp).replace('Approved by: — on — at —', 'Approved by: Jonathan Robles on 2026-11-08 at abc1234'));
+  const lineOnly = commitAll(root, 'an agent fills the approval line');
+  refused(lane('start', 'refund-route', '--repo', root), "An 'Approved by:' line in the spec does not count");
+  // a record whose merge is not in main, with the spec not on main either: the spec must be merged first
+  approveSpec(root, 'refund-route', { commit: lineOnly });
+  refused(lane('start', 'refund-route', '--repo', root), 'spec docs/specs/refund-route.md is not on main: merge the spec PR first');
+  // merged, but the merged spec says waiting-approval (the PR was merged without setting Status: approved)
+  git(['checkout', '-q', 'main'], root);
+  write(sp, specText.replace('- Status: approved', '- Status: waiting-approval'));
+  approveSpec(root, 'refund-route', { commit: commitAll(root, 'spec: refund-route (#2)'), pr: 2 });
+  git(['checkout', '-q', 'spec/refund-route'], root);
+  refused(lane('start', 'refund-route', '--repo', root), 'the spec on main says Status: waiting-approval; it is approved when a spec/refund-route PR that sets Status: approved is merged with kit lane merge');
+  git(['checkout', '-q', 'main'], root);
+  refused(lane('start', 'refund-route', '--repo', root), "spec status is 'waiting-approval', needs 'approved' (set it on the spec/refund-route PR");
+  // a recorded merge that main does not contain (reverted, or recorded against another branch)
+  write(sp, read(sp).replace('- Status: waiting-approval', '- Status: approved'));
+  commitAll(root, 'spec: refund-route approved (#3)');
+  approveSpec(root, 'refund-route', { commit: lineOnly, pr: 3 });
+  refused(lane('start', 'refund-route', '--repo', root), `the recorded approval of refund-route (PR #3, merged as ${lineOnly.slice(0, 7)}) is not in main`);
+});
+
+test('start goes ahead once the spec PR is merged and recorded, with or without an approval line; the record outlives the start (D1)', (t) => {
+  // Approved by: — on — at —: the spec file no longer needs the line
+  const { root } = project(t, { approved: false });
+  assert.equal(lane('precheck', 'refund-route', '--repo', root).returncode, 2);
+  const ap = approveSpec(root, 'refund-route', { pr: 2 });
+  assert.equal(lane('precheck', 'refund-route', '--repo', root).returncode, 0);
+  const r = lane('start', 'refund-route', '--repo', root);
+  assert.equal(r.returncode, 0, r.stderr);
+  const rec = JSON.parse(read(root, '.claude', 'session', 'lanes', 'refund-route.json'));
+  assert.equal(rec.stage, 'build');
+  assert.deepEqual(rec.spec_approval, ap);
+  // a lane already under way is not re-checked: one started before this change has no recorded approval, and its
+  // stage still moves
+  delete rec.spec_approval;
+  write(path.join(root, '.claude', 'session', 'lanes', 'refund-route.json'), JSON.stringify(rec, null, 2));
+  const adv = lane('advance', 'refund-route', 'test', '--repo', root);
+  assert.equal(adv.returncode, 0, adv.stderr);
+  assert.equal(JSON.parse(read(root, '.claude', 'session', 'lanes', 'refund-route.json')).stage, 'test');
+});
+
+test('lane.js merge records the owner\'s yes to a spec PR in the store, also for one already merged on GitHub; a wrong slug or no --by is refused (D1)', (t) => {
+  const { root } = project(t, { approved: false });
+  const merged = git(['rev-parse', 'HEAD'], root).trim();
+  const bin = tmpPath(t);
+  // a spec PR already merged (from GitHub's page): no merge is attempted, only the recording
+  write(path.join(bin, 'gh'), `#!/usr/bin/env node
+const a = process.argv.slice(2);
+if (a[0] === 'pr' && a[1] === 'view') { process.stdout.write(JSON.stringify({ number: 7, url: 'https://github.com/o/proj/pull/7', state: 'MERGED', isDraft: false, headRefOid: 'b'.repeat(40), headRefName: 'spec/refund-route', baseRefName: 'main', title: 'spec: refund route', mergeCommit: { oid: ${JSON.stringify(merged)} }, mergedAt: '2026-11-24T10:00:00Z' })); process.exit(0); }
+process.stderr.write('fake gh: unexpected ' + a.join(' ')); process.exit(9);
+`);
+  fs.chmodSync(path.join(bin, 'gh'), 0o755);
+  const env = { ...process.env, PATH: `${bin}${path.delimiter}${process.env.PATH}` };
+  let r = runScript('lane.js', ['merge', 'other', '--repo', root, '--pr', '7', '--by', 'Jonathan'], { env });
+  assert.ok(r.returncode === 2 && r.stderr.includes("PR 7 is the spec of 'refund-route', not 'other'"), r.stderr);
+  r = runScript('lane.js', ['merge', '--repo', root, '--pr', '7'], { env });
+  assert.ok(r.returncode === 2 && r.stderr.includes('--by <name> is required'), r.stderr);
+  assert.ok(!fs.existsSync(path.join(root, '.claude', 'session', 'lanes', 'refund-route.json')), 'nothing recorded');
+  r = runScript('lane.js', ['merge', '--repo', root, '--pr', '7', '--by', 'Jonathan Robles'], { env });
+  assert.equal(r.returncode, 0, r.stderr);
+  assert.match(r.stdout, new RegExp(`spec refund-route: approval by Jonathan Robles recorded \\(PR #7, merged as ${merged.slice(0, 7)}\\)`));
+  const ap = JSON.parse(read(root, '.claude', 'session', 'lanes', 'refund-route.json')).spec_approval;
+  assert.equal(ap.by, 'Jonathan Robles');
+  assert.equal(ap.pr, 7);
+  assert.equal(ap.commit, merged);
+  assert.equal(ap.head, 'b'.repeat(40));
+  assert.equal(ap.merged_at, '2026-11-24T10:00:00Z');
+  assert.match(ap.at, /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d/);
+  r = lane('start', 'refund-route', '--repo', root);
+  assert.equal(r.returncode, 0, r.stderr);
+});
+
+test('a fix lane still opens from its goal alone, without any approval; an older record\'s approval is not carried into it (D1)', (t) => {
+  const { root } = project(t);
+  fs.mkdirSync(path.join(root, 'docs', 'goals'), { recursive: true });
+  write(path.join(root, 'docs', 'goals', 'refund-route.md'), GOAL.replace('- Status: agreed', '- Status: agreed\n- Work type: fix\n- Risk: normal\n- Size: S'));
+  fs.rmSync(path.join(root, 'docs', 'specs', 'refund-route.md'));
+  commitAll(root, 'a fix goal, no spec');
+  const r = lane('start', 'refund-route', '--repo', root);
+  assert.equal(r.returncode, 0, r.stderr);
+  const rec = JSON.parse(read(root, '.claude', 'session', 'lanes', 'refund-route.json'));
+  assert.equal(rec.stage, 'reproduce');
+  assert.equal(rec.spec_approval, undefined);
+});
+
 test('next step walks the pipeline from facts', (t) => {
   setEnv(t, 'KIT_STATUS_NO_GH', '1');
   const { root, commit } = project(t, { status: 'waiting-approval', approved: false });
@@ -390,6 +495,9 @@ test('next step walks the pipeline from facts', (t) => {
   assert.ok(ns.stage === 'approve' && ns.needs_human);
   write(sp, specText.replaceAll('- Status: waiting-approval', '- Status: approved').replaceAll('Approved by: — on — at —', `Approved by: Jonathan Robles on 2026-11-08 at ${commit.slice(0, 7)}`));
   commitAll(root, 'approve');
+  // an approval line written into the spec approves nothing; the owner's recorded merge of the spec PR does (D1)
+  assert.equal(stage().stage, 'approve');
+  approveSpec(root, 'refund-route');
   assert.equal(stage().stage, 'lane');
   const out = JSON.parse(lane('start', 'refund-route', '--repo', root).stdout);
   const wt = out.worktree;
@@ -455,9 +563,10 @@ test('lane.js template prints a kit template with slug, date and commit; agents 
     assert.equal(r.returncode, 0, `${name}: ${r.stderr}`);
     assert.doesNotMatch(r.stdout.split('\n').filter((l) => !/\bby:/i.test(l)).join('\n'), /\{\{(slug|date)\}\}/, name);
   }
-  // only header lines are filled: the approval and agreement lines keep their placeholders for the person deciding
+  // only header lines are filled: the agreement line keeps its placeholders for the person deciding, and the spec's
+  // approval line asks nobody to fill it (kit lane merge records the owner's yes, hardening plan D1)
   r = runScript('lane.js', ['template', 'spec', '--slug', 'refund-route', '--repo', root]);
-  assert.match(r.stdout, /^Approved by: \{\{name\}\} on \{\{date\}\} at \{\{commit\}\}$/m);
+  assert.match(r.stdout, /^Approved by: — \(recorded by kit lane merge when the owner merges the spec PR\)$/m);
   r = runScript('lane.js', ['template', 'goal', '--slug', 'refund-route', '--repo', root]);
   assert.match(r.stdout, /^- Agreed by: \{\{human name\}\} and Claude on \{\{date\}\}$/m);
   assert.match(r.stdout, new RegExp(`^- Date: ${today}$`, 'm'));
@@ -535,7 +644,15 @@ test('end to end: a fix lane goes start → scope → test → build → review 
   // the debugger's cause, then the planner's spec, approved by the human
   const prog = path.join(wt, 'docs/specs/truncate-text.progress.md');
   write(prog, read(prog).replace('## Current step', 'cause: truncate does not exist yet\n\n## Current step'));
-  write(path.join(wt, 'docs/specs/truncate-text.md'), read(path.join(SETUP, 'spec.approved.md')).replaceAll('{{eval:head}}', head.slice(0, 7)));
+  const specText = read(path.join(SETUP, 'spec.approved.md')).replaceAll('{{eval:head}}', head.slice(0, 7));
+  write(path.join(wt, 'docs/specs/truncate-text.md'), specText);
+  // the spec says approved and carries a name, but counts only once the owner merged its spec/<slug> PR (D1)
+  assert.equal(next().stage, 'approve');
+  const early = lane('scope', 'truncate-text', '--repo', root);
+  assert.ok(early.returncode === 2 && early.stderr.includes('no recorded approval for truncate-text'), early.stderr);
+  // the spec PR, merged by the owner with kit lane merge: the same file on main, and the recorded yes
+  write(path.join(root, 'docs/specs/truncate-text.md'), specText);
+  approveSpec(root, 'truncate-text', { commit: commitAll(root, 'spec: truncate-text (#2)'), pr: 2 });
   assert.equal(next().stage, 'scope');
   ok(lane('scope', 'truncate-text', '--repo', root), 'scope');
   // tester: writes the test and runs the test file

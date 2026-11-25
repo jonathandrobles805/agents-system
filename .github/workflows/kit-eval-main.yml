@@ -1,0 +1,102 @@
+# The real-agent smoke set on main (decision 0018). It starts only after a push to main that changes what it measures
+# (the paths below), or by hand (Actions → kit eval main → Run workflow). Any other merge starts nothing here, so it
+# costs no Actions minutes and no Claude usage. The paths match the gated set in kit.yml's PR notice and the job's
+# own `touched` step; results/ and fixtures/ under kit/eval are left out there too. KIT-SPEC 11A.
+name: kit eval main
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'kit/agents/**'
+      - 'kit/skills/**'
+      - 'kit/templates/**'
+      - 'kit/workflows/**'
+      - 'kit/eval/**'
+      - '!kit/eval/results/**'
+      - '!kit/eval/fixtures/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  # the real-agent smoke set, with the credentials from the `main` environment.
+  # The environment is limited to the main branch, so no other ref can read the keys. Missing keys fail the job:
+  # a silent skip here would mean the real-agent set never runs anywhere in CI.
+  eval-smoke-main:
+    name: eval smoke set against the real agents (main)
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main'
+    environment: main
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: which gated paths this push touches
+        id: touched
+        run: |
+          # started by hand: run the smoke set's core roles whatever the last commit touched
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then echo "files=manual" >> "$GITHUB_OUTPUT"; echo "touched: manual run"; exit 0; fi
+          BEFORE="${{ github.event.before }}"
+          if [ -z "$BEFORE" ] || ! git cat-file -e "$BEFORE^{commit}" 2>/dev/null; then BEFORE="HEAD~1"; fi
+          FILES=$(git diff --name-only "$BEFORE"...HEAD | grep -E '^kit/(agents|skills|templates|workflows|eval)/' | grep -Ev '^kit/eval/(results|fixtures)/' | tr '\n' ',' || true)
+          echo "files=$FILES" >> "$GITHUB_OUTPUT"
+          echo "touched: ${FILES:-none}"
+      - name: credentials from the main environment (required on every push, touched or not)
+        env:
+          CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: |
+          if [ -z "$CLAUDE_CODE_OAUTH_TOKEN" ] && [ -z "$ANTHROPIC_API_KEY" ]; then
+            echo "::error::no credential reached this job. Add CLAUDE_CODE_OAUTH_TOKEN (claude setup-token) or ANTHROPIC_API_KEY as a secret of the 'main' environment (Settings → Environments → main). KIT-SPEC 11A."
+            exit 1
+          fi
+      - name: sandbox runtime self-check (the lane launcher runs `true`; Ubuntu 24.04 restricts the namespaces it needs)
+        if: steps.touched.outputs.files != ''
+        run: |
+          # the sandbox runtime's Linux dependencies (its README): bubblewrap, socat, ripgrep; it refuses to start without rg
+          sudo apt-get update -qq && sudo apt-get install -y bubblewrap socat ripgrep
+          npm install -g @anthropic-ai/claude-code @anthropic-ai/sandbox-runtime
+          # the host as the sandbox runtime finds it; kept in the log for the next person reading a failure
+          echo "bwrap $(bwrap --version); srt $(srt --version 2>/dev/null || echo '?'); $(rg --version | head -1); kernel $(uname -r)"
+          echo "sysctl: $(sysctl -n kernel.apparmor_restrict_unprivileged_userns 2>/dev/null || echo 'not present')"
+          echo "apparmor profiles mentioning bwrap: $(ls /etc/apparmor.d 2>/dev/null | grep -i bwrap | tr '\n' ' ' || true)$(sudo aa-status 2>/dev/null | grep -i bwrap | tr '\n' ' ' || true)"
+          # Anthropic's documented setup for Ubuntu 24.04 and later (code.claude.com/docs/en/sandboxing, "allow bubblewrap
+          # to create user namespaces"): an AppArmor profile for bwrap itself, not for the commands it runs. Loaded with
+          # apparmor_parser -r it replaces any bwrap profile already in the kernel, such as Ubuntu's bwrap-userns-restrict,
+          # which confines bwrap's children and denies the sandbox's seccomp helper its nested user namespace.
+          if [ "$(sysctl -n kernel.apparmor_restrict_unprivileged_userns 2>/dev/null || echo 0)" = "1" ]; then
+            printf '%s\n' 'abi <abi/4.0>,' 'include <tunables/global>' '' 'profile bwrap /usr/bin/bwrap flags=(unconfined) {' '  userns,' '  include if exists <local/bwrap>' '}' | sudo tee /etc/apparmor.d/bwrap >/dev/null
+            sudo apparmor_parser -r /etc/apparmor.d/bwrap
+            echo "sandbox: loaded Anthropic's bwrap AppArmor profile"
+          fi
+          # the probe is the lane launcher itself with `true` in place of claude: srt, the settings a lane gets, bubblewrap, the seccomp helper
+          if node kit/scripts/sandbox.js probe --repo .; then exit 0; fi
+          # still failing: what confines bwrap's children, for the next person reading this log
+          sudo grep -i bwrap /sys/kernel/security/apparmor/profiles || true
+          bwrap --ro-bind / / --dev /dev --proc /proc --unshare-user --unshare-pid cat /proc/self/attr/current || true
+          sudo dmesg | grep 'apparmor="DENIED"' | tail -n 20 || true
+          echo "::error::the sandbox runtime cannot start on this runner; the real-agent eval did not run. See the probe output above."
+          exit 1
+      - name: eval smoke set against the real agents
+        if: steps.touched.outputs.files != ''
+        env:
+          CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          TOUCHED: ${{ steps.touched.outputs.files }}
+        run: |
+          if [ -n "$CLAUDE_CODE_OAUTH_TOKEN" ]; then unset ANTHROPIC_API_KEY; echo "auth: subscription token"; else echo "auth: API key"; fi
+          node kit/eval/harness.js run --set smoke --runner claude --touched "$TOUCHED" --out "$RUNNER_TEMP/eval-smoke"
+      - name: keep the report and the transcripts (each session's exit status and stderr tail are in the report; its redacted transcript is beside it)
+        if: always() && steps.touched.outputs.files != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: eval-smoke-main-${{ github.sha }}-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/eval-smoke/report.json
+            ${{ runner.temp }}/eval-smoke/transcripts/
+          retention-days: 30
+          if-no-files-found: warn

@@ -504,6 +504,15 @@ export class Lane {
     return path.join(this.root, this.work, `${this.slug}.events.jsonl`);
   }
 
+  /**
+   * Where the hooks append this lane's events (#107): its committed events file, until the lane is sealed; then the
+   * worktree's gitignored session log, which the eval runner already reads. A session after the merge (the retro)
+   * still reads the committed file; it no longer appends to it.
+   */
+  get eventLogPath() {
+    return SEALED_STAGES.includes(laneStoreStage(this)) ? path.join(this.root, SESSION_DIR, 'events.jsonl') : this.eventsPath;
+  }
+
   alwaysAllowed() {
     return laneArtifacts(this.work, this.slug, this.root);
   }
@@ -524,6 +533,31 @@ export function findLane(start) {
     if (parent === d) return null;
     d = parent;
   }
+}
+
+/**
+ * Stages past the lane's evidence point (#107). A lane reaches `retro` only once its branch is merged into the base
+ * (lane.js MOVES), and `lane.js merged`, which makes that move at merge time, refuses while the events or checks file
+ * is uncommitted: at `retro` the evidence is in the base.
+ * `done` comes after `retro` (lane.js STAGES) and is read only from a lane.json the old `lane.js stage` wrote.
+ * `review` and `wait-merge` are not sealed: a review FAIL sends the lane back to build, and those runs are the lane's.
+ */
+export const SEALED_STAGES = ['retro', 'done'];
+
+/**
+ * A lane's stage as `lane.js advance` recorded it in the store (`.claude/session/lanes/<slug>.json` in the main
+ * checkout, the parent of the worktree's git common dir); for a lane started before the store, or a store record that
+ * cannot be read, its lane.json's.
+ */
+export function laneStoreStage(lane) {
+  try {
+    const common = git(['rev-parse', '--path-format=absolute', '--git-common-dir'], lane.root).trim();
+    const rec = plainObject(JSON.parse(fs.readFileSync(path.join(path.dirname(common), SESSION_DIR, 'lanes', `${lane.slug}.json`), 'utf8')));
+    if (typeof rec.stage === 'string') return rec.stage;
+  } catch {
+    // no git, no store record, or an unreadable one: lane.json's stage
+  }
+  return typeof lane.data.stage === 'string' ? lane.data.stage : null;
 }
 
 /** The directory holding .claude/ (lane root if in a lane, else git toplevel, else cwd). */

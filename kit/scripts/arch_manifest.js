@@ -438,6 +438,7 @@ function addWorkflows(g, base, kitDir) {
   const sources = [
     ['template', path.join(kitDir, 'ci', 'github.yml'), 'the project CI that /zi-bootstrap installs (kit/ci/github.yml)'],
     ['kit', path.join(base, '.github', 'workflows', 'kit.yml'), "this repository's own CI (.github/workflows/kit.yml)"],
+    ['kit-eval-main', path.join(base, '.github', 'workflows', 'kit-eval-main.yml'), "this repository's real-agent smoke set on main (.github/workflows/kit-eval-main.yml)"],
   ];
   const out = [];
   for (const [tag, abs, what] of sources) {

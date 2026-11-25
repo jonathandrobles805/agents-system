@@ -82,11 +82,7 @@ export const PY_WS = '\t\n\v\f\r\x1c\x1d\x1e\x1f \x85\xa0\u1680\u2000\u2001\u200
 /** Body of a character class holding Python's \s (use inside [...]). */
 export const PYS_IN = '\\t-\\r\\x1c-\\x20\\x85\\xa0\\u1680\\u2000-\\u200a\\u2028\\u2029\\u202f\\u205f\\u3000';
 const S = `[${PYS_IN}]`; // \s
-const NS = `[^${PYS_IN}]`; // \S
 const D = '\\p{Nd}'; // \d (Unicode decimal digits)
-
-/** The approval line a spec must carry: "Approved by: <name> on <date> at <commit>". */
-export const APPROVAL_RE = new RegExp(`Approved by:${S}*(?!—)${NS}[^\\n]*${S}+on${S}+${D}{4}-${D}{2}-${D}{2}${S}+at${S}+[0-9a-f]{7,40}`, 'u');
 
 /** Python str.strip(). */
 export const pyStrip = (s) => K.stripChars(s, PY_WS);
@@ -397,8 +393,21 @@ export function scope(root, slug) {
   v.run(sp, 'spec');
   for (const x of v.v) problems.push(`spec invalid: ${x}`);
   const status = (specHeader(sp).get('status') ?? '').toLowerCase();
-  if (!['approved', 'building'].includes(status)) problems.push(`spec status is '${specHeader(sp).get('status') ?? ''}', needs 'approved' (a human sets it with the approval line)`);
-  if (!APPROVAL_RE.test(readText(sp))) problems.push('no approval line (Approved by: <name> on <date> at <commit>)');
+  if (!['approved', 'building'].includes(status)) problems.push(`spec status is '${specHeader(sp).get('status') ?? ''}', needs 'approved' (set it on the spec/${slug} PR; merging that PR with kit lane merge is the approval)`);
+  // The planner wrote the spec in the lane; it counts only once the owner merged it as a spec/<slug> PR, and the lane
+  // must build exactly what was merged (hardening plan D1, "Fix and incident lanes").
+  const approval = specApproval(root, slug);
+  if (!approval) problems.push(approvalProblem(root, slug));
+  else {
+    const rel = relativeTo(wt, sp);
+    const merged = specAt(root, approval.commit, rel);
+    const known = spawnSync('git', ['cat-file', '-e', `${approval.commit}^{commit}`], { cwd: root }).status === 0;
+    if (!known) problems.push(`the approved merge ${approval.commit.slice(0, 7)} is not in this clone yet; run git fetch origin, then kit lane scope ${slug} again`);
+    else if (merged === null) problems.push(`the recorded approval of ${slug} (merge ${approval.commit.slice(0, 7)}) has no ${rel}; merge the spec PR that carries it with kit lane merge`);
+    else if (merged !== readText(sp)) {
+      problems.push(`the lane's ${rel} differs from the spec you approved (merged as ${approval.commit.slice(0, 7)}); take the approved one (git -C ${wt} checkout ${approval.commit.slice(0, 7)} -- ${rel}), or approve the change through a new spec/${slug} PR`);
+    }
+  }
   const [, change, create] = K.specFileLists(sp);
   const mine = new Set([...change, ...create]);
   if (!mine.size) problems.push('spec lists no files to change or create');
@@ -516,6 +525,69 @@ export function evidence(root, slug) {
   return [];
 }
 
+// ---------------------------------------------------------------------------
+// The owner's spec approval (hardening plan Step 2, D1 "The approval line")
+// ---------------------------------------------------------------------------
+
+/**
+ * The owner approves a spec by saying yes to merging its spec/<slug> PR: `kit lane merge`, which Claude Code asks
+ * about every time. lane.js merge then records that yes in the lane store: who, when, the PR, its head and the commit
+ * the merge made on the base. That record is the only approval lane.js accepts. An `Approved by:` line in the spec is
+ * not read, so an agent that writes one approves nothing. lane.js start keeps the record when it starts the lane.
+ */
+export function recordSpecApproval(root, slug, approval) {
+  const p = storePath(root, slug);
+  const prev = K.isFile(p) ? asDict(JSON.parse(readText(p))) : {};
+  const rec = { version: 1, slug, ...prev, spec_approval: { ...approval } };
+  fs.mkdirSync(path.dirname(p), { recursive: true });
+  const tmp = `${p}.${process.pid}.tmp`;
+  writeText(tmp, K.jsonDumps(rec, { indent: 2 }) + '\n');
+  fs.renameSync(tmp, p);
+  return rec.spec_approval;
+}
+
+/** The recorded approval of the slug's spec ({ by, at, pr, head, commit }), or null when there is none. */
+export function specApproval(root, slug) {
+  const a = readStore(root, slug)?.spec_approval;
+  return a && typeof a === 'object' && typeof a.commit === 'string' && a.commit ? a : null;
+}
+
+/** Why the slug's spec counts as not approved, or null when its approval is recorded. */
+export function approvalProblem(root, slug) {
+  if (specApproval(root, slug)) return null;
+  return `no recorded approval for ${slug}: merge the spec PR first, with kit lane merge --pr <the spec/${slug} PR> --by <your name>; ` +
+    "it asks for your yes and records it. An 'Approved by:' line in the spec does not count. If that PR is already merged, run the same command: it records the merge.";
+}
+
+/** The spec's text at a commit, or null when the commit does not have it. */
+function specAt(root, commit, rel) {
+  try {
+    return K.git(['show', `${commit}:${rel}`], root);
+  } catch (e) {
+    if (!isCalledProcessError(e)) throw e;
+    return null;
+  }
+}
+
+/**
+ * lane.js start, for a lane that builds from a spec: the spec must be on the base the lane starts from, say it is
+ * approved, and the recorded approval's merge must be in that base. [] when all hold, else what to do.
+ */
+export function approvedOnBase(root, slug, rel, startPoint, baseCommit) {
+  const text = specAt(root, baseCommit, rel);
+  if (text === null) return [`spec ${rel} is not on ${startPoint}: merge the spec PR first (kit lane merge --pr <the spec/${slug} PR> --by <your name>), then start the lane again`];
+  const status = K.headerFields(K.stripHtmlComments(K.splitlines(text))).get('status')?.[1] ?? '';
+  if (!['approved', 'building', 'escalated'].includes(status.toLowerCase())) {
+    return [`the spec on ${startPoint} says Status: ${status || '(none)'}; it is approved when a spec/${slug} PR that sets Status: approved is merged with kit lane merge. Do that, then start the lane again.`];
+  }
+  const a = specApproval(root, slug);
+  if (!a) return [approvalProblem(root, slug)];
+  if (spawnSync('git', ['merge-base', '--is-ancestor', a.commit, baseCommit], { cwd: root }).status !== 0) {
+    return [`the recorded approval of ${slug} (${a.pr ? `PR #${a.pr}, ` : ''}merged as ${a.commit.slice(0, 7)}) is not in ${startPoint}; if that merge was reverted, merge a new spec/${slug} PR with kit lane merge, then start the lane again`];
+  }
+  return [];
+}
+
 export function precheck(root, slug) {
   const problems = [];
   const sp = specPath(root, slug);
@@ -526,10 +598,10 @@ export function precheck(root, slug) {
   const hdr = specHeader(sp);
   const status = (hdr.get('status') ?? '').toLowerCase();
   if (!['approved', 'building', 'escalated'].includes(status)) {
-    problems.push(`spec status is '${hdr.get('status') ?? ''}', needs 'approved' (a human sets it with the approval line)`);
+    problems.push(`spec status is '${hdr.get('status') ?? ''}', needs 'approved' (set it on the spec/${slug} PR; merging that PR with kit lane merge is the approval)`);
   }
-  const text = readText(sp);
-  if (!APPROVAL_RE.test(text)) problems.push('no approval line (Approved by: <name> on <date> at <commit>)');
+  const unapproved = approvalProblem(root, slug);
+  if (unapproved) problems.push(unapproved);
   const [n, limit, lanes] = wip(root);
   if (status === 'approved' && n >= limit) {
     problems.push(`WIP limit reached: ${n}/${limit} in flight (${lanes.join(', ')}). Merge or escalate one first.`);
@@ -614,6 +686,14 @@ export function start(root, slug, base) {
     if (!isCalledProcessError(e)) throw e;
     return refuse([`base '${startPoint}' does not exist`]);
   }
+  // A lane builds only a spec the owner approved by merging it (hardening plan D1): on the base it starts from, approved,
+  // with the recorded merge in that base. A fix/incident lane has no spec yet; lane.js scope checks it later.
+  if (!reproFirst) {
+    const unapproved = approvedOnBase(root, slug, `${work}/${slug}.md`, startPoint, baseCommit);
+    if (unapproved.length) return refuse(unapproved);
+  }
+  // kept on the lane's new record; a fix/incident lane has no approved spec yet, so an older record's approval is dropped
+  const approval = reproFirst ? null : specApproval(root, slug);
   fs.mkdirSync(path.dirname(wt), { recursive: true });
   const wtArgs = ['worktree', 'add', '-q', '-b', branch, wt, baseCommit];
   try {
@@ -668,6 +748,7 @@ export function start(root, slug, base) {
   };
   writeText(pjoin(wt, '.claude', 'lane.json'), K.jsonDumps(lane, { indent: 2 }) + '\n');
   recordMove(root, slug, wt, null, lane.stage, { mirror: false }); // a new record: the lane's first stage
+  if (approval) recordSpecApproval(root, slug, approval); // the new record keeps the owner's recorded yes
   K.appendEvent(pjoin(sessionDir, 'events.jsonl'), { event: 'sandbox', runtime: sandbox.runtime, state: sandbox.state, summary: sandbox.state === 'degraded' ? `DEGRADED: ${sandbox.how}` : `${sandbox.runtime}: ${sandbox.how}` });
   if (highRisk && sandbox.runtime !== 'container') {
     K.appendEvent(pjoin(sessionDir, 'events.jsonl'), { event: 'waiver', what: 'high-risk without container', by: kget(waiver, 'by', ''), reason: kget(waiver, 'reason', ''), summary: `high-risk lane without container, waived by ${kget(waiver, 'by', '')}` });
@@ -786,7 +867,8 @@ export function readStore(root, slug) {
 /** The lane's stage: the store's; for a lane started before the store, its lane.json's until its first move. */
 export function laneStage(root, slug) {
   const rec = readStore(root, slug);
-  if (rec) return kget(rec, 'stage', null);
+  // a record may hold only the spec approval (merged before the lane, or for a lane started before the store)
+  if (rec && Object.hasOwn(rec, 'stage')) return kget(rec, 'stage', null);
   const lj = pjoin(lanesDir(root), slug, '.claude', 'lane.json');
   return K.isFile(lj) ? kget(asDict(JSON.parse(readText(lj))), 'stage', null) : null;
 }
@@ -960,7 +1042,7 @@ function justify(root, slug, wt, why) {
   }
   if (why === 'scoped') {
     const sp = pjoin(wt, K.findLane(wt).work, `${slug}.md`);
-    if (!K.isFile(sp) || !APPROVAL_RE.test(readText(sp))) return ["the lane's spec is not approved yet"];
+    if (!K.isFile(sp) || !specApproval(root, slug)) return ["the lane's spec is not approved yet: its spec/<slug> PR has not been merged with kit lane merge"];
     return laneRuns(wt).criteria ? [] : ['progress.md has no done-criteria rows; kit lane scope copies them from the approved spec'];
   }
   if (why === 'merged') {
@@ -1362,14 +1444,17 @@ export function inLanePlanning(root, slug) {
   const lj = pjoin(wt, '.claude', 'lane.json');
   if (!K.isFile(lj)) return null;
   const sp = pjoin(wt, K.findLane(wt).work, `${slug}.md`);
+  // a lane past scope (test, build, review, retro) was scoped from an approved spec already
+  const stage = laneStage(root, slug);
+  if (stage !== null && !['reproduce', 'plan', 'approve'].includes(String(stage))) return null;
   if (!K.isFile(sp)) return { slug, stage: 'plan', reason: 'the lane has no spec yet' };
-  if (!APPROVAL_RE.test(readText(sp))) {
+  // approved means the owner merged its spec/<slug> PR (kit lane merge records it); an approval line does not count
+  if (!specApproval(root, slug)) {
     const status = (specHeader(sp).get('status') ?? '').toLowerCase();
-    if (status === 'waiting-approval') return { slug, stage: 'approve', reason: 'spec waits for the human', needs_human: true };
+    if (['waiting-approval', 'approved'].includes(status)) return { slug, stage: 'approve', reason: 'spec waits for the human: its spec/<slug> PR is not merged yet', needs_human: true };
     return { slug, stage: 'plan', reason: `spec status '${status}' is not waiting-approval; finish planning` };
   }
-  if (['reproduce', 'plan', 'approve'].includes(String(laneStage(root, slug) ?? ''))) return { slug, stage: 'scope', reason: 'spec approved; kit lane scope copies its criteria and moves the lane to test' };
-  return null;
+  return { slug, stage: 'scope', reason: 'spec approved; kit lane scope copies its criteria and moves the lane to test' };
 }
 
 async function nextStepFeature(root, slug, { KS, kit, rows, row, g }) {
@@ -1440,8 +1525,8 @@ export function templateText(name, { slug = null, date = todayIso(), commit = nu
   if (!TEMPLATE_NAMES.includes(name)) throw new Error(`unknown template '${name}' (one of ${TEMPLATE_NAMES.join(', ')})`);
   if (slug !== null && !(/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(slug) && slug.length <= 40)) throw new Error(`slug '${slug}' is not kebab-case of at most 40 characters`);
   // filled on the header lines only (`- Slug:`, `- Date:`, `- Commit:`, the lesson's `## {{date}} — …` heading). A
-  // `… by:` line is the person's to write with the date and commit of their own decision, never the draft's: the
-  // spec's `Approved by: {{name}} on {{date}} at {{commit}}`, the goal's `- Agreed by: … on {{date}}`
+  // `… by:` line is the person's to write with the date of their own decision, never the draft's: the goal's
+  // `- Agreed by: … on {{date}}`. The spec's `Approved by:` line is written by nobody (kit lane merge records it)
   const fill = (line) => {
     if (!(/^- [A-Z][A-Za-z ]*:/.test(line) || /^## \{\{date\}\} /.test(line)) || /\bby:/i.test(line)) return line;
     let l = line;
@@ -1744,7 +1829,24 @@ export async function main(argv = process.argv.slice(2)) {
         // its head branch is read from GitHub, whether the PR came from --pr or the slug's ROADMAP row. A wt/<slug>
         // head is that lane, and a different slug on the command line is refused; any other head (spec/, goal/) is
         // not a lane and needs no sign-off.
-        const m = /^wt\/(.+)$/.exec(G.prInfo(root, pr).headRefName ?? '');
+        const info = G.prInfo(root, pr);
+        // a spec/<slug> PR: merging it is the owner's approval of the spec, and lane.js records that yes (hardening
+        // plan D1). One already merged (from GitHub's page) is recorded too, as this command still asks the owner.
+        const sm = /^spec\/(.+)$/.exec(info.headRefName ?? '');
+        if (sm) {
+          if (a.slug && sm[1] !== a.slug) return refuse([`PR ${pr} is the spec of '${sm[1]}', not '${a.slug}'; pass its own slug`]);
+          if (!a.by || !String(a.by).trim()) return refuse(['--by <name> is required: the human who decided to merge']);
+          if (info.state !== 'MERGED') {
+            const code = G.mergeCommand(root, pr, { ...opts, by: a.by });
+            if (code !== 0) return code;
+          }
+          const done = JSON.parse(G.gh(root, ['pr', 'view', String(pr), '--json', 'number,state,headRefOid,mergeCommit,mergedAt']));
+          if (done.state !== 'MERGED' || !done.mergeCommit?.oid) return refuse([`PR #${done.number ?? pr} is not merged on GitHub, so no approval of ${sm[1]} is recorded`]);
+          const ap = recordSpecApproval(root, sm[1], { by: String(a.by).trim(), at: K.isoSeconds(), merged_at: done.mergedAt ?? null, pr: done.number ?? info.number, head: done.headRefOid ?? info.headRefOid, commit: done.mergeCommit.oid });
+          process.stdout.write(`spec ${sm[1]}: approval by ${ap.by} recorded (PR #${ap.pr}, merged as ${ap.commit.slice(0, 7)})\n`);
+          return 0;
+        }
+        const m = /^wt\/(.+)$/.exec(info.headRefName ?? '');
         lane = m?.[1] ?? null;
         if (m) {
           if (a.slug && m[1] !== a.slug) return refuse([`PR ${pr} is the lane '${m[1]}', not '${a.slug}'; pass the lane's own slug`]);
