@@ -82,3 +82,20 @@ test('1a: a half-written line is not consumed; once finished it arrives', async 
   assert.equal(feed.events().filter(is('test_half_finished')).length, 1);
 });
 
+test('1b: a rewritten (shorter) file is noticed once, and the line appended after it arrives', async (t) => {
+  const { root } = project(t);
+  const wt = startLane(root);
+  const file = path.join(wt, 'docs', 'specs', 'refund-route.events.jsonl');
+  const feed = await liveFeed(t, [root]);
+  fs.appendFileSync(file, line('test_before_1', { pad: 'x'.repeat(200) }) + line('test_before_2', { pad: 'y'.repeat(200) }));
+  assert.ok(await feed.waitFor(is('test_before_2')), 'the lines before the rewrite arrive');
+  fs.writeFileSync(file, line('test_rewritten')); // the file is rewritten, shorter than the offset the server holds
+  const notice = await feed.waitFor(is('events_file_rewritten'));
+  assert.ok(notice, 'the rewrite is announced, not silent');
+  assert.equal(notice.lane, 'refund-route');
+  fs.appendFileSync(file, line('test_after_rewrite')); // a hook appends
+  assert.ok(await feed.waitFor(is('test_after_rewrite')), 'the line appended after the rewrite never arrived');
+  await new Promise((r) => setTimeout(r, 400));
+  assert.equal(feed.events().filter(is('events_file_rewritten')).length, 1, 'the notice is sent once');
+});
+

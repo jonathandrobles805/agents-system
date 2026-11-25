@@ -140,16 +140,22 @@ export function fingerprint(files) {
 }
 
 /**
- * New events of an events.jsonl since byte `offset`: [events, newOffset]. Only complete lines are consumed: the offset
- * stops after the last newline, so a line a writer has half written is read whole on a later tick. Unparseable
- * complete lines are skipped.
+ * New events of an events.jsonl since byte `offset`: [events, newOffset, rewritten]. Only complete lines are consumed:
+ * the offset stops after the last newline, so a line a writer has half written is read whole on a later tick.
+ * Unparseable complete lines are skipped. A file smaller than `offset` was rewritten (or replaced) under us: nothing is
+ * read from it, the offset restarts after its last complete line and `rewritten` is true, so the caller can say so.
  */
 export function tailEvents(p, offset) {
-  if (!K.isFile(p)) return [[], 0];
+  if (!K.isFile(p)) return [[], 0, false];
   const fd = fs.openSync(p, 'r');
   let chunk;
+  let rewritten = false;
   try {
     const size = fs.fstatSync(fd).size;
+    if (size < offset) {
+      rewritten = true;
+      offset = 0; // the whole file is the "new" part; only its end is kept, below
+    }
     const len = Math.max(0, size - offset);
     chunk = Buffer.alloc(len);
     let got = 0;
@@ -163,6 +169,7 @@ export function tailEvents(p, offset) {
     fs.closeSync(fd);
   }
   const end = chunk.lastIndexOf(0x0a) + 1; // 0 when no newline yet: nothing complete to read
+  if (rewritten) return [[], offset + end, true];
   const out = [];
   for (const line of K.splitlines(chunk.subarray(0, end).toString('utf8'))) {
     try {
@@ -171,7 +178,7 @@ export function tailEvents(p, offset) {
       // not JSON: skip
     }
   }
-  return [out, offset + end];
+  return [out, offset + end, false];
 }
 
 const laneEventsPath = (l) => path.join(l.worktree, 'docs', 'specs', `${l.slug}.events.jsonl`);
@@ -192,11 +199,13 @@ function watchTick(state) {
   for (const s of state.status) {
     for (const l of s.lanes) {
       if (!l.worktree) continue;
-      const [fresh, off] = tailEvents(laneEventsPath(l), state.eventOffsets.get(l.slug) ?? 0);
+      const [fresh, off, rewritten] = tailEvents(laneEventsPath(l), state.eventOffsets.get(l.slug) ?? 0);
       state.eventOffsets.set(l.slug, off);
-      if (fresh.length) {
-        for (const e of fresh) state.broadcast({ type: 'event', lane: l.slug, project: s.project, root: s.root, data: e });
+      const send = (data) => state.broadcast({ type: 'event', lane: l.slug, project: s.project, root: s.root, data });
+      if (rewritten) {
+        send({ ts: new Date().toISOString(), event: 'events_file_rewritten', file: path.relative(l.worktree, laneEventsPath(l)), summary: `${path.basename(laneEventsPath(l))} was rewritten; events written before the rewrite may be missing here` });
       }
+      for (const e of fresh) send(e);
     }
   }
 }
