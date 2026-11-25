@@ -936,6 +936,7 @@ export class Bootstrap {
       high_risk_paths: get(ans, 'high_risk_paths', get(existing, 'high_risk_paths', K.DEFAULT_HIGH_RISK_PATHS)),
       secret_patterns: get(existing, 'secret_patterns', []),
       budgets: get(existing, 'budgets', DEFAULT_BUDGETS),
+      max_rounds: get(existing, 'max_rounds', 3), // review FAIL rounds before lane.js advance parks the lane (hardening plan Step 2)
       mutation_threshold: get(existing, 'mutation_threshold', 70),
       mutation_blocking_after_features: get(existing, 'mutation_blocking_after_features', 2),
       mutation_in_ci: get(existing, 'mutation_in_ci', 'manual'),

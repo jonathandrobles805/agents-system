@@ -273,11 +273,10 @@ export function main(argv) {
     const r2 = hook('hook_guard_read.js', { ...base, hook_event_name: 'PreToolUse', tool_name: 'Read', tool_input: { file_path: 'deploy/server.pem' } });
     record(15, 'agent reads .env or a key file', 'guard-read (PreToolUse) + permissions.deny', r.returncode === 2 && r2.returncode === 2, r.stderr);
 
-    // 16 budget exceeded
-    const lj = path.join(wt, '.claude', 'lane.json');
-    const d = JSON.parse(read(lj));
-    d.budget = { tool_calls: 2, hours: 100 };
-    write(lj, K.jsonDumps(d));
+    // 16 budget exceeded. The stage's budget is the lane store's (lane.js advance writes it there from kit.json budgets;
+    //    hardening plan Step 2), so a low one is planted in the store, not in the lane's own lane.json.
+    const sp16 = path.join(root, '.claude', 'session', 'lanes', 'refund-route.json');
+    write(sp16, K.jsonDumps({ ...JSON.parse(read(sp16)), budget: { tool_calls: 2, hours: 100 } }));
     for (let i = 0; i < 3; i++) {
       r = hook('hook_budget_check.js', { ...base, hook_event_name: 'PostToolUse', tool_name: 'Read', tool_input: { file_path: 'x' } });
     }
@@ -946,6 +945,40 @@ process.stderr.write('fake gh 57: unexpected ' + a.join(' ')); process.exit(9);
     const p60 = probe58([o60('http://127.0.0.1:{port}'), o60('http://localhost:{port}'), o60(null), o60('https://evil.example'), o60('null')]);
     const [own60a, own60b, none60, evil60, null60] = p60.statuses;
     record(60, "a cross-site POST to the local dashboard (Origin of another site) is accepted", 'dashboard server originAllowed: a POST with an Origin other than http://127.0.0.1:<port> / http://localhost:<port> gets 403', own60a === 404 && own60b === 404 && none60 === 404 && evil60 === 403 && null60 === 403, `own origins -> ${own60a},${own60b}; no Origin -> ${none60}; evil.example -> ${evil60}; null -> ${null60} ${p60.stderr.trim().split('\n')[0]}`);
+
+    // 62 a lane loops review FAIL → build past the round limit (hardening plan Step 2, D2; 0016 E.1 Add 6), and
+    //    rewrites its own lane.json to look fresh -> advance counts each review → build move in the store, parks the
+    //    lane when the move would start round 4 of 3, and refuses further build moves until a named human (--by)
+    const r62 = path.join(tmp, 'node-api-62');
+    F.nodeApi(r62);
+    run('bootstrap.js', ['--repo', r62]);
+    write(path.join(r62, 'ROADMAP.md'), read(path.join(r62, 'ROADMAP.md')).replaceAll('| TODO(bootstrap: ROADMAP.md — feature) | TODO(bootstrap: ROADMAP.md — slug) | M1 | queued | — | — | — |', '| Refund route | refund-route | M1 | queued | — | — | — |'));
+    const kj62 = path.join(r62, '.claude', 'kit.json');
+    write(kj62, K.jsonDumps({ ...JSON.parse(read(kj62)), local_only: true }));
+    const c62 = F.commitAll(r62, 'bootstrap');
+    write(path.join(r62, 'docs', 'specs', 'refund-route.md'), SPEC({ commit: c62.slice(0, 7) }));
+    F.commitAll(r62, 'spec');
+    F.approveSpec(r62, 'refund-route');
+    const wt62 = JSON.parse(run('lane.js', ['start', 'refund-route', '--repo', r62]).stdout || '{}').worktree;
+    run('lane.js', ['advance', 'refund-route', 'test', '--repo', r62]);
+    write(path.join(wt62, '.claude', 'session', 'refund-route.log'), '=== 2026-11-11T10:00:00 test: npx vitest run -> exit 1\nnot ok 1 - exposes refund\n\n=== 2026-11-11T10:05:00 test: npx vitest run -> exit 0\nok 1 - exposes refund\n\n');
+    const prog62 = path.join(wt62, 'docs', 'specs', 'refund-route.progress.md');
+    write(prog62, read(prog62).replaceAll('| — | — |', '| refund-route.log#1 | refund-route.log#4 |'));
+    run('lane.js', ['advance', 'refund-route', 'build', '--repo', r62]);
+    const loops62 = [];
+    for (let i = 0; i < 3; i++) {
+      run('lane.js', ['stage', 'refund-route', 'review', '--repo', r62]);
+      loops62.push(run('lane.js', ['stage', 'refund-route', 'build', '--repo', r62]));
+    }
+    const lf62 = path.join(wt62, '.claude', 'lane.json');
+    write(lf62, K.jsonDumps({ ...JSON.parse(read(lf62)), stage: 'build', started: K.isoSeconds() }, { indent: 2 }));
+    const again62 = run('lane.js', ['advance', 'refund-route', 'review', '--repo', r62]);
+    const nobody62 = run('lane.js', ['advance', 'refund-route', 'build', '--repo', r62]);
+    const store62 = path.join(r62, '.claude', 'session', 'lanes', 'refund-route.json');
+    const rec62 = fs.existsSync(store62) ? JSON.parse(read(store62)) : {};
+    const caught62 = loops62[0].returncode === 0 && loops62[1].returncode === 0 && loops62[2].returncode === 2 && /the lane is parked/.test(loops62[2].stderr) &&
+      rec62.stage === 'parked' && /round 4 would pass the limit of 3/.test(rec62.parked?.reason ?? '') && again62.returncode === 2 && nobody62.returncode === 2 && /--by <name>/.test(nobody62.stderr);
+    record(62, 'a lane loops review FAIL → build past the round limit, rewriting its own lane.json to look fresh', 'lane.js advance (and stage, its old name) counts each review → build move in the lane store and parks the lane past kit.json max_rounds; only a named human (--by) lets it go on (hardening plan Step 2)', caught62, `FAIL loops -> exits ${loops62.map((r) => r.returncode).join(',')} (${(loops62[2].stderr || '').trim().split('\n')[0]}); store stage ${rec62.stage}, ${rec62.failed_rounds ?? 0} failed rounds; after rewriting lane.json: review -> exit ${again62.returncode}, build without --by -> exit ${nobody62.returncode}`);
   } finally {
     if (a.keep) process.stderr.write(`fixtures kept at ${tmp}\n`);
     else fs.rmSync(tmp, { recursive: true, force: true });

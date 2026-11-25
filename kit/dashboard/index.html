@@ -602,6 +602,7 @@ function renderProject(p) {
       ${pill(l.position, POS_CLASS[l.position] || 'agent')}
       ${l.worktree ? pill(`${l.behind_base} behind`, l.behind_base > 0 ? 'bad' : 'neutral') : ''}
       ${l.progress.criteria ? pill(`${l.progress.green}/${l.progress.criteria} green`, l.progress.green === l.progress.criteria ? 'ok' : 'neutral') : ''}
+      ${l.rounds ? pill(l.rounds.parked ? `parked · round ${l.rounds.round} of ${l.rounds.limit}` : `round ${l.rounds.round} of ${l.rounds.limit}`, l.rounds.parked ? 'bad' : 'neutral') : ''}
       ${l.events.blocked ? pill(`${l.events.blocked} blocked`, 'bad') : ''}
       ${l.risk === 'high-risk' ? pill('high-risk', 'bad') : ''}</span></div>`).join('') : '<div class="empty">No active lanes.</div>';
   const d = p.debt, r = p.research;
@@ -642,11 +643,13 @@ function renderLane(p, l) {
       <div class="m"><div class="n">${ev.blocked}</div><div class="t">edits blocked by hooks</div></div>
       <div class="m"><div class="n">${ev.tests_green} <span class="muted">/ ${ev.tests_red} red</span></div><div class="t">test runs</div></div>
       <div class="m"><div class="n">${ev.stop_refused}</div><div class="t">stop refused</div></div>
+      <div class="m"><div class="n">${l.rounds ? `${l.rounds.round} <span class="muted">/ ${l.rounds.limit}</span>` : '—'}</div><div class="t">round${l.rounds?.parked ? ' · parked' : ''}</div></div>
+      <div class="m"><div class="n">${l.elapsed_hours == null ? '—' : `${l.elapsed_hours.toFixed(1)}h`}</div><div class="t">wall time</div></div>
     </div>
     <table>
       <tr><td style="width:150px">Spec</td><td>${esc(l.spec || '—')} ${l.approved ? pill('approved', 'ok') : pill('not approved', 'you-p')} ${l.risk === 'high-risk' ? pill('high-risk', 'bad') : ''}</td></tr>
       <tr><td>Worktree</td><td>${esc(l.worktree || '—')}${l.head ? ` <span class="muted">@ ${esc(l.head)}</span>` : ''}</td></tr>
-      ${crit}${review}${escal}${last}
+      ${crit}${review}${escal}${l.rounds?.parked ? `<tr><td class="kr">Parked</td><td>${esc(l.rounds.parked.reason)}</td></tr>` : ''}${last}
       <tr><td>Current step</td><td>${esc(pr.current_step || '—')}</td></tr>
     </table>
     <div class="lbl" style="margin-top:12px">Live events · written by hooks on every tool call</div>

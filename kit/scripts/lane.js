@@ -6,7 +6,8 @@
 //   lane.js check <slug> <criterion> --repo R -- <command>   run a criterion's command in the lane, log it, print the log ref
 //   lane.js start <slug> --repo R [--base B]  precheck, then worktree ../<repo>-lanes/<slug> on branch wt/<slug> from fresh base; lane.json; progress skeleton
 //   lane.js advance <slug> <stage> --repo R   move the lane's stage in the store, if the table allows the move and its files justify it
-//   lane.js stage <slug> <stage> --repo R     the old name of advance
+//   lane.js stage <slug> <stage> --repo R     the old name of advance, the same call
+//   lane.js advance <slug> build --by NAME    let a lane parked past the round limit (kit.json max_rounds) go on for one more round
 //   lane.js launch <slug> --repo R [--exec]   host side: the command that starts the lane's headless session inside its sandbox (KIT-SPEC 10.9)
 //   lane.js resume <slug> --repo R            host side: next step from files alone, logged, plus the launch command (KIT-SPEC 10.11)
 //   lane.js stop --repo R --by N --reason T    kill switch: every lane refuses transitions and mutations (KIT-SPEC 10.13)
@@ -47,7 +48,8 @@ const DOC = `lane: the mechanical half of the pipeline commands. Agents do the t
   lane.js precheck <slug> --repo R          may /zi-implement start? (spec valid + approved, no open questions, WIP, no file overlap)
   lane.js start <slug> --repo R [--base B]  precheck, then worktree ../<repo>-lanes/<slug> on branch wt/<slug> from fresh base; lane.json; progress skeleton
   lane.js advance <slug> <stage> --repo R   move the lane's stage in the store, if the table allows the move and its files justify it
-  lane.js stage <slug> <stage> --repo R     the old name of advance
+  lane.js stage <slug> <stage> --repo R     the old name of advance, the same call
+  lane.js advance <slug> build --by NAME    let a lane parked past the round limit (kit.json max_rounds) go on for one more round
   lane.js wip --repo R                      active lanes vs WIP limit
   lane.js unknowns <draft spec> --repo R    exit 0 none / 3 resolve (1..3, one researcher each) / 2 research insufficient (>3)
   lane.js roadmap-set <slug> <status> --repo R
@@ -882,12 +884,15 @@ export function laneStage(root, slug) {
  *   green   every criterion cites both runs it needs: red as above, and a logged run of its test that passed
  *   merged  the lane branch is merged into the base (lane.js merged makes this move). A merge is a fact in git, gated
  *           by GitHub and the owner's yes, so it is recorded from whatever stage the lane had reached.
+ *   human   a named human (--by) lets a parked lane go on. A lane is parked by advance itself, never moved there: a
+ *           review → build move that would start a round past the limit parks it (moveLane).
  */
 export const MOVES = {
   reproduce: { reproduce: null, test: 'scoped', retro: 'merged' },
   test: { test: null, build: 'red', retro: 'merged' },
   build: { build: null, test: null, review: 'green', retro: 'merged' },
   review: { review: null, build: null, retro: 'merged' },
+  parked: { build: 'human', retro: 'merged' },
   retro: { retro: null },
 };
 
@@ -1034,7 +1039,8 @@ export function notMerged(root, slug) {
 }
 
 /** What is missing for a move that needs `why` (see MOVES); [] when nothing is. */
-function justify(root, slug, wt, why) {
+function justify(root, slug, wt, why, { by = null } = {}) {
+  if (why === 'human') return by && pyStrip(String(by)) ? [] : [`the lane is parked; only a named human lets it go on: kit lane advance ${slug} build --by <name>`];
   if (why === 'red' || why === 'green') {
     const runs = laneRuns(wt);
     if (!runs.criteria) return ['progress.md has no done-criteria rows'];
@@ -1057,7 +1063,7 @@ function justify(root, slug, wt, why) {
  * the stage into the lane's lane.json, which the in-lane hooks read (budget, done-check), with a fresh clock and that
  * stage's budget, as lane.js stage did.
  */
-function recordMove(root, slug, wt, from, to, { mirror = true } = {}) {
+function recordMove(root, slug, wt, from, to, { mirror = true, fields = {} } = {}) {
   const now = K.isoSeconds();
   let commit = null;
   try {
@@ -1068,39 +1074,103 @@ function recordMove(root, slug, wt, from, to, { mirror = true } = {}) {
   const p = storePath(root, slug);
   const prev = from !== null && K.isFile(p) ? asDict(JSON.parse(readText(p))) : {};
   const moves = Array.isArray(prev.moves) ? prev.moves : [];
-  const rec = { version: 1, slug, ...prev, stage: to, updated: now, moves: [...moves, { from, to, at: now, commit }] };
+  const lf = pjoin(wt, '.claude', 'lane.json');
+  const data = K.isFile(lf) ? asDict(JSON.parse(readText(lf))) : {};
+  // #41: a human's raise (budget_override.<stage>) outlives the stage change; it used to be overwritten by the default.
+  const budget = { ...asDict(kget(kget(asDict(K.loadKitJson(root)), 'budgets', {}), to, {})), ...asDict(kget(asDict(kget(data, 'budget_override', {})), to, {})) };
+  // wall time: `started` is the lane's first move (kept by every later move); each move has its `at`
+  const started = typeof prev.started === 'string' ? prev.started : moves[0]?.at ?? now;
+  const rec = { version: 1, slug, ...prev, started, ...fields, stage: to, updated: now, budget, moves: [...moves, { from, to, at: now, commit }] };
+  for (const [k, v] of Object.entries(rec)) if (v === undefined) delete rec[k];
   fs.mkdirSync(path.dirname(p), { recursive: true });
   const tmp = `${p}.${process.pid}.tmp`;
   writeText(tmp, K.jsonDumps(rec, { indent: 2 }) + '\n');
   fs.renameSync(tmp, p);
-  const lf = pjoin(wt, '.claude', 'lane.json');
   if (!mirror || !K.isFile(lf)) return;
-  const data = asDict(JSON.parse(readText(lf)));
+  // a copy for the in-lane hooks that still read lane.json; the budget hook reads the store
   data.stage = to;
   data.started = now;
-  // #41: a human's raise (budget_override.<stage>) outlives the stage change; it used to be overwritten by the default.
-  data.budget = { ...asDict(kget(kget(asDict(K.loadKitJson(root)), 'budgets', {}), to, {})), ...asDict(kget(asDict(kget(data, 'budget_override', {})), to, {})) };
+  data.budget = budget;
   writeText(lf, K.jsonDumps(data, { indent: 2 }) + '\n');
 }
 
-/** Move a lane to `to` when MOVES allows it and the lane's files justify it. [] when moved, else why not. */
-export function moveLane(root, slug, to) {
+// ---------------------------------------------------------------------------
+// Rounds (hardening plan Step 2, D2; 0016 E.1 Add 6 and E.8 item 8)
+// ---------------------------------------------------------------------------
+
+/** The round limit when kit.json sets none: three review FAIL rounds, then the owner decides (/zi-review). */
+export const DEFAULT_MAX_ROUNDS = 3;
+
+/** kit.json `max_rounds` in the main checkout (a whole number from 1), else DEFAULT_MAX_ROUNDS. */
+export function maxRounds(root) {
+  const n = kget(asDict(K.loadKitJson(root)), 'max_rounds', DEFAULT_MAX_ROUNDS);
+  return Number.isInteger(n) && n >= 1 ? n : DEFAULT_MAX_ROUNDS;
+}
+
+/**
+ * A lane's rounds, from its store record alone. A round is one build, gate and review cycle; a review FAIL ends it,
+ * and advance counts it on the review → build move that sends the work back (`failed_rounds`). The lane is in round
+ * failed + 1 of `limit`: kit.json max_rounds, or the `round_limit` a named human set when the lane was let go on
+ * after it parked. A record without the fields (a lane started before them) counts from 0.
+ */
+export function laneRounds(root, rec) {
+  const r = asDict(rec ?? {});
+  const failed = Number.isInteger(r.failed_rounds) && r.failed_rounds >= 0 ? r.failed_rounds : 0;
+  const limit = Number.isInteger(r.round_limit) && r.round_limit >= 1 ? r.round_limit : maxRounds(root);
+  const parked = r.stage === 'parked' ? asDict(kget(r, 'parked', {})) : null;
+  return { round: parked ? failed : failed + 1, limit, failed, parked: parked ? { reason: kget(parked, 'reason', 'parked'), at: kget(parked, 'at', null) } : null };
+}
+
+/** What a named human runs to let a parked lane go on, one more round. */
+export const unparkHint = (slug) => `a human reads the review and decides: kit lane advance ${slug} build --by <name> allows one more round, or kit lane finish ${slug} ends the lane`;
+
+/**
+ * Move a lane to `to` when MOVES allows it and the lane's files justify it. [] when moved, else why not. A review →
+ * build move counts a FAIL round; when it would start a round past the limit the lane is parked instead (stage
+ * `parked`, with the reason) and the move is refused. From `parked` only a named human (`by`) moves it back to build,
+ * for one more round.
+ */
+export function moveLane(root, slug, to, { by = null } = {}) {
   if (isStopped(root)) return ['kill switch set; kit lane resume-all --by <name> first'];
   const wt = pjoin(lanesDir(root), slug);
   if (!K.isFile(pjoin(wt, '.claude', 'lane.json'))) return [`no lane for ${slug}; run kit lane start ${slug} first`];
   const from = laneStage(root, slug);
   if (!Object.hasOwn(MOVES, from)) return [`${slug} is at '${from}', which is not a lane stage (${Object.keys(MOVES).join(', ')})`];
   const allowed = MOVES[from];
-  if (!Object.hasOwn(allowed, to)) return [`${slug}: ${from} → ${to} is not an allowed move; from ${from} a lane may go to ${Object.keys(allowed).join(', ')}`];
-  const missing = justify(root, slug, wt, allowed[to]);
+  const rec = readStore(root, slug);
+  const rounds = laneRounds(root, rec);
+  if (!Object.hasOwn(allowed, to)) {
+    const parked = from === 'parked' ? [`  parked: ${rounds.parked?.reason ?? 'past the round limit'}`, `  ${unparkHint(slug)}`] : [];
+    return [`${slug}: ${from} → ${to} is not an allowed move; from ${from} a lane may go to ${Object.keys(allowed).join(', ')}`, ...parked];
+  }
+  const missing = justify(root, slug, wt, allowed[to], { by });
   if (missing.length) return [`${slug}: ${from} → ${to} refused:`, ...missing.map((m) => `  ${m}`)];
-  recordMove(root, slug, wt, from, to);
+  let fields = {};
+  if (from === 'review' && to === 'build') {
+    const failed = rounds.failed + 1;
+    if (failed + 1 > rounds.limit) {
+      const reason = `${failed} review FAIL round${failed === 1 ? '' : 's'}; round ${failed + 1} would pass the limit of ${rounds.limit} (kit.json max_rounds)`;
+      recordMove(root, slug, wt, from, 'parked', { fields: { failed_rounds: failed, parked: { reason, at: K.isoSeconds(), round: failed } } });
+      roadmapSet(root, slug, 'escalated');
+      K.appendEvent(pjoin(wt, '.claude', 'session', 'events.jsonl'), { event: 'parked', result: 'fail', summary: `lane parked: ${reason}` });
+      return [`${slug}: review → build refused: the lane is parked`, `  ${reason}`, `  ${unparkHint(slug)}`];
+    }
+    fields = { failed_rounds: failed };
+  }
+  const unpark = from === 'parked' && to === 'build';
+  if (unpark) {
+    // a named human lets the lane go on: one more round, after which the next FAIL parks it again
+    const unparked = Array.isArray(rec?.unparked) ? rec.unparked : [];
+    fields = { parked: undefined, round_limit: rounds.failed + 1, unparked: [...unparked, { by: pyStrip(String(by)), at: K.isoSeconds(), round: rounds.failed + 1, reason: rounds.parked?.reason ?? null }] };
+  }
+  recordMove(root, slug, wt, from, to, { fields });
+  if (unpark) roadmapSet(root, slug, 'building');
   return [];
 }
 
-/** lane.js advance, and lane.js stage, its old name: the only way a lane's stage moves. */
-export function advance(root, slug, to) {
-  const problems = moveLane(root, slug, to);
+/** lane.js advance, and lane.js stage, its old name (the same call): the only way a lane's stage moves. */
+export function advance(root, slug, to, { by = null } = {}) {
+  const problems = moveLane(root, slug, to, { by });
   if (problems.length) return refuse(problems);
   process.stdout.write(`lane ${slug}: stage ${to}\n`);
   return 0;
@@ -1347,6 +1417,13 @@ export async function nextStep(root, slug, { reroute = true } = {}) {
   if (['test', 'build'].includes(raw.stage)) raw = inLanePlanning(root, slug) ?? raw;
   const out = withProfile(raw, prof, fields);
   if (rerouted) out[reroute ? 'rerouted' : 'reroute_pending'] = rerouted;
+  // the lane's round and wall time, from the store alone (hardening plan Step 2)
+  const rec = readStore(root, slug);
+  if (rec && Object.hasOwn(rec, 'stage')) {
+    const r = laneRounds(root, rec);
+    out.rounds = { round: r.round, limit: r.limit, failed: r.failed, parked: Boolean(r.parked) };
+    out.elapsed_hours = K.storeClock(rec).elapsed_hours;
+  }
   return out;
 }
 
@@ -1471,7 +1548,7 @@ async function nextStepFeature(root, slug, { KS, kit, rows, row, g }) {
   const dashed = slug.replaceAll('-', ' ');
   const research = indexRows(root).filter((r) => r.status === 'current' && (r.slug.includes(slug) || r.question.toLowerCase().includes(dashed) || r.keywords.includes(slug)));
   if (pos === 'merged') return { slug, stage: g !== 'done' ? 'retro' : 'done', reason: 'merged in git; retro not yet run (goal not done)' };
-  if (pos === 'escalated') return { slug, stage: 'escalated', reason: st.progress.failure || 'escalation written', needs_human: true };
+  if (pos === 'escalated') return { slug, stage: 'escalated', reason: st.rounds?.parked ? `parked: ${st.rounds.parked.reason}; ${unparkHint(slug)}` : st.progress.failure || 'escalation written', needs_human: true };
   if (pos === 'ready-to-merge') return { slug, stage: 'wait-merge', reason: 'review PASS for HEAD; human merges', needs_human: true, pr: st.pr ?? null };
   if (pos === 'in-review') return { slug, stage: 'review', reason: 'lane built or review stale; run reviewer' };
   if (pos === 'building') {
@@ -1725,7 +1802,7 @@ export async function main(argv = process.argv.slice(2)) {
   s.addArgument('slug'); s.addArgument('criterion'); s.addArgument('command', { nargs: '*' }); s.addArgument('--repo', { default: '.' });
   for (const name of ['advance', 'stage']) {
     s = sub.addParser(name);
-    s.addArgument('slug'); s.addArgument('stage', { choices: Object.keys(MOVES) }); s.addArgument('--repo', { default: '.' });
+    s.addArgument('slug'); s.addArgument('stage', { choices: Object.keys(MOVES) }); s.addArgument('--repo', { default: '.' }); s.addArgument('--by');
   }
   s = sub.addParser('ci');
   s.addArgument('slug', { nargs: '?' }); s.addArgument('--repo', { default: '.' }); s.addArgument('--pr'); s.addArgument('--wait', { action: 'store_true' }); s.addArgument('--timeout-min', { type: parseInt, default: 30 });
@@ -1795,7 +1872,7 @@ export async function main(argv = process.argv.slice(2)) {
     return 0;
   }
   if (a.cmd === 'launch') return launch(root, a.slug, { exec: !!a.exec, prompt: a.prompt ?? null });
-  if (a.cmd === 'advance' || a.cmd === 'stage') return advance(root, a.slug, a.stage);
+  if (a.cmd === 'advance' || a.cmd === 'stage') return advance(root, a.slug, a.stage, { by: a.by ?? null });
   if (a.cmd === 'finish') return finish(root, a.slug);
   if (a.cmd === 'next-step') {
     process.stdout.write(K.jsonDumps(await nextStep(root, a.slug)) + '\n');

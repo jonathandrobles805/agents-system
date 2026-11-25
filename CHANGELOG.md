@@ -4,6 +4,12 @@ All notable changes to the kit. Each entry names the decision or lesson that cau
 
 ## [0.3.0] - unreleased
 
+### Changed (hardening plan Step 2: rounds and wall time move into the store)
+- **`lane.js advance` counts review rounds and parks a lane past the limit.** Each review → build move (a review FAIL) adds one to `failed_rounds` in the lane store (`.claude/session/lanes/<slug>.json` in the main checkout). When the move would start a round past `max_rounds` (`.claude/kit.json`, default 3; bootstrap now writes it), the lane is parked instead: stage `parked` with its reason, ROADMAP `escalated`, a `parked` event, and the move refused with the command the human runs. A parked lane refuses every move but the merge until `kit lane advance <slug> build --by <name>`, which records the name and allows one more round. The limit used to be an instruction in `/zi-review` that nothing counted (0016 C.1 #32). `/zi-review` and `/zi-run` now stop when `advance` parks the lane.
+- **Wall time is the store's.** The record keeps `started` and each move's time, and the stage's budget. The budget hook reads the stage, its clock and its budget from the store, not from the lane's `lane.json`, which the lane can rewrite, and a move that re-enters its own stage no longer restarts the clock (#53). `kit_status`, the dashboard (a round pill, round and wall-time tiles, the park reason) and `next-step` show round N of the limit and the elapsed hours from the store.
+- **`lane.js stage` is `advance`**, the same call and options (`--by` included), as since PR #112.
+- Lanes recorded before these fields count from 0 rounds and take their start from their first move; a lane with no record shows no rounds and its budget is read from `lane.json` until its first move. Not changed: a gate FAIL does not count a round yet (there is no gate until Step 3), and `budget_override` (a human's raise, #41) is still read from `lane.json`. Planted fault 62: MISSED on main, CAUGHT here. Fault 16 now plants its low budget in the store, where it is read.
+
 ### Fixed (real-agent smoke on main bdbfe47: one false fail in the eval's checks)
 - **A lesson field may run on below its first line.** `lesson_proposed` counted only the words on a field's own line, so "Proposed change: Two parts." followed by indented lines naming the parts failed as a field of fewer than three words. A field's text now runs to the next field or heading; fenced code under it is its sketch and does not count as words, so "." above a sketch still fails.
 

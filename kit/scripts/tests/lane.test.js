@@ -7,6 +7,8 @@ import { git, commitAll, nodeApi, approveSpec } from './fixtures.js';
 import { runScript, setEnv, tmpPath } from './helpers.js';
 import { project, spec, review } from './testdata.js';
 import * as P from '../permission_probe.js';
+import * as K from '../kitlib.js';
+import * as L from '../lane.js';
 
 const lane = (...args) => runScript('lane.js', args);
 const read = (...p) => fs.readFileSync(path.join(...p), 'utf8');
@@ -268,6 +270,152 @@ test('advance: a lane started before the store keeps working; its lane.json stag
   write(lf, read(lf).replace('"stage": "build"', '"stage": "review"'));
   assert.equal(lane('advance', 'refund-route', 'build', '--repo', root).returncode, 0);
   assert.deepEqual(storeOf(root).moves.map((m) => [m.from, m.to]), [['review', 'build']]);
+});
+
+// hardening plan Step 2: rounds and wall time are kept in the store by advance, not in the lane's own files
+
+/** A started lane at review, its criteria citing a logged red and green run, as the tester and implementer leave it. */
+function atReview(t, { maxRounds = null } = {}) {
+  setEnv(t, 'KIT_STATUS_NO_GH', '1');
+  const { root } = project(t);
+  if (maxRounds !== null) {
+    const kj = path.join(root, '.claude', 'kit.json');
+    write(kj, JSON.stringify({ ...JSON.parse(read(kj)), max_rounds: maxRounds }, null, 2));
+    commitAll(root, 'max_rounds');
+  }
+  fs.mkdirSync(path.join(root, 'docs', 'goals'), { recursive: true });
+  write(path.join(root, 'docs', 'goals', 'refund-route.md'), GOAL);
+  const wt = JSON.parse(lane('start', 'refund-route', '--repo', root).stdout).worktree;
+  assert.equal(lane('advance', 'refund-route', 'test', '--repo', root).returncode, 0);
+  write(path.join(wt, '.claude/session/refund-route.log'), LOG_RED + LOG_GREEN);
+  const prog = path.join(wt, 'docs/specs/refund-route.progress.md');
+  write(prog, read(prog).replaceAll('| — | — |', '| refund-route.log#1 | refund-route.log#4 |'));
+  assert.equal(lane('advance', 'refund-route', 'build', '--repo', root).returncode, 0);
+  assert.equal(lane('advance', 'refund-route', 'review', '--repo', root).returncode, 0);
+  return { root, wt };
+}
+const statusOf = (root) => JSON.parse(runScript('kit_status.js', ['--repo', root, '--json']).stdout);
+const laneStatus = (root) => statusOf(root).lanes.find((l) => l.slug === 'refund-route');
+
+test('rounds: each review → build move counts a FAIL round in the store; a round past the limit parks the lane with its reason', (t) => {
+  const { root } = atReview(t);
+  assert.deepEqual(L.laneRounds(root, storeOf(root)), { round: 1, limit: 3, failed: 0, parked: null });
+  assert.deepEqual(laneStatus(root).rounds, { round: 1, limit: 3, failed: 0, parked: null });
+  for (const n of [1, 2]) {
+    assert.equal(lane('advance', 'refund-route', 'build', '--repo', root).returncode, 0, `FAIL round ${n} sends the work back`);
+    assert.equal(storeOf(root).failed_rounds, n);
+    assert.equal(lane('advance', 'refund-route', 'review', '--repo', root).returncode, 0);
+  }
+  const ns = JSON.parse(lane('next-step', 'refund-route', '--repo', root).stdout);
+  assert.deepEqual(ns.rounds, { round: 3, limit: 3, failed: 2, parked: false });
+  // the third FAIL would start round 4 of 3: lane.js stage (advance's old name, the same call) parks the lane instead
+  const r = lane('stage', 'refund-route', 'build', '--repo', root);
+  assert.equal(r.returncode, 2, r.stderr);
+  assert.match(r.stderr, /review → build refused: the lane is parked/);
+  assert.match(r.stderr, /3 review FAIL rounds; round 4 would pass the limit of 3/);
+  assert.match(r.stderr, /kit lane advance refund-route build --by <name>/, 'it names the command the human runs');
+  const rec = storeOf(root);
+  assert.equal(rec.stage, 'parked');
+  assert.equal(rec.failed_rounds, 3);
+  assert.match(rec.parked.reason, /round 4 would pass the limit of 3/);
+  assert.deepEqual(rec.moves.slice(-1).map((m) => [m.from, m.to]), [['review', 'parked']]);
+  assert.match(read(root, 'ROADMAP.md'), /\| refund-route \| M1 \| escalated \|/);
+  // readers: kit_status (the dashboard's source) and next-step say so, from the store
+  const st = statusOf(root);
+  const l = st.lanes.find((x) => x.slug === 'refund-route');
+  assert.equal(l.position, 'escalated');
+  assert.ok(l.rounds.parked && l.rounds.round === 3 && l.rounds.limit === 3, JSON.stringify(l.rounds));
+  assert.ok(st.needs_you.some((n) => n.slug === 'refund-route' && /round 4 would pass/.test(n.failure)), JSON.stringify(st.needs_you));
+  const parked = JSON.parse(lane('next-step', 'refund-route', '--repo', root).stdout);
+  assert.ok(parked.stage === 'escalated' && parked.needs_human && /kit lane advance refund-route build --by <name>/.test(parked.reason), JSON.stringify(parked));
+  // a merge is a fact in git: a parked lane the owner merged anyway goes to retro, and nobody is recorded as unparking it
+  const wt = path.join(path.dirname(root), `${path.basename(root)}-lanes`, 'refund-route');
+  write(path.join(wt, 'src', 'api', 'routes.ts'), '// built\n');
+  commitAll(wt, 'D1');
+  lane('evidence', 'refund-route', '--repo', root);
+  commitAll(wt, 'evidence');
+  git(['merge', '-q', '--no-ff', 'wt/refund-route', '-m', 'merge'], root);
+  const m = lane('merged', 'refund-route', '--repo', root);
+  assert.equal(m.returncode, 0, m.stderr);
+  assert.ok(storeOf(root).stage === 'retro' && storeOf(root).unparked === undefined, JSON.stringify(storeOf(root)));
+});
+
+test('rounds: a parked lane refuses every build move until a named human lets it go on, for one more round', (t) => {
+  const { root, wt } = atReview(t, { maxRounds: 1 });
+  let r = lane('advance', 'refund-route', 'build', '--repo', root);
+  assert.ok(r.returncode === 2 && /round 2 would pass the limit of 1/.test(r.stderr), `kit.json max_rounds sets the limit: ${r.stderr}`);
+  for (const to of ['test', 'review']) {
+    r = lane('advance', 'refund-route', to, '--repo', root);
+    assert.ok(r.returncode === 2 && r.stderr.includes(`parked → ${to} is not an allowed move`) && r.stderr.includes('--by <name>'), r.stderr);
+  }
+  r = lane('advance', 'refund-route', 'build', '--repo', root);
+  assert.ok(r.returncode === 2 && r.stderr.includes('only a named human lets it go on'), r.stderr);
+  r = lane('advance', 'refund-route', 'parked', '--repo', root);
+  assert.equal(r.returncode, 2, 'nothing moves a lane to parked but the round limit');
+  // the lane rewriting its own lane.json changes nothing: the store is the record
+  const lf = path.join(wt, '.claude', 'lane.json');
+  write(lf, JSON.stringify({ ...JSON.parse(read(lf)), stage: 'build', failed_rounds: 0, round_limit: 99 }, null, 2));
+  assert.equal(lane('advance', 'refund-route', 'review', '--repo', root).returncode, 2);
+  assert.equal(storeOf(root).stage, 'parked');
+  assert.equal(laneStatus(root).position, 'escalated');
+  // the human's word: one more round, recorded with their name; the next FAIL parks it again
+  r = lane('advance', 'refund-route', 'build', '--repo', root, '--by', 'Jonathan Robles');
+  assert.equal(r.returncode, 0, r.stderr);
+  const rec = storeOf(root);
+  assert.equal(rec.stage, 'build');
+  assert.equal(rec.parked, undefined);
+  assert.equal(rec.round_limit, 2);
+  assert.ok(rec.unparked.length === 1 && rec.unparked[0].by === 'Jonathan Robles' && rec.unparked[0].round === 2, JSON.stringify(rec.unparked));
+  assert.match(read(root, 'ROADMAP.md'), /\| refund-route \| M1 \| building \|/);
+  assert.deepEqual(laneStatus(root).rounds, { round: 2, limit: 2, failed: 1, parked: null });
+  assert.equal(lane('advance', 'refund-route', 'review', '--repo', root).returncode, 0);
+  r = lane('advance', 'refund-route', 'build', '--repo', root);
+  assert.ok(r.returncode === 2 && /2 review FAIL rounds; round 3 would pass the limit of 2/.test(r.stderr), r.stderr);
+});
+
+test('wall time is the store\'s: started and each move\'s time; the budget hook reads it, not the lane\'s lane.json', (t) => {
+  const { root, wt } = atReview(t);
+  const sp = path.join(root, '.claude', 'session', 'lanes', 'refund-route.json');
+  const seven = K.isoSeconds(new Date(Date.now() - 7 * 3.6e6));
+  const rec = storeOf(root);
+  assert.ok(typeof rec.started === 'string' && rec.started === rec.moves[0].at, 'the lane\'s start is recorded');
+  write(sp, JSON.stringify({ ...rec, started: seven, moves: rec.moves.map((m) => ({ ...m, at: seven })), budget: { hours: 1, tool_calls: 800 } }, null, 2));
+  const l = laneStatus(root);
+  assert.ok(l.elapsed_hours > 6.9 && l.elapsed_hours < 7.1 && l.started === seven, JSON.stringify({ e: l.elapsed_hours, s: l.started }));
+  assert.ok(JSON.parse(lane('next-step', 'refund-route', '--repo', root).stdout).elapsed_hours > 6.9);
+  // the lane resets its own clock and raises its budget in lane.json: the hook still reads the store
+  const lf = path.join(wt, '.claude', 'lane.json');
+  write(lf, JSON.stringify({ ...JSON.parse(read(lf)), started: K.isoSeconds(), budget: { hours: 100, tool_calls: 100000 } }, null, 2));
+  const h = runScript('hook_budget_check.js', [], { stdin: JSON.stringify({ hook_event_name: 'PostToolUse', session_id: 's', cwd: wt, tool_name: 'Read', tool_input: { file_path: 'x' } }) });
+  assert.match(h.stdout, /budget exceeded for stage 'review': 7\.0h elapsed > budget 1h/, JSON.stringify(h));
+  // re-entering the stage it is at does not restart its clock (#53)
+  assert.equal(lane('advance', 'refund-route', 'review', '--repo', root).returncode, 0);
+  assert.equal(K.storeClock(storeOf(root)).stage_started, seven);
+  // a review FAIL starts a new build stage, with its own clock
+  assert.equal(lane('advance', 'refund-route', 'build', '--repo', root).returncode, 0);
+  const c = K.storeClock(storeOf(root));
+  assert.ok(c.stage_hours < 0.1 && c.elapsed_hours > 6.9, JSON.stringify(c));
+});
+
+test('rounds and time: a lane recorded before these fields counts from 0 and never crashes', (t) => {
+  const { root, wt } = atReview(t);
+  const sp = path.join(root, '.claude', 'session', 'lanes', 'refund-route.json');
+  const { started: _s, failed_rounds: _f, budget: _b, ...old } = storeOf(root);
+  write(sp, JSON.stringify(old, null, 2));
+  assert.deepEqual(laneStatus(root).rounds, { round: 1, limit: 3, failed: 0, parked: null });
+  assert.equal(laneStatus(root).started, old.moves[0].at, 'its start is its first move');
+  assert.equal(lane('advance', 'refund-route', 'build', '--repo', root).returncode, 0);
+  assert.equal(storeOf(root).failed_rounds, 1);
+  assert.equal(storeOf(root).started, old.moves[0].at);
+  // no store at all (a lane started before the store): its lane.json's stage, no rounds or time to show
+  fs.rmSync(path.join(root, '.claude', 'session', 'lanes'), { recursive: true });
+  const l = laneStatus(root);
+  assert.ok(l.rounds === null && l.elapsed_hours === null && l.stage === 'build', JSON.stringify({ r: l.rounds, e: l.elapsed_hours, s: l.stage }));
+  assert.equal(JSON.parse(lane('next-step', 'refund-route', '--repo', root).stdout).rounds, undefined);
+  const lf = path.join(wt, '.claude', 'lane.json');
+  write(lf, read(lf).replace('"stage": "build"', '"stage": "review"'));
+  assert.equal(lane('advance', 'refund-route', 'build', '--repo', root).returncode, 0);
+  assert.equal(storeOf(root).failed_rounds, 1, 'its first FAIL round is round 1');
 });
 
 test('wip count comes from the lane worktrees, not from ROADMAP', (t) => {
