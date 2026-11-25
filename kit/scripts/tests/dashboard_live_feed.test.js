@@ -7,6 +7,7 @@ import net from 'node:net';
 import path from 'node:path';
 import { once } from 'node:events';
 import { jsonDumps } from '../kitlib.js';
+import { commitAll } from './fixtures.js';
 import { runScript, setEnv, tmpPath } from './helpers.js';
 import { project } from './testdata.js';
 import * as S from '../../dashboard/server.js';
@@ -117,3 +118,28 @@ test('1c: two projects with the same slug do not share an offset', async (t) => 
   assert.equal(feed.events().find(is('test_new_b')).root, b.root);
 });
 
+test('1d: a non-default work root and the session events file both reach the stream, tagged by source', async (t) => {
+  setEnv(t, 'KIT_SANDBOX_RUNTIME', 'none');
+  const { root } = project(t);
+  const kj = path.join(root, '.claude', 'kit.json');
+  const d = JSON.parse(fs.readFileSync(kj, 'utf8'));
+  d.sandbox = { high_risk_waiver: { by: 'test', reason: 'no container runtime in the test environment' } };
+  d.paths = { ...(d.paths ?? {}), work: 'docs/work' };
+  fs.writeFileSync(kj, jsonDumps(d));
+  fs.mkdirSync(path.join(root, 'docs', 'work'), { recursive: true });
+  fs.writeFileSync(path.join(root, 'docs', 'work', 'README.md'), '# work\n');
+  fs.renameSync(path.join(root, 'docs', 'specs', 'refund-route.md'), path.join(root, 'docs', 'work', 'refund-route.md'));
+  commitAll(root, 'configure');
+  const wt = startLane(root);
+  const committed = path.join(wt, 'docs', 'work', 'refund-route.events.jsonl');
+  const session = path.join(wt, '.claude', 'session', 'events.jsonl');
+  const feed = await liveFeed(t, [root]);
+  fs.appendFileSync(committed, line('test_committed'));
+  fs.appendFileSync(session, line('test_session')); // what lane.js writes for start/launch/resume/risk/reroute
+  const c = await feed.waitFor(is('test_committed'));
+  const s = await feed.waitFor(is('test_session'));
+  assert.ok(c, 'the event under the configured work root never arrived');
+  assert.ok(s, 'the event in the session file never arrived');
+  assert.equal(c.data.source, 'committed');
+  assert.equal(s.data.source, 'session');
+});
