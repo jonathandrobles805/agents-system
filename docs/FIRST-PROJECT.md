@@ -10,7 +10,7 @@ git clone https://github.com/jonathandrobles805/agents-system ~/agents-system
 (cd ~/agents-system && npm test)                             # 124 tests
 node ~/agents-system/planted-faults/run.js               # 19/19
 ```
-Requirements: Claude Code, git, Node 20+, `gh` logged in. In Claude Code, `/agents` should list the six kit agents and `/help` the nine commands.
+Requirements: Claude Code, git, Node 22+, `gh` logged in. In Claude Code, `/agents` should list the six kit agents and `/help` the nine commands.
 
 ## 1. Pick the project and freeze the drift (you, 20 minutes)
 
