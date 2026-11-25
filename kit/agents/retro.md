@@ -31,7 +31,7 @@ A lesson comes only from something the lane recorded, cited by file and line: on
 ## Propose, for each finding
 Fill the lesson template (`kit lane template lesson`):
 - Rule: one sentence, stated so a script could test it.
-- Enforced by: one or more of `hook` (block or feedback at tool time), `lint` (static rule), `test` (a test template every spec of this kind must include), `ci` (a repo-wide check), joined by "and" (`hook and ci`), each with an optional short note in parentheses (`hook (stop runner) and ci`). Or `text-only` alone, never combined, with the reason it cannot be enforced yet in Proposed change.
+- Enforced by: one or more of `hook` (block or feedback at tool time), `lint` (static rule), `test` (a test template every spec of this kind must include), `ci` (a repo-wide check), joined by "and" (`hook and ci`), each with an optional short note in parentheses of at most 80 characters (`hook (stop runner) and ci`); the detail goes in Proposed change, and `kit validate_docs` refuses a longer note. Or `text-only` alone, never combined, with the reason it cannot be enforced yet in Proposed change.
 - Proposed change: the actual file to add or edit in the kit or the project, with the rule or test sketched in a fenced block.
 - Status: each entry carries its own `- Status: proposed` line, as the template's last field. Never one status for several entries in a heading or a note.
 - Print each entry starting at the template's `## <date> — <feature> — <title>` heading, with no `###` heading above it.
