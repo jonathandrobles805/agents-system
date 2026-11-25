@@ -26,6 +26,7 @@
 //   lane.js ci [<slug>] --repo R [--pr N] [--wait]       CI on the PR head: exit 0 green, 1 red or timed out, 3 pending
 //   lane.js publish <slug> --repo R [--branch spec/<slug>] [--title T] [--body-file F | --body T] [--base B]  host side: push the lane or spec branch and open its PR as the kit's GitHub App
 //   lane.js merge [<slug>] --repo R [--pr N] --by NAME  wait for every required check, then squash-merge pinned to that head
+//   lane.js signoff <slug> --repo R --by NAME   a named human's security sign-off of the lane's HEAD (high risk; the ask rule prompts)
 //   lane.js merged <slug> --repo R [--pr URL] at merge time: verify in git, mark ROADMAP merged (idempotent)
 //   lane.js template <goal|spec|research|review|lesson> [--slug S] --repo R   print a kit template with slug, date and commit filled in
 //   lane.js finish <slug> --repo R            after retro: remove worktree and local branch, mark roadmap merged
@@ -557,6 +558,60 @@ export function approvalProblem(root, slug) {
   if (specApproval(root, slug)) return null;
   return `no recorded approval for ${slug}: merge the spec PR first, with kit lane merge --pr <the spec/${slug} PR> --by <your name>; ` +
     "it asks for your yes and records it. An 'Approved by:' line in the spec does not count. If that PR is already merged, run the same command: it records the merge.";
+}
+
+// ---------------------------------------------------------------------------
+// A human's security sign-off (hardening plan Step 2, #58)
+// ---------------------------------------------------------------------------
+
+/**
+ * A high-risk lane whose profile asks for one is merged only after a named human signs it off: `kit lane signoff <slug>
+ * --by <name>`, which Claude Code asks about every time (an ask rule, like merging). It records who, when and the lane's
+ * HEAD commit in the lane store, field `security_signoff`. That record is the only sign-off next-step and lane.js merge
+ * accept, and only for that commit: a later commit on the lane makes it stale. A sign-off written in a file is not read.
+ */
+export function signoff(root, slug, by) {
+  const name = String(by ?? '').trim();
+  if (!name) return refuse(['--by <name> is required: the human who reviewed the lane and signs it off']);
+  if (!K.isFile(pjoin(lanesDir(root), slug, '.claude', 'lane.json'))) return refuse([`no lane for ${slug}; a sign-off is for a lane's commits, so start the lane first (kit lane start ${slug})`]);
+  const fields = laneFields(root, slug);
+  if (!signoffRequired(fields)) {
+    return refuse([`${slug} does not need a security sign-off (risk ${fields.risk}, work type ${fields.work_type}); nothing is recorded. Merge it with kit lane merge ${slug} --by <your name> when its review passes.`]);
+  }
+  const { branch, tip, own } = laneRefs(root, slug);
+  if (!tip || !own) return refuse([`${branch} has no commits of its own, so there is nothing to sign off; sign off once the lane's work is committed`]);
+  const p = storePath(root, slug);
+  const prev = K.isFile(p) ? asDict(JSON.parse(readText(p))) : {};
+  const rec = { version: 1, slug, ...prev, security_signoff: { by: name, at: K.isoSeconds(), commit: tip, branch } };
+  fs.mkdirSync(path.dirname(p), { recursive: true });
+  const tmp = `${p}.${process.pid}.tmp`;
+  writeText(tmp, K.jsonDumps(rec, { indent: 2 }) + '\n');
+  fs.renameSync(tmp, p);
+  process.stdout.write(`lane ${slug}: security sign-off by ${name} recorded for ${branch} at ${tip.slice(0, 7)}; a later commit on the lane needs a new sign-off\n`);
+  return 0;
+}
+
+const noSignoff = (slug) => `none is recorded: a named human reviews the lane, then runs kit lane signoff ${slug} --by <your name>, which asks for your yes and records it in the lane store with the lane's HEAD commit; a sign-off written in a file does not count`;
+
+/** The recorded sign-off of the lane ({ by, at, commit, branch }), or null when there is none. */
+export function securitySignoff(root, slug) {
+  const s = readStore(root, slug)?.security_signoff;
+  return s && typeof s === 'object' && typeof s.by === 'string' && s.by.trim() && typeof s.commit === 'string' && /^[0-9a-f]{40,64}$/.test(s.commit) ? s : null;
+}
+
+/**
+ * Why the lane's sign-off does not cover `heads` (the commits about to be merged: the PR's head, the local lane tip), or
+ * null when it does. Phrased to follow "needs a human security sign-off before the merge and".
+ */
+export function signoffProblem(root, slug, heads) {
+  const s = securitySignoff(root, slug);
+  const again = `kit lane signoff ${slug} --by <your name>`;
+  if (!s) return noSignoff(slug);
+  const known = [...new Set(heads.filter(Boolean))];
+  if (!known.length) return `the recorded one (${s.by}, ${s.commit.slice(0, 7)}) cannot be checked: the lane's branch is not here; restore it, or pass the PR to kit lane merge, which reads its head`;
+  const moved = known.filter((h) => h !== s.commit);
+  if (!moved.length) return null;
+  return `the recorded one is stale: ${s.by} signed off ${s.commit.slice(0, 7)} at ${s.at}, and the lane is now at ${moved.map((h) => h.slice(0, 7)).join(' / ')}; review the commits since, push them if the PR lacks them, then run ${again} again`;
 }
 
 /** The spec's text at a commit, or null when the commit does not have it. */
@@ -1345,7 +1400,8 @@ export async function nextStep(root, slug, { reroute = true } = {}) {
   const ctx = { KS, kit, rows, row, g };
   let raw = isReproFirst(prof) ? await nextStepRepro(root, slug, ctx) : await nextStepFeature(root, slug, ctx);
   if (['test', 'build'].includes(raw.stage)) raw = inLanePlanning(root, slug) ?? raw;
-  const out = withProfile(raw, prof, fields);
+  const signoff = raw.stage === 'wait-merge' && signoffRequired(fields) ? signoffProblem(root, slug, [laneRefs(root, slug).tip]) : undefined;
+  const out = withProfile(raw, prof, fields, { signoff });
   if (rerouted) out[reroute ? 'rerouted' : 'reroute_pending'] = rerouted;
   return out;
 }
@@ -1384,8 +1440,12 @@ export function setGoalField(root, slug, field, value) {
   writeText(p, re.test(text) ? text.replace(re, `$1 ${value}`) : text.replace(/^(- Status:.*)$/m, `$1\n- ${field}: ${value}`));
 }
 
-/** Map the derived position onto the profile: a stage the profile lacks is skipped forward; the allowed agent is named. */
-export function withProfile(step, prof, fields) {
+/**
+ * Map the derived position onto the profile: a stage the profile lacks is skipped forward; the allowed agent is named.
+ * `signoff` is why the lane's security sign-off does not cover its HEAD (signoffProblem), null when it does; left out,
+ * none counts as recorded.
+ */
+export function withProfile(step, prof, fields, { signoff } = {}) {
   const out = { ...step, work_type: fields.work_type, risk: fields.risk, size: fields.size };
   if (['start', 'done', 'escalated', 'stopped', 'refused'].includes(step.stage)) return out;
   // ui at size L takes the feature shape (KIT-SPEC 10.12)
@@ -1416,11 +1476,12 @@ export function withProfile(step, prof, fields) {
   const a = allowedAgent(shape.work_type, stage);
   out.agent = a.ok ? a.agent : null;
   if (a.ok && a.human) out.needs_human = true;
-  // A requires entry blocks the stage until it is met (#58). Nothing records a security sign-off until the store lands
-  // (hardening plan Step 2), so a lane that needs one waits here, and lane.js merge refuses it.
+  // A requires entry blocks the stage until it is met (#58): a lane that needs a security sign-off waits here until the
+  // store records one for the lane's HEAD (`signoff`: signoffProblem's answer, from nextStep), and lane.js merge refuses it.
   if (stage === 'wait-merge' && signoffRequired(fields)) {
+    if (signoff === null) return out;
     return { ...out, stage: 'security-signoff', requires: ['security-signoff'], agent: null, needs_human: true,
-      reason: `a human security sign-off is required before the merge and none is recorded (high risk, ${fields.work_type}); recording it comes with the store (hardening plan Step 2), so lane.js merge refuses this lane until then` };
+      reason: `a human security sign-off is required before the merge and ${signoff ?? noSignoff(step.slug)} (high risk, ${fields.work_type})` };
   }
   return out;
 }
@@ -1733,6 +1794,8 @@ export async function main(argv = process.argv.slice(2)) {
   s.addArgument('slug'); s.addArgument('--repo', { default: '.' }); s.addArgument('--branch'); s.addArgument('--title'); s.addArgument('--body-file'); s.addArgument('--body'); s.addArgument('--base');
   s = sub.addParser('merge');
   s.addArgument('slug', { nargs: '?' }); s.addArgument('--repo', { default: '.' }); s.addArgument('--pr'); s.addArgument('--by'); s.addArgument('--timeout-min', { type: parseInt, default: 30 });
+  s = sub.addParser('signoff');
+  s.addArgument('slug'); s.addArgument('--repo', { default: '.' }); s.addArgument('--by');
   s = sub.addParser('merged');
   s.addArgument('slug'); s.addArgument('--repo', { default: '.' }); s.addArgument('--pr');
   s = sub.addParser('resume');
@@ -1797,6 +1860,7 @@ export async function main(argv = process.argv.slice(2)) {
   if (a.cmd === 'launch') return launch(root, a.slug, { exec: !!a.exec, prompt: a.prompt ?? null });
   if (a.cmd === 'advance' || a.cmd === 'stage') return advance(root, a.slug, a.stage);
   if (a.cmd === 'finish') return finish(root, a.slug);
+  if (a.cmd === 'signoff') return signoff(root, a.slug, a.by);
   if (a.cmd === 'next-step') {
     process.stdout.write(K.jsonDumps(await nextStep(root, a.slug)) + '\n');
     return 0;
@@ -1856,8 +1920,13 @@ export async function main(argv = process.argv.slice(2)) {
         lane = m?.[1] ?? null;
         if (m) {
           if (a.slug && m[1] !== a.slug) return refuse([`PR ${pr} is the lane '${m[1]}', not '${a.slug}'; pass the lane's own slug`]);
+          // the sign-off counts only for the commit it names: the PR's head on GitHub, and the local lane tip when the
+          // branch is here, must both be that commit; mergeCommand then merges only that head (a push while it waits for
+          // CI is refused)
           if (signoffRequired(laneFields(root, m[1]))) {
-            return refuse([`${m[1]} needs a human security sign-off before the merge (high risk) and none is recorded; recording it comes with the store (hardening plan Step 2)`]);
+            const why = signoffProblem(root, m[1], [info.headRefOid, laneRefs(root, m[1]).tip]);
+            if (why) return refuse([`${m[1]} needs a human security sign-off before the merge (high risk) and ${why}`]);
+            opts.head = securitySignoff(root, m[1]).commit;
           }
         }
       }

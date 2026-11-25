@@ -9,7 +9,7 @@ A security finding or review. The human said: $ARGUMENTS
 
 ## What this kind of work is
 
-Always high risk: threat model, second reviewer on a different model family, and the human security sign-off line before merge. Requires the container sandbox runtime or a recorded waiver.
+Always high risk: threat model, second reviewer on a different model family, and a named human's security sign-off before merge (`kit lane signoff <slug> --by <name>`, recorded in the lane store for the lane's HEAD; a line in a file does not count). Requires the container sandbox runtime or a recorded waiver.
 
 Profile `security`: `start → research → plan → approve → lane → test → build → review → security-signoff → wait-merge → retro → done`. Human pauses: approve, security-signoff, wait-merge, retro. Risk is forced to **high** by this profile.
 
