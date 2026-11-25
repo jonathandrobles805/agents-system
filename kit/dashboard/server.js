@@ -199,8 +199,8 @@ function watchTick(state) {
   for (const s of state.status) {
     for (const l of s.lanes) {
       if (!l.worktree) continue;
-      const [fresh, off, rewritten] = tailEvents(laneEventsPath(l), state.eventOffsets.get(l.slug) ?? 0);
-      state.eventOffsets.set(l.slug, off);
+      const [fresh, off, rewritten] = tailEvents(laneEventsPath(l), state.eventOffsets.get(laneEventsPath(l)) ?? 0);
+      state.eventOffsets.set(laneEventsPath(l), off); // per file, not per slug: two projects can have a lane of the same name
       const send = (data) => state.broadcast({ type: 'event', lane: l.slug, project: s.project, root: s.root, data });
       if (rewritten) {
         send({ ts: new Date().toISOString(), event: 'events_file_rewritten', file: path.relative(l.worktree, laneEventsPath(l)), summary: `${path.basename(laneEventsPath(l))} was rewritten; events written before the rewrite may be missing here` });
@@ -217,7 +217,7 @@ export function startWatcher(state, interval) {
     for (const l of s.lanes) {
       if (l.worktree) {
         const p = laneEventsPath(l);
-        state.eventOffsets.set(l.slug, K.isFile(p) ? tailEvents(p, 0)[1] : 0);
+        state.eventOffsets.set(p, K.isFile(p) ? tailEvents(p, 0)[1] : 0);
       }
     }
   }

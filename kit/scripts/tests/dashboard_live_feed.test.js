@@ -7,7 +7,7 @@ import net from 'node:net';
 import path from 'node:path';
 import { once } from 'node:events';
 import { jsonDumps } from '../kitlib.js';
-import { runScript, setEnv } from './helpers.js';
+import { runScript, setEnv, tmpPath } from './helpers.js';
 import { project } from './testdata.js';
 import * as S from '../../dashboard/server.js';
 
@@ -97,5 +97,23 @@ test('1b: a rewritten (shorter) file is noticed once, and the line appended afte
   assert.ok(await feed.waitFor(is('test_after_rewrite')), 'the line appended after the rewrite never arrived');
   await new Promise((r) => setTimeout(r, 400));
   assert.equal(feed.events().filter(is('events_file_rewritten')).length, 1, 'the notice is sent once');
+});
+
+test('1c: two projects with the same slug do not share an offset', async (t) => {
+  const a = project(t, { dir: tmpPath(t) });
+  const b = project(t, { dir: tmpPath(t) });
+  const wtA = startLane(a.root);
+  const wtB = startLane(b.root);
+  const fileA = path.join(wtA, 'docs', 'specs', 'refund-route.events.jsonl');
+  const fileB = path.join(wtB, 'docs', 'specs', 'refund-route.events.jsonl');
+  fs.appendFileSync(fileA, line('test_old_a', { pad: 'x'.repeat(300) })); // A has history before the server starts; B has none
+  const feed = await liveFeed(t, [a.root, b.root]);
+  fs.appendFileSync(fileB, line('test_new_b'));
+  assert.ok(await feed.waitFor(is('test_new_b')), 'B\'s new line arrives');
+  fs.appendFileSync(fileA, line('test_new_a'));
+  assert.ok(await feed.waitFor(is('test_new_a')), 'A\'s new line arrives');
+  assert.equal(feed.events().filter(is('test_old_a')).length, 0, 'A\'s history is not replayed because B shared its offset');
+  assert.equal(feed.events().find(is('test_new_a')).root, a.root);
+  assert.equal(feed.events().find(is('test_new_b')).root, b.root);
 });
 
