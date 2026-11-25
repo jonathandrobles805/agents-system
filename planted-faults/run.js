@@ -938,6 +938,14 @@ process.stderr.write('fake gh 57: unexpected ' + a.join(' ')); process.exit(9);
       { path: '/api/status', headers: { Host: 'evil.example' } }, { path: '/api/status', headers: { Host: 'evil.example:{port}' } }]);
     const [ok58a, ok58b, bad58a, bad58b] = h58.statuses;
     record(59, 'a request naming the local dashboard under another Host (DNS rebinding) is answered', 'dashboard server hostAllowed: only 127.0.0.1:<port> and localhost:<port>', ok58a === 200 && ok58b === 200 && [403, 421].includes(bad58a) && [403, 421].includes(bad58b), `own hosts -> ${ok58a},${ok58b}; evil.example -> ${bad58a}; evil.example:port -> ${bad58b} ${h58.stderr.trim().split('\n')[0]}`);
+
+    // 60 a page on another site makes the user's browser POST to the local dashboard (e.g. /api/open/<slug>, which opens a
+    //    terminal): the server refuses a POST whose Origin is present and not its own. An unknown lane answers 404 once a
+    //    request is let through, so 403 vs 404 tells refused from accepted without opening anything.
+    const o60 = (origin) => ({ method: 'POST', path: '/api/open/nope?project=x', headers: origin ? { Origin: origin } : {} });
+    const p60 = probe58([o60('http://127.0.0.1:{port}'), o60('http://localhost:{port}'), o60(null), o60('https://evil.example'), o60('null')]);
+    const [own60a, own60b, none60, evil60, null60] = p60.statuses;
+    record(60, "a cross-site POST to the local dashboard (Origin of another site) is accepted", 'dashboard server originAllowed: a POST with an Origin other than http://127.0.0.1:<port> / http://localhost:<port> gets 403', own60a === 404 && own60b === 404 && none60 === 404 && evil60 === 403 && null60 === 403, `own origins -> ${own60a},${own60b}; no Origin -> ${none60}; evil.example -> ${evil60}; null -> ${null60} ${p60.stderr.trim().split('\n')[0]}`);
   } finally {
     if (a.keep) process.stderr.write(`fixtures kept at ${tmp}\n`);
     else fs.rmSync(tmp, { recursive: true, force: true });

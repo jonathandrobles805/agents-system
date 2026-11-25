@@ -64,3 +64,20 @@ test('0a: only a Host of 127.0.0.1:<port> or localhost:<port> is answered', asyn
     assert.ok([403, 421].includes(status), `no Host got ${status}`);
   });
 });
+
+test('0b: a POST whose Origin is present and not this server\'s own is refused with 403', async (t) => {
+  await withServer(t, async ({ port }) => {
+    const own = [`http://127.0.0.1:${port}`, `http://localhost:${port}`];
+    // an unknown lane answers 404 once the request is let through; 403 means it was refused before that
+    for (const origin of own) {
+      const r = await raw(port, 'POST', '/api/open/nope?project=x', { Host: `127.0.0.1:${port}`, Origin: origin });
+      assert.equal(r.status, 404, `own origin ${origin}`);
+    }
+    const none = await raw(port, 'POST', '/api/open/nope?project=x', { Host: `127.0.0.1:${port}` });
+    assert.equal(none.status, 404, 'no Origin header (curl, same-origin fetch in some browsers)');
+    for (const origin of ['https://evil.example', 'http://evil.example', `http://127.0.0.1.evil.example:${port}`, `http://127.0.0.1:${port + 1}`, `https://127.0.0.1:${port}`, 'null']) {
+      const r = await raw(port, 'POST', '/api/open/nope?project=x', { Host: `127.0.0.1:${port}`, Origin: origin });
+      assert.equal(r.status, 403, `Origin ${origin}`);
+    }
+  });
+});

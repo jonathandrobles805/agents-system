@@ -501,6 +501,8 @@ async function doGet(state, req, res, u, q) {
 }
 
 async function doPost(state, req, res, u, q) {
+  // the socket is local for any page the user's own browser loads, so "localhost only" cannot tell a cross-site POST from the dashboard's own
+  if (!originAllowed(req)) return sendJson(res, 403, { ok: false, error: 'cross-site request refused: Origin is not this server' });
   if (u.path.startsWith('/api/open/')) {
     if (!isLocal(req)) return sendJson(res, 403, { ok: false, error: 'localhost only' });
     const slug = lastSegment(u.path);
@@ -518,6 +520,14 @@ export function hostAllowed(req) {
   const host = (req.headers.host ?? '').toLowerCase();
   const port = req.socket.localPort;
   return host === `127.0.0.1:${port}` || host === `localhost:${port}`;
+}
+
+/** True when the request carries no Origin, or an Origin that is this server's own (http://127.0.0.1:<port> or http://localhost:<port>). */
+export function originAllowed(req) {
+  const origin = req.headers.origin;
+  if (origin === undefined) return true;
+  const port = req.socket.localPort;
+  return origin === `http://127.0.0.1:${port}` || origin === `http://localhost:${port}`;
 }
 
 export function makeHandler(state) {
