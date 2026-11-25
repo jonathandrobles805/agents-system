@@ -4,6 +4,11 @@ All notable changes to the kit. Each entry names the decision or lesson that cau
 
 ## [0.3.0] - unreleased
 
+### Fixed (real-agent smoke on main 3a6390d: two false fails in the eval's checks, one agent instruction)
+- **A table cell may hold an escaped pipe.** `tableRows` split `\|` like a cell border, so a reviewer citing `grep -n '"verify"\|"test"' .claude/kit.json` in its Evidence cell had the command cut at the pipe, and `review_has_evidence` failed rows R7 and R13 of correct work. Cells now split only on unescaped pipes (GitHub Markdown), and a command escaped for the table matches the one the session ran.
+- **"Nothing tests the boundary" is a gap, not an empty critique.** `critique_written` read any item starting with "Nothing" or "None" as "nothing found". Now only "Nothing.", "Nothing found", "Nothing to report", "None.", "None here" and the like count as saying nothing.
+- **Retro: a note in `Enforced by` is at most 80 characters.** The validator refuses a longer note, and `retro.md` did not say so; the retro wrote one. It now says the limit and where the detail goes.
+
 ### Fixed (real-agent smoke on main 71a885c: retro r3)
 - **The eval's retro lane is merged before the retro runs, as in real use.** Its setup stopped at `review`, so the lane was never sealed (#116): the retro session's own hook events landed in the committed events file, and the retro proposed a lesson about them. A new setup step, `merge`, squash-merges the lane into main, pushes it, and runs `lane.js merged`, which checks the evidence and moves the lane to `retro`. The retro task ends with it.
 - **A retro lesson comes only from what the lane recorded; anything else is an observation.** `retro.md` told the retro to look also at "anything that passed every gate and still looks wrong", while the rubric accepted only lessons from recorded findings. Now a lesson cites a review FAIL, a blocked or similar event, an escalation or a spec amendment, and anything else goes under `## Observations` (what, where, what record would make it a lesson) for a human to judge, never into `LESSONS.md` by itself. `/zi-retro` shows them after the lessons. The rubric says the same.

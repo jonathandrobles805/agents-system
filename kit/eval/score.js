@@ -448,7 +448,8 @@ export function reviewEvidence(row, evidence, ctx = evidenceContext({})) {
     if (printsOnly(cmd)) invented.push(`\`${cmd.slice(0, 40)}\` (prints, tests nothing)`);
     // proves the command ran: a part of one the session ran passes (a shortened `git diff main...HEAD -- tests` of
     // `… -- src tests` too), so spacing never fails a real citation. Citing it verbatim is reviewer.md's rule, the judge's to grade
-    else if (ctx.commands.some((c) => c.includes(cmd))) real++;
+    // a pipe escaped for the table (`a \| b`) is the command's `|` when the session ran no `\|`
+    else if (ctx.commands.some((c) => c.includes(cmd) || c.includes(cmd.replace(/\\\|/g, '|')))) real++;
   }
   if (invented.length) return { ok: false, why: `cites ${invented.slice(0, 2).join(', ')}` };
   if (real) return { ok: true, why: `${real} piece(s) of evidence` };
@@ -541,7 +542,9 @@ export function critiqueItems(text) {
 /** spec-critic.md's one statement for a critique that found nothing. */
 export const NO_GAPS = 'No gaps found after independent caller search and criterion review.';
 // an item that says, in other words, that there is nothing to report: it must be NO_GAPS as the agent file words it
-const SAYS_NOTHING = /^(?:no\s+(?:gaps?|issues?|problems?|risks?|concerns?|findings?)\b|nothing\b|none\b|n\/a\b|looks\s+good|lgtm\b|all\s+good)/i;
+// "Nothing" and "None" say nothing only on their own or as "nothing found", "nothing to report", "none here": "Nothing
+// tests the boundary" and "None of the tests cover max" are gaps, and the critique that names one is correct work
+const SAYS_NOTHING = /^(?:no\s+(?:gaps?|issues?|problems?|risks?|concerns?|findings?)\b|nothing(?=\s*$|\s*[.,;:!]|\s+(?:found|to\s|of\s+note|stands?\s+out|else|here|wrong|missing)\b)|none(?=\s*$|\s*[.,;:!]|\s+(?:found|here)\b)|n\/a\b|looks\s+good|lgtm\b|all\s+good)/i;
 
 /**
  * The paths among `paths` that the setup's `.gitignore` files (each `.gitignore` in `setupState`, as the setup left it,
