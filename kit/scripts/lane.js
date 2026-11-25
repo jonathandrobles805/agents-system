@@ -1315,8 +1315,12 @@ export function goalStatus(root, slug) {
   return (h.has('status') ? h.get('status')[1] : '').toLowerCase() || 'agreed';
 }
 
-/** Decide the next stage for a feature from files and git only. Used by /zi-run; never from an agent's claim. */
-export async function nextStep(root, slug) {
+/**
+ * Decide the next stage for a feature from files and git only. Used by /zi-run; never from an agent's claim.
+ * `{ reroute: false }` answers without writing: a reroute the evidence calls for is reported as `reroute_pending`
+ * and left to the controller's own next-step (a reader such as the dashboard's GET must not rewrite the goal file).
+ */
+export async function nextStep(root, slug, { reroute = true } = {}) {
   const KS = await import('./kit_status.js');
   const kit = K.loadKitJson(root);
   if (isStopped(root)) return { slug, stage: 'stopped', reason: `kill switch set (${pyStrip(readText(stopPath(root)))}); kit lane resume-all --by <name> to continue`, needs_human: true };
@@ -1329,8 +1333,8 @@ export async function nextStep(root, slug) {
   let prof = profileFor(fields.work_type);
   if (!prof) return { slug, stage: 'refused', reason: `unknown work_type '${fields.work_type}' in the goal; profiles: ${Object.keys(loadProfiles()).join(', ')}`, needs_human: true };
   // /zi-work routed provisionally; the debugger's cause line settles the kind (KIT-SPEC 10.12)
-  const rerouted = rerouteFromEvidence(root, slug, fields, prof);
-  if (rerouted) {
+  const rerouted = rerouteFromEvidence(root, slug, fields, prof, { write: reroute });
+  if (rerouted && reroute) {
     fields = goalFields(root, slug);
     prof = profileFor(fields.work_type);
   }
@@ -1342,12 +1346,12 @@ export async function nextStep(root, slug) {
   let raw = isReproFirst(prof) ? await nextStepRepro(root, slug, ctx) : await nextStepFeature(root, slug, ctx);
   if (['test', 'build'].includes(raw.stage)) raw = inLanePlanning(root, slug) ?? raw;
   const out = withProfile(raw, prof, fields);
-  if (rerouted) out.rerouted = rerouted;
+  if (rerouted) out[reroute ? 'rerouted' : 'reroute_pending'] = rerouted;
   return out;
 }
 
 /** Read the debugger's `cause:` line from the lane's progress file; rewrite a provisional work type when the profile says so. */
-export function rerouteFromEvidence(root, slug, fields, prof) {
+export function rerouteFromEvidence(root, slug, fields, prof, { write = true } = {}) {
   const table = asDict(kget(prof, 'reroute', {}));
   if (!Object.keys(table).length) return null;
   const wt = pjoin(lanesDir(root), slug);
@@ -1361,11 +1365,13 @@ export function rerouteFromEvidence(root, slug, fields, prof) {
   if (/boot failure|suite cannot run/.test(cause)) target = kget(table, 'boot-failure', null);
   else if (/design fault/.test(cause)) target = kget(table, 'design-fault', null);
   if (!target || target === fields.work_type) {
-    if (fields.provisional) setGoalField(root, slug, 'Work type', fields.work_type); // the evidence confirmed it; drop "(provisional)"
+    if (fields.provisional && write) setGoalField(root, slug, 'Work type', fields.work_type); // the evidence confirmed it; drop "(provisional)"
     return null;
   }
-  setGoalField(root, slug, 'Work type', target);
-  K.appendEvent(pjoin(wt, '.claude', 'session', 'events.jsonl'), { event: 'reroute', from: fields.work_type, to: target, cause: m[1], summary: `rerouted ${fields.work_type} → ${target}: ${m[1]}` });
+  if (write) {
+    setGoalField(root, slug, 'Work type', target);
+    K.appendEvent(pjoin(wt, '.claude', 'session', 'events.jsonl'), { event: 'reroute', from: fields.work_type, to: target, cause: m[1], summary: `rerouted ${fields.work_type} → ${target}: ${m[1]}` });
+  }
   return { from: fields.work_type, to: target, cause: pyStrip(m[1]) };
 }
 

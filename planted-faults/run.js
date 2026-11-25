@@ -923,6 +923,29 @@ process.stderr.write('fake gh 57: unexpected ' + a.join(' ')); process.exit(9);
     const merged58 = run('lane.js', ['merged', 'refund-route', '--repo', r58]);
     const caught58 = early58.returncode === 2 && /not merged/.test(early58.stderr) && seen58 === 'merged' && merged58.returncode === 0 && read(path.join(r58, 'ROADMAP.md')).includes('| refund-route | M1 | merged |');
     record(58, 'a lane squash-merged into main (as lane.js merge does) is never recognised as merged', 'lane.js laneMerge, shared by lane.js merged, advance, kit_status and next-step: ancestry, a merge recorded from GitHub, the lane\'s whole-diff patch on main (squash) or every commit\'s (rebase) (#67, #82)', caught58, `before the merge: exit ${early58.returncode}; after the squash: kit_status ${seen58}, lane.js merged exit ${merged58.returncode} (${(merged58.stderr || merged58.stdout).trim().split('\n')[0]})`);
+    // 59 a page on another site reaches the local dashboard by naming it under its own host (DNS rebinding): the server
+    //    answers a request whose Host is not 127.0.0.1:<port> or localhost:<port>
+    const root58 = F.nodeApi(path.join(tmp, 'node-api-58'));
+    const probe58 = (reqs) => {
+      const r = sh(process.execPath, [path.join(ROOT, 'planted-faults', 'dashboard_probe.js'), '--repo', root58], { input: JSON.stringify(reqs), env: childEnv() });
+      try {
+        return { statuses: JSON.parse(r.stdout), stderr: r.stderr };
+      } catch {
+        return { statuses: [], stderr: r.stderr || r.stdout };
+      }
+    };
+    const h58 = probe58([{ path: '/api/status', headers: { Host: '127.0.0.1:{port}' } }, { path: '/api/status', headers: { Host: 'localhost:{port}' } },
+      { path: '/api/status', headers: { Host: 'evil.example' } }, { path: '/api/status', headers: { Host: 'evil.example:{port}' } }]);
+    const [ok58a, ok58b, bad58a, bad58b] = h58.statuses;
+    record(59, 'a request naming the local dashboard under another Host (DNS rebinding) is answered', 'dashboard server hostAllowed: only 127.0.0.1:<port> and localhost:<port>', ok58a === 200 && ok58b === 200 && [403, 421].includes(bad58a) && [403, 421].includes(bad58b), `own hosts -> ${ok58a},${ok58b}; evil.example -> ${bad58a}; evil.example:port -> ${bad58b} ${h58.stderr.trim().split('\n')[0]}`);
+
+    // 60 a page on another site makes the user's browser POST to the local dashboard (e.g. /api/open/<slug>, which opens a
+    //    terminal): the server refuses a POST whose Origin is present and not its own. An unknown lane answers 404 once a
+    //    request is let through, so 403 vs 404 tells refused from accepted without opening anything.
+    const o60 = (origin) => ({ method: 'POST', path: '/api/open/nope?project=x', headers: origin ? { Origin: origin } : {} });
+    const p60 = probe58([o60('http://127.0.0.1:{port}'), o60('http://localhost:{port}'), o60(null), o60('https://evil.example'), o60('null')]);
+    const [own60a, own60b, none60, evil60, null60] = p60.statuses;
+    record(60, "a cross-site POST to the local dashboard (Origin of another site) is accepted", 'dashboard server originAllowed: a POST with an Origin other than http://127.0.0.1:<port> / http://localhost:<port> gets 403', own60a === 404 && own60b === 404 && none60 === 404 && evil60 === 403 && null60 === 403, `own origins -> ${own60a},${own60b}; no Origin -> ${none60}; evil.example -> ${evil60}; null -> ${null60} ${p60.stderr.trim().split('\n')[0]}`);
   } finally {
     if (a.keep) process.stderr.write(`fixtures kept at ${tmp}\n`);
     else fs.rmSync(tmp, { recursive: true, force: true });

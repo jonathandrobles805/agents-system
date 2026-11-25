@@ -255,11 +255,11 @@ async function laneStages(proj) {
   for (const l of proj.lanes ?? []) {
     let step = null;
     try {
-      step = await L.nextStep(proj.root, l.slug);
+      step = await L.nextStep(proj.root, l.slug, { reroute: false }); // a GET never writes: no reroute, no event
     } catch {
       // a lane whose files are unreadable shows without a stage
     }
-    out.push({ slug: l.slug, position: l.position, stage: step?.stage ?? null, needs_human: Boolean(step?.needs_human), last_check: l.last_check ?? null, blocked: l.events?.blocked ?? 0 });
+    out.push({ slug: l.slug, position: l.position, stage: step?.stage ?? null, reroute_pending: step?.reroute_pending ?? null, needs_human: Boolean(step?.needs_human), last_check: l.last_check ?? null, blocked: l.events?.blocked ?? 0 });
   }
   return out;
 }
@@ -501,6 +501,8 @@ async function doGet(state, req, res, u, q) {
 }
 
 async function doPost(state, req, res, u, q) {
+  // the socket is local for any page the user's own browser loads, so "localhost only" cannot tell a cross-site POST from the dashboard's own
+  if (!originAllowed(req)) return sendJson(res, 403, { ok: false, error: 'cross-site request refused: Origin is not this server' });
   if (u.path.startsWith('/api/open/')) {
     if (!isLocal(req)) return sendJson(res, 403, { ok: false, error: 'localhost only' });
     const slug = lastSegment(u.path);
@@ -513,11 +515,27 @@ async function doPost(state, req, res, u, q) {
   sendJson(res, 404, { ok: false, error: 'not found' });
 }
 
+/** True when the Host header names this server: 127.0.0.1:<port> or localhost:<port>, the port it listens on. */
+export function hostAllowed(req) {
+  const host = (req.headers.host ?? '').toLowerCase();
+  const port = req.socket.localPort;
+  return host === `127.0.0.1:${port}` || host === `localhost:${port}`;
+}
+
+/** True when the request carries no Origin, or an Origin that is this server's own (http://127.0.0.1:<port> or http://localhost:<port>). */
+export function originAllowed(req) {
+  const origin = req.headers.origin;
+  if (origin === undefined) return true;
+  const port = req.socket.localPort;
+  return origin === `http://127.0.0.1:${port}` || origin === `http://localhost:${port}`;
+}
+
 export function makeHandler(state) {
   return async (req, res) => {
     try {
       res.setHeader('Server', SERVER_VERSION);
       req.resume(); // request bodies are never read
+      if (!hostAllowed(req)) return sendJson(res, 421, { error: 'misdirected request: Host must be 127.0.0.1 or localhost with this server\'s port' }); // DNS rebinding guard
       let target = req.url ?? '/';
       if (target.startsWith('//')) target = `/${target.replace(/^\/+/, '')}`; // http.server reduces a leading '//' to '/'
       const u = splitTarget(target);
