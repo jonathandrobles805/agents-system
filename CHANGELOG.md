@@ -4,6 +4,10 @@ All notable changes to the kit. Each entry names the decision or lesson that cau
 
 ## [0.3.0] - unreleased
 
+### Added (a human's security sign-off, #58, hardening plan Step 2)
+- **`kit lane signoff <slug> --by <name>` records a named human's security sign-off.** A high-risk lane whose profile adds `security-signoff` (feature, fix, security, …) stopped at that stage, and `lane.js merge` refused it, with nothing able to record the sign-off. The new command writes `security_signoff` (who, when, the lane branch and its HEAD commit) into the lane store; it refuses an empty name, a lane with no commits of its own and a lane that needs no sign-off, and moves no stage. It is an `ask` rule (`Bash(kit lane signoff *)`, written by `/bootstrap` like `kit lane merge`), so Claude Code asks the human every time; the bash guard refuses its disguised forms, and the permission probe has a case for it.
+- **`next-step` and `lane.js merge` accept only that record, for the commit it names.** `next-step` goes from `security-signoff` to `wait-merge` when the record matches the lane's tip; `lane.js merge` needs it to match the PR's head on GitHub and the local lane tip, and passes the signed commit to the merge, which now refuses a head that moved while CI ran (`mergeCommand`'s `head`). A later commit makes the sign-off stale: both refuse and say to review the new commits and sign off again. A sign-off written in any file (`lane.json`, progress, the spec) approves nothing. `/zi-run` pauses at `security-signoff` and runs the command only when the human says so. Planted fault 61: MISSED on main, CAUGHT here.
+
 ### Fixed (real-agent smoke on main bdbfe47: one false fail in the eval's checks)
 - **A lesson field may run on below its first line.** `lesson_proposed` counted only the words on a field's own line, so "Proposed change: Two parts." followed by indented lines naming the parts failed as a field of fewer than three words. A field's text now runs to the next field or heading; fenced code under it is its sketch and does not count as words, so "." above a sketch still fails.
 
