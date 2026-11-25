@@ -361,7 +361,7 @@ test('runSettings: a run gets only its role\'s kit commands, the project\'s reco
   assert.ok(tester.allow.includes('Bash(kit lane check *)') && !tester.allow.includes('Bash(kit lane template *)'), tester.allow.join(', '));
   assert.ok(['Bash(git add *)', 'Bash(git commit *)'].every((r) => tester.allow.includes(r)));
   for (const r of K.commandAllowRules(K.loadKitJson(root).commands)) assert.ok(tester.allow.includes(r), `the project's recorded command ${r}`);
-  assert.ok(!tester.allow.some((r) => r === 'Bash(kit *)' || /^Bash\(kit lane (advance|stage|gate|start|scope|finish|merge|merged|resume-all|launch) /.test(r)), tester.allow.join(', '));
+  assert.ok(!tester.allow.some((r) => r === 'Bash(kit *)' || /^Bash\(kit lane (advance|stage|gate|start|scope|finish|merge|merged|resume-all|signoff|launch) /.test(r)), tester.allow.join(', '));
   for (const d of [...K.loadFloor().deny, ...g.deny]) assert.ok(tester.deny.includes(d), d);
   for (const d of ['Bash(kit lane advance *)', 'Bash(kit lane gate *)', 'Bash(kit lane start *)', 'Bash(kit lane merge *)', 'Bash(gh pr merge *)']) assert.ok(tester.deny.includes(d), d);
   // the lane's own session (no role): every role's commands plus next-step and agent-for, still none of the denied ones

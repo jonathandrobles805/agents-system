@@ -552,14 +552,50 @@ export const SEALED_STAGES = ['retro', 'done'];
  * cannot be read, its lane.json's.
  */
 export function laneStoreStage(lane) {
+  const rec = laneStoreRecord(lane);
+  if (rec && typeof rec.stage === 'string') return rec.stage;
+  return typeof lane.data.stage === 'string' ? lane.data.stage : null;
+}
+
+/** The lane's store record as `lane.js advance` wrote it, read from inside the lane; null when there is none or it cannot be read. */
+export function laneStoreRecord(lane) {
   try {
     const common = git(['rev-parse', '--path-format=absolute', '--git-common-dir'], lane.root).trim();
-    const rec = plainObject(JSON.parse(fs.readFileSync(path.join(path.dirname(common), SESSION_DIR, 'lanes', `${lane.slug}.json`), 'utf8')));
-    if (typeof rec.stage === 'string') return rec.stage;
+    return plainObject(JSON.parse(fs.readFileSync(path.join(path.dirname(common), SESSION_DIR, 'lanes', `${lane.slug}.json`), 'utf8')));
   } catch {
-    // no git, no store record, or an unreadable one: lane.json's stage
+    return null; // no git, no store record, or an unreadable one
   }
-  return typeof lane.data.stage === 'string' ? lane.data.stage : null;
+}
+
+/**
+ * Hours since `started` ("YYYY-MM-DD[THH:MM[:SS[.ffffff]]]", local wall-clock time as isoSeconds writes it); 0 when it
+ * does not parse. Wall-clock arithmetic on both sides, so no time zone or DST offset is involved.
+ */
+export function hoursSince(started, now = new Date()) {
+  const m = /^(\d{4})-(\d\d)-(\d\d)(?:[T ](\d\d):(\d\d)(?::(\d\d)(?:\.(\d+))?)?)?$/.exec(typeof started === 'string' ? started : '');
+  if (!m) return 0;
+  const [y, mo, day, h, mi, s] = m.slice(1, 7).map((x) => Number(x ?? 0));
+  const ms = Math.floor(Number(`0.${m[7] ?? 0}`) * 1000);
+  const t = new Date(Date.UTC(y, mo - 1, day, h, mi, s, ms));
+  if (t.getUTCMonth() !== mo - 1 || t.getUTCDate() !== day || t.getUTCHours() !== h) return 0;
+  const nowWall = Date.UTC(now.getFullYear(), now.getMonth(), now.getDate(), now.getHours(), now.getMinutes(), now.getSeconds(), now.getMilliseconds());
+  return (nowWall - t) / 3.6e6;
+}
+
+/**
+ * Wall time from a lane store record (hardening plan Step 2): `started`, when the lane's record began (its first
+ * move for a record written before the field), and `stage_started`, when the lane entered its current stage. A move
+ * that re-enters the stage it is at (build → build) does not restart the stage's clock, so a lane cannot zero its own
+ * time (#53). Hours are null when the record has no time to count from (a lane started before the store).
+ */
+export function storeClock(rec, now = new Date()) {
+  const r = plainObject(rec);
+  const moves = Array.isArray(r.moves) ? r.moves.filter((m) => m && typeof m === 'object' && typeof m.at === 'string') : [];
+  const started = typeof r.started === 'string' ? r.started : moves[0]?.at ?? null;
+  let stageStarted = null;
+  for (let i = moves.length - 1; i >= 0 && moves[i].to === r.stage; i--) stageStarted = moves[i].at;
+  const hours = (t) => (t ? Math.max(0, hoursSince(t, now)) : null);
+  return { started, stage_started: stageStarted, elapsed_hours: hours(started), stage_hours: hours(stageStarted) };
 }
 
 /** The directory holding .claude/ (lane root if in a lane, else git toplevel, else cwd). */

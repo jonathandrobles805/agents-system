@@ -273,11 +273,10 @@ export function main(argv) {
     const r2 = hook('hook_guard_read.js', { ...base, hook_event_name: 'PreToolUse', tool_name: 'Read', tool_input: { file_path: 'deploy/server.pem' } });
     record(15, 'agent reads .env or a key file', 'guard-read (PreToolUse) + permissions.deny', r.returncode === 2 && r2.returncode === 2, r.stderr);
 
-    // 16 budget exceeded
-    const lj = path.join(wt, '.claude', 'lane.json');
-    const d = JSON.parse(read(lj));
-    d.budget = { tool_calls: 2, hours: 100 };
-    write(lj, K.jsonDumps(d));
+    // 16 budget exceeded. The stage's budget is the lane store's (lane.js advance writes it there from kit.json budgets;
+    //    hardening plan Step 2), so a low one is planted in the store, not in the lane's own lane.json.
+    const sp16 = path.join(root, '.claude', 'session', 'lanes', 'refund-route.json');
+    write(sp16, K.jsonDumps({ ...JSON.parse(read(sp16)), budget: { tool_calls: 2, hours: 100 } }));
     for (let i = 0; i < 3; i++) {
       r = hook('hook_budget_check.js', { ...base, hook_event_name: 'PostToolUse', tool_name: 'Read', tool_input: { file_path: 'x' } });
     }
@@ -894,6 +893,54 @@ process.stderr.write('fake gh 57: unexpected ' + a.join(' ')); process.exit(9);
       scope57.returncode === 2 && /no recorded approval for refund-route/.test(scope57.stderr) && mgf57.returncode === 0 && scoped57.returncode === 0;
     record(57, "an agent writes the spec's approval line, or a fix lane scopes its in-lane spec before its spec/<slug> PR is merged", "lane.js start and scope accept only the owner's yes that lane.js merge recorded when it merged the spec PR (hardening plan Step 2, D1)", caught57, `line only: start -> exit ${start57.returncode} (${(start57.stderr || '').trim().split('\n')[0].slice(0, 90)}); after the recorded merge -> exit ${after57.returncode}; fix lane scope before the merge -> exit ${scope57.returncode}, after -> exit ${scoped57.returncode}`);
 
+    // 61 a high-risk lane is merged on a security sign-off an agent wrote in a file, or on one given before the lane's
+    //    last commit; or no human can sign it off at all (#58, hardening plan Step 2) -> lane.js signoff, behind an ask
+    //    rule, records who, when and the lane's HEAD in the store; lane.js merge accepts only that record, for that commit
+    const r61 = path.join(tmp, 'node-api-61');
+    F.nodeApi(r61);
+    run('bootstrap.js', ['--repo', r61]);
+    write(path.join(r61, 'ROADMAP.md'), read(path.join(r61, 'ROADMAP.md')).replaceAll('| TODO(bootstrap: ROADMAP.md — feature) | TODO(bootstrap: ROADMAP.md — slug) | M1 | queued | — | — | — |', '| Refund route | refund-route | M1 | queued | — | — | — |'));
+    const kj61 = path.join(r61, '.claude', 'kit.json');
+    write(kj61, K.jsonDumps({ ...JSON.parse(read(kj61)), local_only: true }));
+    writeP(path.join(r61, 'docs', 'goals', 'refund-route.md'), '# Goal: refund route\n\n- Status: running\n- Agreed by: Jonathan Robles on 2026-11-24\n- Work type: feature\n- Risk: high\n- Size: S\n- Domain: api\n\n## Outcome\n\nA refund route.\n');
+    const c61 = F.commitAll(r61, 'goal');
+    write(path.join(r61, 'docs', 'specs', 'refund-route.md'), SPEC({ commit: c61.slice(0, 7) }));
+    F.commitAll(r61, 'spec');
+    F.approveSpec(r61, 'refund-route');
+    const wt61 = JSON.parse(run('lane.js', ['start', 'refund-route', '--repo', r61]).stdout || '{}').worktree ?? path.join(tmp, 'node-api-61-lanes', 'refund-route');
+    writeP(path.join(wt61, 'src', 'api', 'routes.ts'), '// refund route\n');
+    const h61 = F.commitAll(wt61, 'refund route');
+    // a fake gh: PR 5 is wt/refund-route at the head in head.txt; any other call means the sign-off check let it through
+    const gh61 = path.join(tmp, 'gh-61');
+    writeP(path.join(gh61, 'gh'), `#!/usr/bin/env node
+const a = process.argv.slice(2);
+if (a[0] === 'pr' && a[1] === 'view') { process.stdout.write(JSON.stringify({ number: 5, url: 'https://github.com/o/p/pull/5', state: 'OPEN', isDraft: false, headRefOid: require('fs').readFileSync(${JSON.stringify(path.join(gh61, 'head.txt'))}, 'utf8').trim(), headRefName: 'wt/refund-route', baseRefName: 'main', title: 't' })); process.exit(0); }
+process.stderr.write('fake gh 61: past the sign-off'); process.exit(9);
+`);
+    fs.chmodSync(path.join(gh61, 'gh'), 0o755);
+    const merge61 = (head) => {
+      writeP(path.join(gh61, 'head.txt'), head);
+      return run('lane.js', ['merge', 'refund-route', '--repo', r61, '--pr', '5', '--by', 'Jonathan'], { env: { PATH: `${gh61}${path.delimiter}${process.env.PATH}` } });
+    };
+    // the agent writes a sign-off into the lane's files
+    const lj61 = path.join(wt61, '.claude', 'lane.json');
+    if (fs.existsSync(lj61)) write(lj61, K.jsonDumps({ ...JSON.parse(read(lj61)), security_signoff: { by: 'Jonathan Robles', at: '2026-11-24T10:00:00', commit: h61 } }));
+    writeP(path.join(wt61, 'docs', 'specs', 'refund-route.signoff.md'), `Security sign-off: Jonathan Robles at ${h61}\n`);
+    const forged61 = merge61(h61);
+    // the human signs off; the merge goes on; then a later commit on the lane makes the sign-off stale
+    const so61 = run('lane.js', ['signoff', 'refund-route', '--repo', r61, '--by', 'Jonathan Robles']);
+    const signed61 = merge61(h61);
+    writeP(path.join(wt61, 'src', 'api', 'routes.ts'), '// refund route, changed after the sign-off\n');
+    const h61b = F.commitAll(wt61, 'after the sign-off');
+    const stale61 = merge61(h61b);
+    const ask61 = (p) => fs.existsSync(p) && (JSON.parse(read(p)).permissions?.ask ?? []).includes('Bash(kit lane signoff *)');
+    const asks61 = ask61(path.join(ROOT, 'kit', 'hooks', 'settings.project.json')) && ask61(path.join(r61, '.claude', 'settings.json'));
+    const past61 = (r) => /past the sign-off/.test(r.stderr);
+    const caught61 = forged61.returncode === 2 && /none is recorded/.test(forged61.stderr) && !past61(forged61) &&
+      so61.returncode === 0 && past61(signed61) && !/security sign-off/.test(signed61.stderr) &&
+      stale61.returncode === 2 && /the recorded one is stale/.test(stale61.stderr) && !past61(stale61) && asks61;
+    record(61, 'a high-risk lane is merged on a security sign-off an agent wrote in a file or gave before its last commit, or no human can sign it off at all', "lane.js signoff (an ask rule: Claude Code prompts the human) records who, when and the lane's HEAD in the store; lane.js merge accepts only that record, for the PR's head and the lane's tip (#58, hardening plan Step 2)", caught61, `file-written sign-off: merge -> exit ${forged61.returncode} (${(forged61.stderr || '').trim().split('\n')[0].slice(0, 90)}); kit lane signoff -> exit ${so61.returncode}; signed head -> ${past61(signed61) ? 'past the sign-off check' : `exit ${signed61.returncode} (${(signed61.stderr || '').trim().split('\n')[0].slice(0, 90)})`}; after a later commit -> exit ${stale61.returncode}; ask rule shipped and bootstrapped: ${asks61}`, 'tool-level');
+
     // 58 a lane squash-merged into main (as lane.js merge does) is never recognised as merged (#67, #82): the lane tip
     //    is not an ancestor of main, so lane.js merged refused and the dashboard kept the lane at building. Planted: a
     //    two-commit lane squashed into main after main moved on. Caught: lane.js merged accepts it and kit_status says
@@ -947,6 +994,39 @@ process.stderr.write('fake gh 57: unexpected ' + a.join(' ')); process.exit(9);
     const [own60a, own60b, none60, evil60, null60] = p60.statuses;
     record(60, "a cross-site POST to the local dashboard (Origin of another site) is accepted", 'dashboard server originAllowed: a POST with an Origin other than http://127.0.0.1:<port> / http://localhost:<port> gets 403', own60a === 404 && own60b === 404 && none60 === 404 && evil60 === 403 && null60 === 403, `own origins -> ${own60a},${own60b}; no Origin -> ${none60}; evil.example -> ${evil60}; null -> ${null60} ${p60.stderr.trim().split('\n')[0]}`);
 
+    // 62 a lane loops review FAIL → build past the round limit (hardening plan Step 2, D2; 0016 E.1 Add 6), and
+    //    rewrites its own lane.json to look fresh -> advance counts each review → build move in the store, parks the
+    //    lane when the move would start round 4 of 3, and refuses further build moves until a named human (--by)
+    const r62 = path.join(tmp, 'node-api-62');
+    F.nodeApi(r62);
+    run('bootstrap.js', ['--repo', r62]);
+    write(path.join(r62, 'ROADMAP.md'), read(path.join(r62, 'ROADMAP.md')).replaceAll('| TODO(bootstrap: ROADMAP.md — feature) | TODO(bootstrap: ROADMAP.md — slug) | M1 | queued | — | — | — |', '| Refund route | refund-route | M1 | queued | — | — | — |'));
+    const kj62 = path.join(r62, '.claude', 'kit.json');
+    write(kj62, K.jsonDumps({ ...JSON.parse(read(kj62)), local_only: true }));
+    const c62 = F.commitAll(r62, 'bootstrap');
+    write(path.join(r62, 'docs', 'specs', 'refund-route.md'), SPEC({ commit: c62.slice(0, 7) }));
+    F.commitAll(r62, 'spec');
+    F.approveSpec(r62, 'refund-route');
+    const wt62 = JSON.parse(run('lane.js', ['start', 'refund-route', '--repo', r62]).stdout || '{}').worktree;
+    run('lane.js', ['advance', 'refund-route', 'test', '--repo', r62]);
+    write(path.join(wt62, '.claude', 'session', 'refund-route.log'), '=== 2026-11-11T10:00:00 test: npx vitest run -> exit 1\nnot ok 1 - exposes refund\n\n=== 2026-11-11T10:05:00 test: npx vitest run -> exit 0\nok 1 - exposes refund\n\n');
+    const prog62 = path.join(wt62, 'docs', 'specs', 'refund-route.progress.md');
+    write(prog62, read(prog62).replaceAll('| — | — |', '| refund-route.log#1 | refund-route.log#4 |'));
+    run('lane.js', ['advance', 'refund-route', 'build', '--repo', r62]);
+    const loops62 = [];
+    for (let i = 0; i < 3; i++) {
+      run('lane.js', ['stage', 'refund-route', 'review', '--repo', r62]);
+      loops62.push(run('lane.js', ['stage', 'refund-route', 'build', '--repo', r62]));
+    }
+    const lf62 = path.join(wt62, '.claude', 'lane.json');
+    write(lf62, K.jsonDumps({ ...JSON.parse(read(lf62)), stage: 'build', started: K.isoSeconds() }, { indent: 2 }));
+    const again62 = run('lane.js', ['advance', 'refund-route', 'review', '--repo', r62]);
+    const nobody62 = run('lane.js', ['advance', 'refund-route', 'build', '--repo', r62]);
+    const store62 = path.join(r62, '.claude', 'session', 'lanes', 'refund-route.json');
+    const rec62 = fs.existsSync(store62) ? JSON.parse(read(store62)) : {};
+    const caught62 = loops62[0].returncode === 0 && loops62[1].returncode === 0 && loops62[2].returncode === 2 && /the lane is parked/.test(loops62[2].stderr) &&
+      rec62.stage === 'parked' && /round 4 would pass the limit of 3/.test(rec62.parked?.reason ?? '') && again62.returncode === 2 && nobody62.returncode === 2 && /--by <name>/.test(nobody62.stderr);
+    record(62, 'a lane loops review FAIL → build past the round limit, rewriting its own lane.json to look fresh', 'lane.js advance (and stage, its old name) counts each review → build move in the lane store and parks the lane past kit.json max_rounds; only a named human (--by) lets it go on (hardening plan Step 2)', caught62, `FAIL loops -> exits ${loops62.map((r) => r.returncode).join(',')} (${(loops62[2].stderr || '').trim().split('\n')[0]}); store stage ${rec62.stage}, ${rec62.failed_rounds ?? 0} failed rounds; after rewriting lane.json: review -> exit ${again62.returncode}, build without --by -> exit ${nobody62.returncode}`);
     // 63 a lane session may approve the stage moves, start or a merge, or a session may merge or approve another way
     //    (hardening plan Step 2, #63): main shipped `Bash(kit *)`, which approved every kit command (and a different tool
     //    called kit), gave an unattended lane no grants of its own, and denied no `gh pr merge` or approving review. The

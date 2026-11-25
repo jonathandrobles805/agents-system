@@ -8,6 +8,8 @@ import { git, commitAll, nodeApi, approveSpec } from './fixtures.js';
 import { runScript, setEnv, tmpPath } from './helpers.js';
 import { project, spec, review } from './testdata.js';
 import * as P from '../permission_probe.js';
+import * as K from '../kitlib.js';
+import * as L from '../lane.js';
 
 const lane = (...args) => runScript('lane.js', args);
 const read = (...p) => fs.readFileSync(path.join(...p), 'utf8');
@@ -271,6 +273,152 @@ test('advance: a lane started before the store keeps working; its lane.json stag
   assert.deepEqual(storeOf(root).moves.map((m) => [m.from, m.to]), [['review', 'build']]);
 });
 
+// hardening plan Step 2: rounds and wall time are kept in the store by advance, not in the lane's own files
+
+/** A started lane at review, its criteria citing a logged red and green run, as the tester and implementer leave it. */
+function atReview(t, { maxRounds = null } = {}) {
+  setEnv(t, 'KIT_STATUS_NO_GH', '1');
+  const { root } = project(t);
+  if (maxRounds !== null) {
+    const kj = path.join(root, '.claude', 'kit.json');
+    write(kj, JSON.stringify({ ...JSON.parse(read(kj)), max_rounds: maxRounds }, null, 2));
+    commitAll(root, 'max_rounds');
+  }
+  fs.mkdirSync(path.join(root, 'docs', 'goals'), { recursive: true });
+  write(path.join(root, 'docs', 'goals', 'refund-route.md'), GOAL);
+  const wt = JSON.parse(lane('start', 'refund-route', '--repo', root).stdout).worktree;
+  assert.equal(lane('advance', 'refund-route', 'test', '--repo', root).returncode, 0);
+  write(path.join(wt, '.claude/session/refund-route.log'), LOG_RED + LOG_GREEN);
+  const prog = path.join(wt, 'docs/specs/refund-route.progress.md');
+  write(prog, read(prog).replaceAll('| — | — |', '| refund-route.log#1 | refund-route.log#4 |'));
+  assert.equal(lane('advance', 'refund-route', 'build', '--repo', root).returncode, 0);
+  assert.equal(lane('advance', 'refund-route', 'review', '--repo', root).returncode, 0);
+  return { root, wt };
+}
+const statusOf = (root) => JSON.parse(runScript('kit_status.js', ['--repo', root, '--json']).stdout);
+const laneStatus = (root) => statusOf(root).lanes.find((l) => l.slug === 'refund-route');
+
+test('rounds: each review → build move counts a FAIL round in the store; a round past the limit parks the lane with its reason', (t) => {
+  const { root } = atReview(t);
+  assert.deepEqual(L.laneRounds(root, storeOf(root)), { round: 1, limit: 3, failed: 0, parked: null });
+  assert.deepEqual(laneStatus(root).rounds, { round: 1, limit: 3, failed: 0, parked: null });
+  for (const n of [1, 2]) {
+    assert.equal(lane('advance', 'refund-route', 'build', '--repo', root).returncode, 0, `FAIL round ${n} sends the work back`);
+    assert.equal(storeOf(root).failed_rounds, n);
+    assert.equal(lane('advance', 'refund-route', 'review', '--repo', root).returncode, 0);
+  }
+  const ns = JSON.parse(lane('next-step', 'refund-route', '--repo', root).stdout);
+  assert.deepEqual(ns.rounds, { round: 3, limit: 3, failed: 2, parked: false });
+  // the third FAIL would start round 4 of 3: lane.js stage (advance's old name, the same call) parks the lane instead
+  const r = lane('stage', 'refund-route', 'build', '--repo', root);
+  assert.equal(r.returncode, 2, r.stderr);
+  assert.match(r.stderr, /review → build refused: the lane is parked/);
+  assert.match(r.stderr, /3 review FAIL rounds; round 4 would pass the limit of 3/);
+  assert.match(r.stderr, /kit lane advance refund-route build --by <name>/, 'it names the command the human runs');
+  const rec = storeOf(root);
+  assert.equal(rec.stage, 'parked');
+  assert.equal(rec.failed_rounds, 3);
+  assert.match(rec.parked.reason, /round 4 would pass the limit of 3/);
+  assert.deepEqual(rec.moves.slice(-1).map((m) => [m.from, m.to]), [['review', 'parked']]);
+  assert.match(read(root, 'ROADMAP.md'), /\| refund-route \| M1 \| escalated \|/);
+  // readers: kit_status (the dashboard's source) and next-step say so, from the store
+  const st = statusOf(root);
+  const l = st.lanes.find((x) => x.slug === 'refund-route');
+  assert.equal(l.position, 'escalated');
+  assert.ok(l.rounds.parked && l.rounds.round === 3 && l.rounds.limit === 3, JSON.stringify(l.rounds));
+  assert.ok(st.needs_you.some((n) => n.slug === 'refund-route' && /round 4 would pass/.test(n.failure)), JSON.stringify(st.needs_you));
+  const parked = JSON.parse(lane('next-step', 'refund-route', '--repo', root).stdout);
+  assert.ok(parked.stage === 'escalated' && parked.needs_human && /kit lane advance refund-route build --by <name>/.test(parked.reason), JSON.stringify(parked));
+  // a merge is a fact in git: a parked lane the owner merged anyway goes to retro, and nobody is recorded as unparking it
+  const wt = path.join(path.dirname(root), `${path.basename(root)}-lanes`, 'refund-route');
+  write(path.join(wt, 'src', 'api', 'routes.ts'), '// built\n');
+  commitAll(wt, 'D1');
+  lane('evidence', 'refund-route', '--repo', root);
+  commitAll(wt, 'evidence');
+  git(['merge', '-q', '--no-ff', 'wt/refund-route', '-m', 'merge'], root);
+  const m = lane('merged', 'refund-route', '--repo', root);
+  assert.equal(m.returncode, 0, m.stderr);
+  assert.ok(storeOf(root).stage === 'retro' && storeOf(root).unparked === undefined, JSON.stringify(storeOf(root)));
+});
+
+test('rounds: a parked lane refuses every build move until a named human lets it go on, for one more round', (t) => {
+  const { root, wt } = atReview(t, { maxRounds: 1 });
+  let r = lane('advance', 'refund-route', 'build', '--repo', root);
+  assert.ok(r.returncode === 2 && /round 2 would pass the limit of 1/.test(r.stderr), `kit.json max_rounds sets the limit: ${r.stderr}`);
+  for (const to of ['test', 'review']) {
+    r = lane('advance', 'refund-route', to, '--repo', root);
+    assert.ok(r.returncode === 2 && r.stderr.includes(`parked → ${to} is not an allowed move`) && r.stderr.includes('--by <name>'), r.stderr);
+  }
+  r = lane('advance', 'refund-route', 'build', '--repo', root);
+  assert.ok(r.returncode === 2 && r.stderr.includes('only a named human lets it go on'), r.stderr);
+  r = lane('advance', 'refund-route', 'parked', '--repo', root);
+  assert.equal(r.returncode, 2, 'nothing moves a lane to parked but the round limit');
+  // the lane rewriting its own lane.json changes nothing: the store is the record
+  const lf = path.join(wt, '.claude', 'lane.json');
+  write(lf, JSON.stringify({ ...JSON.parse(read(lf)), stage: 'build', failed_rounds: 0, round_limit: 99 }, null, 2));
+  assert.equal(lane('advance', 'refund-route', 'review', '--repo', root).returncode, 2);
+  assert.equal(storeOf(root).stage, 'parked');
+  assert.equal(laneStatus(root).position, 'escalated');
+  // the human's word: one more round, recorded with their name; the next FAIL parks it again
+  r = lane('advance', 'refund-route', 'build', '--repo', root, '--by', 'Jonathan Robles');
+  assert.equal(r.returncode, 0, r.stderr);
+  const rec = storeOf(root);
+  assert.equal(rec.stage, 'build');
+  assert.equal(rec.parked, undefined);
+  assert.equal(rec.round_limit, 2);
+  assert.ok(rec.unparked.length === 1 && rec.unparked[0].by === 'Jonathan Robles' && rec.unparked[0].round === 2, JSON.stringify(rec.unparked));
+  assert.match(read(root, 'ROADMAP.md'), /\| refund-route \| M1 \| building \|/);
+  assert.deepEqual(laneStatus(root).rounds, { round: 2, limit: 2, failed: 1, parked: null });
+  assert.equal(lane('advance', 'refund-route', 'review', '--repo', root).returncode, 0);
+  r = lane('advance', 'refund-route', 'build', '--repo', root);
+  assert.ok(r.returncode === 2 && /2 review FAIL rounds; round 3 would pass the limit of 2/.test(r.stderr), r.stderr);
+});
+
+test('wall time is the store\'s: started and each move\'s time; the budget hook reads it, not the lane\'s lane.json', (t) => {
+  const { root, wt } = atReview(t);
+  const sp = path.join(root, '.claude', 'session', 'lanes', 'refund-route.json');
+  const seven = K.isoSeconds(new Date(Date.now() - 7 * 3.6e6));
+  const rec = storeOf(root);
+  assert.ok(typeof rec.started === 'string' && rec.started === rec.moves[0].at, 'the lane\'s start is recorded');
+  write(sp, JSON.stringify({ ...rec, started: seven, moves: rec.moves.map((m) => ({ ...m, at: seven })), budget: { hours: 1, tool_calls: 800 } }, null, 2));
+  const l = laneStatus(root);
+  assert.ok(l.elapsed_hours > 6.9 && l.elapsed_hours < 7.1 && l.started === seven, JSON.stringify({ e: l.elapsed_hours, s: l.started }));
+  assert.ok(JSON.parse(lane('next-step', 'refund-route', '--repo', root).stdout).elapsed_hours > 6.9);
+  // the lane resets its own clock and raises its budget in lane.json: the hook still reads the store
+  const lf = path.join(wt, '.claude', 'lane.json');
+  write(lf, JSON.stringify({ ...JSON.parse(read(lf)), started: K.isoSeconds(), budget: { hours: 100, tool_calls: 100000 } }, null, 2));
+  const h = runScript('hook_budget_check.js', [], { stdin: JSON.stringify({ hook_event_name: 'PostToolUse', session_id: 's', cwd: wt, tool_name: 'Read', tool_input: { file_path: 'x' } }) });
+  assert.match(h.stdout, /budget exceeded for stage 'review': 7\.0h elapsed > budget 1h/, JSON.stringify(h));
+  // re-entering the stage it is at does not restart its clock (#53)
+  assert.equal(lane('advance', 'refund-route', 'review', '--repo', root).returncode, 0);
+  assert.equal(K.storeClock(storeOf(root)).stage_started, seven);
+  // a review FAIL starts a new build stage, with its own clock
+  assert.equal(lane('advance', 'refund-route', 'build', '--repo', root).returncode, 0);
+  const c = K.storeClock(storeOf(root));
+  assert.ok(c.stage_hours < 0.1 && c.elapsed_hours > 6.9, JSON.stringify(c));
+});
+
+test('rounds and time: a lane recorded before these fields counts from 0 and never crashes', (t) => {
+  const { root, wt } = atReview(t);
+  const sp = path.join(root, '.claude', 'session', 'lanes', 'refund-route.json');
+  const { started: _s, failed_rounds: _f, budget: _b, ...old } = storeOf(root);
+  write(sp, JSON.stringify(old, null, 2));
+  assert.deepEqual(laneStatus(root).rounds, { round: 1, limit: 3, failed: 0, parked: null });
+  assert.equal(laneStatus(root).started, old.moves[0].at, 'its start is its first move');
+  assert.equal(lane('advance', 'refund-route', 'build', '--repo', root).returncode, 0);
+  assert.equal(storeOf(root).failed_rounds, 1);
+  assert.equal(storeOf(root).started, old.moves[0].at);
+  // no store at all (a lane started before the store): its lane.json's stage, no rounds or time to show
+  fs.rmSync(path.join(root, '.claude', 'session', 'lanes'), { recursive: true });
+  const l = laneStatus(root);
+  assert.ok(l.rounds === null && l.elapsed_hours === null && l.stage === 'build', JSON.stringify({ r: l.rounds, e: l.elapsed_hours, s: l.stage }));
+  assert.equal(JSON.parse(lane('next-step', 'refund-route', '--repo', root).stdout).rounds, undefined);
+  const lf = path.join(wt, '.claude', 'lane.json');
+  write(lf, read(lf).replace('"stage": "build"', '"stage": "review"'));
+  assert.equal(lane('advance', 'refund-route', 'build', '--repo', root).returncode, 0);
+  assert.equal(storeOf(root).failed_rounds, 1, 'its first FAIL round is round 1');
+});
+
 test('wip count comes from the lane worktrees, not from ROADMAP', (t) => {
   const { root } = project(t, { wipLimit: 1 });
   let r = lane('wip', '--repo', root);
@@ -522,11 +670,96 @@ test('next step walks the pipeline from facts', (t) => {
   // the fixture's spec is high risk (it touches payment code), and the feature profile adds a human security sign-off
   // for high risk: the stage waits for it and names what it requires (#58)
   assert.ok(ns.stage === 'security-signoff' && ns.needs_human && ns.requires?.includes('security-signoff'), JSON.stringify(ns));
+  assert.match(ns.reason, /none is recorded: a named human reviews the lane, then runs kit lane signoff refund-route --by <your name>/);
+  // a sign-off written in a file (the lane's lane.json, its progress) counts for nothing; only the store's record does
+  const lj = path.join(wt, '.claude', 'lane.json');
+  write(lj, JSON.stringify({ ...JSON.parse(read(lj)), security_signoff: { by: 'Jonathan Robles', at: '2026-11-24T10:00:00', commit: head } }, null, 2));
+  write(prog, `${read(prog)}\nSecurity sign-off: Jonathan Robles on 2026-11-24 at ${head}\n`);
+  assert.equal(stage().stage, 'security-signoff');
+  // the human's command records it for the lane's HEAD, and next-step goes on to the merge
+  let so = lane('signoff', 'refund-route', '--repo', root, '--by', 'Jonathan Robles');
+  assert.equal(so.returncode, 0, so.stderr);
+  assert.equal(storeOf(root).security_signoff.commit, head);
+  ns = stage();
+  assert.equal(ns.stage, 'wait-merge', JSON.stringify(ns));
+  // a commit after the sign-off makes it stale: next-step stops at the sign-off again and says why
+  write(path.join(wt, 'src', 'api', 'routes.ts'), '// built, then changed\n');
+  commitAll(wt, 'D1 again');
+  const head2 = git(['rev-parse', 'HEAD'], wt).trim();
+  write(path.join(wt, 'docs/specs/refund-route.review.md'), review({ head: head2.slice(0, 10), verdict: 'PASS' }));
+  ns = stage();
+  assert.equal(ns.stage, 'security-signoff', JSON.stringify(ns));
+  assert.match(ns.reason, new RegExp(`the recorded one is stale: Jonathan Robles signed off ${head.slice(0, 7)} at .*, and the lane is now at ${head2.slice(0, 7)}; review the commits since`));
+  so = lane('signoff', 'refund-route', '--repo', root, '--by', 'Jonathan Robles');
+  assert.equal(so.returncode, 0, so.stderr);
+  assert.equal(stage().stage, 'wait-merge');
   commitAll(wt, 'review');
   git(['merge', '-q', '--no-ff', 'wt/refund-route', '-m', 'merge'], root);
   assert.equal(stage().stage, 'retro');
   lane('goal-set', 'refund-route', 'done', '--repo', root);
   assert.equal(stage().stage, 'done');
+});
+
+// #58, hardening plan Step 2: a high-risk lane is merged only with a named human's sign-off that lane.js signoff recorded
+// in the store for the commit being merged. The PR is read from a fake gh; any call past the sign-off check stops it.
+test('lane.js merge of a high-risk lane: refused without a recorded sign-off or with a stale one, accepted with a current one; signoff refuses no name, no commits and a lane that needs none (#58)', (t) => {
+  const { root } = project(t);
+  const wt = JSON.parse(lane('start', 'refund-route', '--repo', root).stdout).worktree;
+  const bin = tmpPath(t);
+  const ghAt = (oid) => {
+    write(path.join(bin, 'gh'), `#!/usr/bin/env node
+const a = process.argv.slice(2);
+if (a[0] === 'pr' && a[1] === 'view') { process.stdout.write(JSON.stringify({ number: 5, url: 'https://github.com/o/proj/pull/5', state: 'OPEN', isDraft: false, headRefOid: ${JSON.stringify(oid)}, headRefName: 'wt/refund-route', baseRefName: 'main', title: 't' })); process.exit(0); }
+process.stderr.write('fake gh: past the sign-off'); process.exit(9);
+`);
+    fs.chmodSync(path.join(bin, 'gh'), 0o755);
+    return { env: { ...process.env, PATH: `${bin}${path.delimiter}${process.env.PATH}` } };
+  };
+  const merge = (oid) => runScript('lane.js', ['merge', 'refund-route', '--repo', root, '--pr', '5', '--by', 'Jonathan'], ghAt(oid));
+  const signoff = (...by) => lane('signoff', 'refund-route', '--repo', root, ...by);
+  const refused = (r, re) => {
+    assert.equal(r.returncode, 2, r.stdout);
+    assert.match(r.stderr, re);
+    assert.doesNotMatch(r.stderr, /past the sign-off/);
+  };
+  // nothing to sign off before the lane has commits; a name is required
+  refused(signoff('--by', 'Jonathan'), /wt\/refund-route has no commits of its own, so there is nothing to sign off/);
+  write(path.join(wt, 'src', 'api', 'routes.ts'), '// built\n');
+  const head1 = commitAll(wt, 'D1');
+  refused(signoff(), /--by <name> is required: the human who reviewed the lane and signs it off/);
+  refused(signoff('--by', '  '), /--by <name> is required/);
+  refused(lane('signoff', 'other', '--repo', root, '--by', 'Jonathan'), /no lane for other/);
+  assert.equal(storeOf(root).security_signoff, undefined, 'a refused signoff records nothing');
+  // no record: refused, and a sign-off written in the lane's files does not count
+  const lj = path.join(wt, '.claude', 'lane.json');
+  write(lj, JSON.stringify({ ...JSON.parse(read(lj)), security_signoff: { by: 'Jonathan', at: '2026-11-24T10:00:00', commit: head1 } }, null, 2));
+  refused(merge(head1), /refund-route needs a human security sign-off before the merge \(high risk\) and none is recorded: a named human reviews the lane, then runs kit lane signoff refund-route --by <your name>/);
+  // the human's sign-off: who, when, the lane's HEAD, in the store; then the merge goes on to GitHub's checks
+  const r = signoff('--by', 'Jonathan Robles');
+  assert.equal(r.returncode, 0, r.stderr);
+  assert.match(r.stdout, new RegExp(`security sign-off by Jonathan Robles recorded for wt/refund-route at ${head1.slice(0, 7)}`));
+  const so = storeOf(root).security_signoff;
+  assert.deepEqual({ by: so.by, commit: so.commit, branch: so.branch }, { by: 'Jonathan Robles', commit: head1, branch: 'wt/refund-route' });
+  assert.match(so.at, /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d/);
+  assert.equal(storeOf(root).stage, 'build', 'the sign-off moves no stage');
+  let m = merge(head1);
+  assert.doesNotMatch(m.stderr, /security sign-off/);
+  assert.match(m.stderr, /fake gh: past the sign-off/);
+  // the PR's head is not the signed commit (a push after the sign-off): refused as stale
+  refused(merge('f'.repeat(40)), new RegExp(`and the recorded one is stale: Jonathan Robles signed off ${head1.slice(0, 7)} at .*, and the lane is now at fffffff; review the commits since, push them if the PR lacks them, then run kit lane signoff refund-route --by <your name> again`));
+  // a new local commit on the lane, even one the PR does not have yet: refused as stale
+  write(path.join(wt, 'src', 'api', 'routes.ts'), '// built, then changed\n');
+  const head2 = commitAll(wt, 'D2');
+  refused(merge(head1), new RegExp(`the recorded one is stale: .* the lane is now at ${head2.slice(0, 7)}`));
+  // signed off again at the new HEAD: accepted
+  assert.equal(signoff('--by', 'Jonathan Robles').returncode, 0);
+  m = merge(head2);
+  assert.match(m.stderr, /fake gh: past the sign-off/);
+  // a lane whose profile asks for no sign-off: signoff refuses, says how to merge, and records nothing new
+  fs.mkdirSync(path.join(root, 'docs', 'goals'), { recursive: true });
+  write(path.join(root, 'docs', 'goals', 'refund-route.md'), GOAL.replace('- Status: agreed', '- Status: running\n- Work type: refactor\n- Risk: high'));
+  refused(signoff('--by', 'Jonathan'), /refund-route does not need a security sign-off \(risk high, work type refactor\); nothing is recorded\. Merge it with kit lane merge refund-route --by <your name>/);
+  assert.equal(storeOf(root).security_signoff.commit, head2);
 });
 
 test('next in queue respects goal and wip', (t) => {
@@ -631,6 +864,9 @@ test('the permission probe has a case for every rule the kit ships, plus control
   assert.ok(P.CASES.some((c) => c.kind === 'ask-skill' && c.command.startsWith('kit lane merge')));
   // a variable in a kit command's arguments (`--repo "$PWD"`, as the skills write it) is probed
   assert.ok(P.CASES.some((c) => c.kind === 'allow-form' && c.command.includes('"$PWD"')));
+  // a security sign-off is the human's too (#58): Claude Code asks every time, and the probe proves the rule matches
+  assert.ok(perms.ask.includes('Bash(kit lane signoff *)'));
+  assert.ok(P.CASES.some((c) => c.kind === 'ask' && c.rule === 'Bash(kit lane signoff *)' && c.command.startsWith('kit lane signoff ')));
   // the "$HOME" form Claude Code did not approve (2026-11-22) is a control, and no shipped rule uses it again; another
   // tool called kit stays refused
   assert.ok(P.CASES.some((c) => c.id === 'home-form' && c.expect === 'denied'));

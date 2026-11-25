@@ -192,13 +192,15 @@ test('guard bash refuses the owner\'s decisions through kit in forms the permiss
     // review 3: substitutions inside double quotes, redirects glued to kit, the spacing check scoped to the command
     "echo `kit lane 'merge' s --by j`", `echo "$(kit lane 'merge' s --by j)"`, "kit>/dev/null lane 'merge' s --by j", 'kit>/dev/null  bootstrap --upgrade',
     'kit 2>&1 lane merge s', 'echo kit lane merge; kit lane  merge s', 'kit lane  merge s --by j # kit lane merge',
-    'git commit -m "note: kit lane merge" && kit lane  merge s', 'kit lane\tmerge s'];
+    'git commit -m "note: kit lane merge" && kit lane  merge s', 'kit lane\tmerge s',
+    // the security sign-off is a decision too (#58)
+    "kit lane 'signoff' s --by j", 'kit lane -- signoff s --by j', 'kit  lane signoff s --by j', 'kit lane  signoff s --by j'];
   for (const c of disguised) {
     const r = run('hook_guard_bash.js', pre(repo, 'Bash', { command: c }));
     assert.ok(r.returncode === 2 && /write it (plainly|on one line)|run the kit command directly/.test(r.stderr), `${c}: ${r.returncode} ${r.stderr}`);
   }
   // the plain forms reach Claude Code's prompt, so the guard lets them through; other kit commands are untouched
-  for (const c of ['kit lane merge footer --by Jonathan', 'kit lane resume-all --by Jonathan', 'kit bootstrap --repo .', 'FOO=1 kit lane merge x --by j',
+  for (const c of ['kit lane merge footer --by Jonathan', 'kit lane resume-all --by Jonathan', 'kit lane signoff footer --by Jonathan', 'kit bootstrap --repo .', 'FOO=1 kit lane merge x --by j',
     'kit lane next-step footer --repo .', 'kit lane template spec --slug merge-x', 'echo "kit lane -- merge"', 'kit lane goal-set merge done',
     'kit lane next-step merge-sort --repo .', 'git commit -m "run kit lane merge when CI is green"', 'git merge --no-ff main', 'timeout 60 kit lane merge x --by j',
     // kit as an argument, not the program, is untouched
@@ -216,7 +218,7 @@ test('guard bash refuses a lane agent the stage moves, the gate, start and mergi
   const agent = (command) => ({ ...pre(repo, 'Bash', { command }), agent_id: 'a4521003423292d69', agent_type: 'implementer' });
   // a subagent's call carries agent_id (observed, docs/research/claude-code-hook-probe-2.payloads.jsonl)
   for (const c of ['kit lane advance s build', 'kit lane stage s build', 'kit lane gate s', 'kit lane start s', 'kit lane scope s', 'kit lane finish s',
-    'kit lane merge s --by j', 'kit lane merged s', 'kit lane resume-all --by j', 'kit lane launch s --exec', 'kit bootstrap --repo .',
+    'kit lane merge s --by j', 'kit lane merged s', 'kit lane resume-all --by j', 'kit lane signoff s --by j', 'kit lane launch s --exec', 'kit bootstrap --repo .',
     "kit lane 'advance' s build", 'cd ../wt && kit lane advance s build', 'echo "$(kit lane start s)"', 'timeout 60 kit lane advance s build']) {
     const r = run('hook_guard_bash.js', agent(c));
     // a quoted word is refused as a disguised form first, whoever runs it

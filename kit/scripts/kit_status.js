@@ -6,7 +6,7 @@
 //
 // Lane position rules (first match wins):
 //   merged            ROADMAP status merged
-//   escalated         progress.md Escalation filled (Attempts/Failure without placeholders)
+//   escalated         progress.md Escalation filled (Attempts/Failure without placeholders), or the store has the lane parked
 //   ready-to-merge    review report exists, validates, Verdict PASS, Head matches lane HEAD
 //   in-review         review report exists (any verdict) or the store says stage review
 //   building          worktree exists with lane.json
@@ -31,7 +31,7 @@ const DOC = `kit-status: derive the state of a project from files and git. Nothi
 
 Lane position rules (first match wins):
   merged            ROADMAP status merged
-  escalated         progress.md Escalation filled (Attempts/Failure without placeholders)
+  escalated         progress.md Escalation filled (Attempts/Failure without placeholders), or the store has the lane parked
   ready-to-merge    review report exists, validates, Verdict PASS, Head matches lane HEAD
   in-review         review report exists (any verdict) or the store says stage review
   building          worktree exists with lane.json
@@ -168,7 +168,12 @@ export function laneState(root, row, kit) {
   const base = kget(kit, 'default_branch', 'main');
   const laneJson = hasWt ? L.asDict(JSON.parse(readText(pjoin(wt, '.claude', 'lane.json')))) : {};
   // the stage is the store's (lane.js advance); a lane started before the store has only its lane.json's
-  const stage = L.readStore(root, slug)?.stage ?? kget(laneJson, 'stage', null);
+  const rec = L.readStore(root, slug);
+  const inStore = Boolean(rec && Object.hasOwn(rec, 'stage'));
+  const stage = inStore ? rec.stage : kget(laneJson, 'stage', null);
+  // rounds and wall time are the store's too (hardening plan Step 2); a lane the store does not hold has none to show
+  const rounds = inStore ? L.laneRounds(root, rec) : null;
+  const clock = inStore ? K.storeClock(rec) : null;
   const docsRoot = hasWt ? wt : root;
   // inside a lane the artifacts are where that lane recorded them (Lane.work); outside, where the project says now
   const work = hasWt ? (K.findLane(wt)?.work ?? K.workRoot(root)) : K.workRoot(root);
@@ -195,7 +200,7 @@ export function laneState(root, row, kit) {
   // position
   let pos;
   if (row.status === 'merged' || mergedInGit) pos = 'merged';
-  else if (prog.escalated) pos = 'escalated';
+  else if (prog.escalated || stage === 'parked') pos = 'escalated';
   else if (rev.exists && rev.valid && rev.verdict === 'PASS' && rev.head_matches) pos = 'ready-to-merge';
   else if (rev.exists || stage === 'review') pos = 'in-review';
   else if (hasWt) pos = 'building';
@@ -208,7 +213,8 @@ export function laneState(root, row, kit) {
   return {
     feature: row.feature, slug, milestone: row.milestone, roadmap_status: row.status, position: pos, needs_you: needsYou,
     risk: specHdr.get('risk') ?? null, spec: K.isFile(spec) ? relativeTo(root, spec) : null, approved,
-    worktree: hasWt ? wt : null, branch: kget(laneJson, 'branch', null), stage, started: kget(laneJson, 'started', null),
+    worktree: hasWt ? wt : null, branch: kget(laneJson, 'branch', null), stage, started: clock ? clock.started : kget(laneJson, 'started', null),
+    elapsed_hours: clock?.elapsed_hours ?? null, stage_hours: clock?.stage_hours ?? null, rounds,
     sandbox: hasWt ? L.asDict(kget(laneJson, 'sandbox', {})) : null, // runtime and state, derived at lane start (KIT-SPEC 10.9); never asserted by an agent
     cost: hasWt && showCost(root) ? laneCost(root, slug) : null, // optional (kit.json telemetry.show_cost); from telemetry only (KIT-SPEC 9.4)
     behind_base: behind, ahead_base: ahead, head: head ? headCp(head, 10) : null,
@@ -268,7 +274,7 @@ export function projectStatus(root) {
   return {
     project: kget(kit, 'project', path.basename(root)), root, kit_version: kget(kit, 'kit_version', null), generated: K.isoSeconds(),
     wip: { in_flight: inFlightCount, limit: wipLimit },
-    needs_you: lanes.filter((l) => l.needs_you).map((l) => ({ slug: l.slug, position: l.position, failure: kget(l.progress, 'failure', null) })),
+    needs_you: lanes.filter((l) => l.needs_you).map((l) => ({ slug: l.slug, position: l.position, failure: l.rounds?.parked?.reason ?? kget(l.progress, 'failure', null) })),
     lanes,
     ci_main: ci,
     debt: {
@@ -296,6 +302,8 @@ export function render(s) {
       extra.push(pyStrip(`${pyStr(l.behind_base)} behind ${l.ahead_base !== null ? '/' + pyStr(l.ahead_base) + ' ahead' : ''}`));
     }
     if (p.criteria) extra.push(`criteria ${p.green}/${p.criteria} green`);
+    if (l.rounds) extra.push(l.rounds.parked ? `parked after round ${l.rounds.round} of ${l.rounds.limit}` : `round ${l.rounds.round} of ${l.rounds.limit}`);
+    if (l.elapsed_hours !== null && l.elapsed_hours !== undefined) extra.push(`${l.elapsed_hours.toFixed(1)}h`);
     if (l.last_check) extra.push(`last ${pyStr(l.last_check.kind)}: ${pyStr(l.last_check.result)} (${pyStr(l.last_check.summary)})`);
     if (l.events.blocked) extra.push(`${l.events.blocked} blocked`);
     out.push(`  - ${l.slug}: ${l.position}` + (extra.length ? `  [${extra.join('; ')}]` : ''));

@@ -211,7 +211,7 @@ test('#63 the human\'s decisions ask every time: bootstrap writes the kit\'s ask
   boot(root);
   const sp = path.join(root, '.claude', 'settings.json');
   const perms = () => JSON.parse(fs.readFileSync(sp, 'utf8')).permissions;
-  const kitAsk = ['Bash(kit bootstrap *)', 'Bash(kit lane merge *)', 'Bash(kit lane resume-all *)'];
+  const kitAsk = ['Bash(kit bootstrap *)', 'Bash(kit lane merge *)', 'Bash(kit lane resume-all *)', 'Bash(kit lane signoff *)'];
   for (const r of kitAsk) assert.ok(perms().ask.includes(r), r);
   // a project set up before ask rules existed, with one ask rule of its own
   const s = JSON.parse(fs.readFileSync(sp, 'utf8'));

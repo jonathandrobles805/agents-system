@@ -6,7 +6,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import * as G from '../pr_gate.js';
 import * as F from './fixtures.js';
-import { runScript, tmpPath } from './helpers.js';
+import { runScript, setEnv, tmpPath } from './helpers.js';
 
 const run = (id, name, status = 'completed', conclusion = 'success') => ({ id, name, status, conclusion });
 const CHECKS = { required: ['tests', 'kit-checks', 'secrets'], advisory: ['mutation (threshold 70%)'] };
@@ -275,6 +275,25 @@ test('lane.js merge uses the owner\'s ruleset bypass (--admin) only after every 
   assert.equal(r.returncode, 2);
   assert.match(r.stderr, /changed while it was being merged \(base main -> release/);
   assert.equal(mergeOf(g.calls), undefined);
+});
+
+test('mergeCommand with a signed-off head merges only that head: a push while the checks run is refused (#58)', (t) => {
+  const root = project(t);
+  const quiet = { write: () => {} };
+  const useGh = (g) => {
+    setEnv(t, 'PATH', g.env.PATH);
+    setEnv(t, 'KIT_PR_GATE_POLL_SECONDS', '0');
+  };
+  const mergeOf = (calls) => calls().find((c) => c.args[0] === 'pr' && c.args[1] === 'merge');
+  // views: mergeCommand's first read, then the checks poll, which sees the pushed head
+  let g = fakeGh(t, { pr: PR, polls: [all()], prAfter: { after: 1, pr: { headRefOid: 'e'.repeat(40) } } });
+  useGh(g);
+  assert.equal(G.mergeCommand(root, 4, { by: 'Jonathan', head: PR.headRefOid, out: quiet }), 2);
+  assert.equal(mergeOf(g.calls), undefined, 'nothing merged');
+  g = fakeGh(t, { pr: PR, polls: [all()] });
+  useGh(g);
+  assert.equal(G.mergeCommand(root, 4, { by: 'Jonathan', head: PR.headRefOid, out: quiet }), 0);
+  assert.equal(mergeOf(g.calls).args[5], PR.headRefOid);
 });
 
 test('lane.js merge refuses red CI, a draft, a closed PR, no --by, and CI that never finishes', (t) => {
