@@ -178,6 +178,9 @@ function startLane(root, dir, lane, env, head, install = installDeps) {
   // lane.js start fetches the base from origin and refuses a repo without one; the fixture's origin is a bare clone
   F.git(['clone', '-q', '--bare', root, path.join(dir, 'origin.git')], dir);
   F.git(['remote', 'add', 'origin', path.join(dir, 'origin.git')], root);
+  // the setup commits the approved spec on main itself, with no spec PR for the owner to merge: record the approval
+  // that merge would have recorded (hardening plan D1), so lane.js start builds the setup's spec
+  F.approveSpec(root, lane.slug, { by: 'kit-eval' });
   const wt = last(laneJs(['start', lane.slug, '--repo', root])).worktree;
   // node_modules is gitignored, so the worktree has none: installed before any step, so the setup's own `check` runs
   // and the session use the project's tools

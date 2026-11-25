@@ -184,7 +184,6 @@ function isPySpace(c) {
 }
 const WS = "\\t-\\r\\x1c-\\x20\\x85\\xa0\\u1680\\u2000-\\u200a\\u2028\\u2029\\u202f\\u205f\\u3000";
 const S = `[${WS}]`; // Python \s
-const NS = `[^${WS}]`; // Python \S
 const D = "\\p{Nd}"; // Python \d (Unicode decimal digit); use with the u flag
 const WB_START = "(?<![\\p{L}\\p{N}_])"; // Python \b (start of a word); use with the u flag
 const WB_END = "(?![\\p{L}\\p{N}_])";
@@ -279,7 +278,6 @@ export const HIGH_RISK_KEYWORDS_SCAN = globalOf(K.HIGH_RISK_KEYWORDS);
 
 const CONFIDENCE_VALUE = new RegExp(`${WB_START}(High|Medium|Low)${WB_END}`, "u");
 const DONE_TEST_FILE = /\.(test|spec)\.[a-z]+/;
-const APPROVAL_LINE = new RegExp(`Approved by:${S}*(${NS}.*?)${S}+on${S}+(${D}{4}-${D}{2}-${D}{2})${S}+at${S}+([0-9a-f]{7,40})`, "u");
 const CHECKLIST_UNANSWERED = new RegExp(`^${S}*-${S}*\\[${S}\\]`, "u");
 const FAIL_ID = new RegExp(`^(R${D}+)`, "u");
 const FAIL_LOCATION = new RegExp(`\`[^\`]+:${D}+\``, "u");
@@ -610,15 +608,8 @@ export class Validator {
     if (computed && declared !== "high-risk") {
       this.add(p, riskField[0], "risk-flag", `spec touches high-risk paths/keywords (${computed}); header must say 'Risk: high-risk'`);
     }
-    // Approval line when status requires it
-    const status = (hdr.get("status") ?? [1, ""])[1].toLowerCase();
-    const ap = sections.get("approval");
-    if (ap) {
-      const m = APPROVAL_LINE.exec(ap.text());
-      if (["approved", "building", "in-review", "merged"].includes(status) && !m) {
-        this.add(p, ap.start, "approval-line", "status requires 'Approved by: <name> on <YYYY-MM-DD> at <commit>'");
-      }
-    }
+    // No approval line is required: the owner approves a spec by merging its spec/<slug> PR with kit lane merge, which
+    // records the yes in the lane store (hardening plan D1). A line written in the file approves nothing.
     // Architecture checklist answered
     const ac = sections.get("architecture checklist");
     if (ac) {

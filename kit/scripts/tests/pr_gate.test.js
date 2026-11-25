@@ -211,6 +211,30 @@ test('lane.js merge waits through "no checks reported" and merges at the checked
   assert.ok(merge.args.join(' ').includes('for Jonathan'));
 });
 
+test('lane.js merge of a spec/<slug> PR merges at the checked head, then records the owner\'s yes in the lane store (hardening plan D1)', (t) => {
+  const root = project(t);
+  const merged = 'c'.repeat(40);
+  // views: the head check, mergeCommand's first read, the checks poll, the re-read; the 5th, after the merge, is merged
+  const spec = { ...PR, number: 6, url: 'https://github.com/o/proj/pull/6', headRefName: 'spec/footer', title: 'spec: footer' };
+  const { env, calls } = fakeGh(t, { pr: spec, prAfter: { after: 4, pr: { state: 'MERGED', mergeCommit: { oid: merged }, mergedAt: '2026-11-24T10:00:00Z' } }, polls: [all()] });
+  const r = lane(root, env, 'merge', '--pr', '6', '--by', 'Jonathan');
+  assert.equal(r.returncode, 0, r.stderr + r.stdout);
+  assert.match(r.stdout, /merged \(squash\) at head aaaaaaa/);
+  assert.match(r.stdout, /spec footer: approval by Jonathan recorded \(PR #6, merged as ccccccc\)/);
+  assert.ok(calls().some((c) => c.args[0] === 'pr' && c.args[1] === 'merge'));
+  const ap = JSON.parse(fs.readFileSync(path.join(root, '.claude', 'session', 'lanes', 'footer.json'), 'utf8')).spec_approval;
+  assert.deepEqual({ by: ap.by, pr: ap.pr, head: ap.head, commit: ap.commit }, { by: 'Jonathan', pr: 6, head: PR.headRefOid, commit: merged });
+});
+
+test('lane.js merge records no approval when a spec PR is not merged (red CI)', (t) => {
+  const root = project(t);
+  const spec = { ...PR, number: 6, headRefName: 'spec/footer' };
+  const { env } = fakeGh(t, { pr: spec, polls: [all('failure')] });
+  const r = lane(root, env, 'merge', '--pr', '6', '--by', 'Jonathan');
+  assert.equal(r.returncode, 2);
+  assert.ok(!fs.existsSync(path.join(root, '.claude', 'session', 'lanes', 'footer.json')), 'nothing recorded');
+});
+
 test('lane.js merge uses the owner\'s ruleset bypass (--admin) only after every check is green and only where GitHub enforces protection for admins', (t) => {
   const root = project(t);
   const mergeOf = (calls) => calls().find((c) => c.args[0] === 'pr' && c.args[1] === 'merge');

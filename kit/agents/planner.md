@@ -51,4 +51,4 @@ Run `kit lane unknowns docs/specs/<slug>.md --repo "$PWD"` on your draft:
 - A done-criterion has no test or artifact.
 
 ## Finish
-Set `Status: waiting-approval`. Update the feature's row in `ROADMAP.md`. Leave the Approval line blank; a human fills it. `kit validate_docs --repo .` runs when you stop (you can run it first); fix every violation before you can finish.
+Set `Status: waiting-approval`. Update the feature's row in `ROADMAP.md`. Leave the Approval section as the template has it; nobody fills it: the owner approves by merging the spec PR, and `kit lane merge` records that. `kit validate_docs --repo .` runs when you stop (you can run it first); fix every violation before you can finish.

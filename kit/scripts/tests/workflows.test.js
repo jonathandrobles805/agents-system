@@ -196,6 +196,12 @@ test('#57: the queue skips an agreed goal whose work type is not built yet, so a
   assert.equal(JSON.parse(r.stdout).slug, 'other');
 });
 
+/** The owner merges the lane's spec as its spec/<slug> PR with kit lane merge: the file lands on main, the yes is recorded. */
+function mergeSpecPr(root, specRel, text) {
+  fs.writeFileSync(path.join(root, specRel), text);
+  F.approveSpec(root, 'refund-route', { commit: F.commitAll(root, 'spec: refund-route (#3)'), pr: 3 });
+}
+
 test('fix lane end to end from the goal alone: lane → reproduce → plan → approve → scope → test (fault 45: the fix lane dead-ends at reproduce)', (t) => {
   const { root } = project(t);
   setGoal(root, 'refund-route', 'Work type', 'fix');
@@ -228,6 +234,12 @@ test('fix lane end to end from the goal alone: lane → reproduce → plan → a
   // scope refuses until the human approved
   assert.equal(runScript('lane.js', ['scope', 'refund-route', '--repo', root]).returncode, 2);
   fs.writeFileSync(path.join(wt, specRel), approvedSpec);
+  // an approved status and a filled approval line are not the approval: the owner's merge of the spec PR is (D1)
+  step = next(root, 'refund-route');
+  assert.equal(step.stage, 'approve', JSON.stringify(step));
+  const notYet = runScript('lane.js', ['scope', 'refund-route', '--repo', root]);
+  assert.ok(notYet.returncode === 2 && notYet.stderr.includes('no recorded approval for refund-route: merge the spec PR first'), notYet.stderr);
+  mergeSpecPr(root, specRel, approvedSpec);
   step = next(root, 'refund-route');
   assert.equal(step.stage, 'scope', JSON.stringify(step));
   const sc = runScript('lane.js', ['scope', 'refund-route', '--repo', root]);
@@ -385,6 +397,7 @@ test('field test #47: a fix lane re-routed to refactor by the debugger plans, ge
   step = next(root, 'refund-route');
   assert.equal(step.stage, 'approve');
   fs.writeFileSync(path.join(wt, specRel), approvedSpec);
+  mergeSpecPr(root, specRel, approvedSpec);
   step = next(root, 'refund-route');
   assert.equal(step.stage, 'scope', JSON.stringify(step));
   assert.equal(runScript('lane.js', ['scope', 'refund-route', '--repo', root]).returncode, 0);
