@@ -448,7 +448,8 @@ export function reviewEvidence(row, evidence, ctx = evidenceContext({})) {
     if (printsOnly(cmd)) invented.push(`\`${cmd.slice(0, 40)}\` (prints, tests nothing)`);
     // proves the command ran: a part of one the session ran passes (a shortened `git diff main...HEAD -- tests` of
     // `… -- src tests` too), so spacing never fails a real citation. Citing it verbatim is reviewer.md's rule, the judge's to grade
-    else if (ctx.commands.some((c) => c.includes(cmd))) real++;
+    // a pipe escaped for the table (`a \| b`) is the command's `|` when the session ran no `\|`
+    else if (ctx.commands.some((c) => c.includes(cmd) || c.includes(cmd.replace(/\\\|/g, '|')))) real++;
   }
   if (invented.length) return { ok: false, why: `cites ${invented.slice(0, 2).join(', ')}` };
   if (real) return { ok: true, why: `${real} piece(s) of evidence` };
@@ -541,7 +542,9 @@ export function critiqueItems(text) {
 /** spec-critic.md's one statement for a critique that found nothing. */
 export const NO_GAPS = 'No gaps found after independent caller search and criterion review.';
 // an item that says, in other words, that there is nothing to report: it must be NO_GAPS as the agent file words it
-const SAYS_NOTHING = /^(?:no\s+(?:gaps?|issues?|problems?|risks?|concerns?|findings?)\b|nothing\b|none\b|n\/a\b|looks\s+good|lgtm\b|all\s+good)/i;
+// "Nothing" and "None" say nothing only on their own or as "nothing found", "nothing to report", "none here": "Nothing
+// tests the boundary" and "None of the tests cover max" are gaps, and the critique that names one is correct work
+const SAYS_NOTHING = /^(?:no\s+(?:gaps?|issues?|problems?|risks?|concerns?|findings?)\b|nothing(?=\s*$|\s*[.,;:!]|\s+(?:found|to\s|of\s+note|stands?\s+out|else|here|wrong|missing)\b)|none(?=\s*$|\s*[.,;:!]|\s+(?:found|here)\b)|n\/a\b|looks\s+good|lgtm\b|all\s+good)/i;
 
 /**
  * The paths among `paths` that the setup's `.gitignore` files (each `.gitignore` in `setupState`, as the setup left it,
@@ -2055,13 +2058,27 @@ export const CHECKS = {
     // the lesson rules ask for every field, not for content in it: each free-text field holds at least three words of
     // letters (letterWords), so blank fields or `.` in each are no lesson. `Enforced by` and `Status` are names from
     // the template's own choices (validate_docs parseEnforcedBy)
+    // a field's text runs on past its own line until the next field or heading: "Proposed change: Two parts." followed by
+    // indented bullets naming them is one field, counted whole (real run on main bdbfe47)
     const thin = [];
     let title = '';
+    let field = null;
+    const close = () => {
+      if (field && letterWords(field.text) < 3) thin.push(`'${title.slice(0, 40)}' ${field.name}: "${field.text.trim().slice(0, 20)}"`);
+      field = null;
+    };
+    // fenced code under a field is its sketch, not its words: "." above a sketch is still an empty field
+    let code = false;
     for (const l of entry) {
-      if (l.startsWith('## ')) title = l.slice(3).trim();
-      const m = /^\s*-\s*(What went wrong|Root cause|Rule|Proposed change)\s*:(.*)$/i.exec(l);
-      if (m && letterWords(m[2]) < 3) thin.push(`'${title.slice(0, 40)}' ${m[1]}: "${m[2].trim().slice(0, 20)}"`);
+      const m = /^\s{0,1}-\s*(What went wrong|Root cause|Rule|Proposed change)\s*:(.*)$/i.exec(l);
+      if (/^\s*```/.test(l)) code = !code;
+      else if (code) continue;
+      else if (l.startsWith('## ')) [close(), title = l.slice(3).trim()];
+      else if (m) [close(), field = { name: m[1], text: m[2] }];
+      else if (/^\s{0,1}-\s*[A-Za-z][\w ]*:/.test(l)) close();
+      else if (field) field.text += `\n${l}`;
     }
+    close();
     return thin.length ? { ok: false, why: `${thin.length} lesson field(s) with fewer than three words: ${thin.slice(0, 3).join('; ')}` } : { ok: true, why: `${n} lesson entr${n === 1 ? 'y' : 'ies'}, each valid` };
   },
   /**

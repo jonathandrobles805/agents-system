@@ -229,7 +229,9 @@ export class Section {
     for (const [n, t] of this.lines) {
       const s = t.trim();
       if (s.startsWith('|') && !/^\|\s*-{2,}/.test(s)) {
-        const cells = s.replace(/^\|+|\|+$/g, '').split('|').map((c) => c.trim());
+        // a cell may hold an escaped pipe (`\|`, GitHub-flavoured Markdown, code spans included): it splits no cell and
+        // stays in the cell as written, so a command cited in a table (`grep 'a\|b'`) reads back whole
+        const cells = s.replace(/^\|+/, '').replace(/(?<!\\)\|+$/, '').split(/(?<!\\)\|/).map((c) => c.trim());
         rows.push([n, cells]);
       }
     }

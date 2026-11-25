@@ -182,6 +182,11 @@ test('hard checks fail for the right reasons', () => {
   assert.equal(CHECKS.review_has_evidence(rv('| R1 | Named test | PASS | ok |\n'), R).ok, false);
   assert.equal(CHECKS.review_has_evidence(rv('| R1 | Named test | PASS | looks good |\n'), R).ok, false, 'long enough for the validator, still no evidence');
   assert.match(CHECKS.review_has_evidence(rv('| R1 | Named test | PASS | looks good |\n'), R).why, /R1 .*\(evidence: "looks good"\)/, 'the reason shows the row\'s evidence');
+  // a command cited in the table with its pipe escaped (`\|`, GitHub Markdown) reads back whole and matches the run
+  // (real run on main 3a6390d: R7 and R13 were cut at the `\|` and failed)
+  const grepRun = { commands: ['grep -n \'"verify"\\|"test"\' .claude/kit.json', 'git diff main | wc -l'] };
+  for (const [ev, why] of [['`grep -n \'"verify"\\|"test"\' .claude/kit.json` → 15:"test"', 'grep alternation, as run'], ['`git diff main \\| wc -l` → 4', 'a shell pipe escaped for the table']])
+    assert.equal(CHECKS.review_has_evidence(rv(`| R1 | Named test | PASS | ${ev} |\n`, { ...session, events: [...(session.events ?? []), ...grepRun.commands.map((command) => ({ event: 'bash', tool: 'Bash', command, result: 'ok' }))] }), R).ok, true, why);
   // reviewer.md: evidence is `file:line`, `log#line`, or the command and its output; "Looks fine is not evidence"
   for (const e of ['looks fine to me', 'verified', 'Verified by running the tests, all good', '`npx vitest run`', '`tests/truncate.test.ts::name` exists']) assert.equal(CHECKS.review_has_evidence(rv(`| R1 | Named test | PASS | ${e} |\n`), R).ok, false, e);
   for (const e of ['tests/x.ts:2-4 asserts it', 'progress.md D1 green truncate-text.log#26', '`npx vitest run`: 2 passed']) assert.equal(CHECKS.review_has_evidence(rv(`| R1 | Named test | PASS | ${e} |\n`), R).ok, true, e);
@@ -221,6 +226,9 @@ test('hard checks fail for the right reasons', () => {
   // every free-text field holds content (finding: blank fields, or `.` in each, passed)
   assert.equal(CHECKS.lesson_proposed({ output: lesson('test', 'tests/x.test.ts asserts it', ['.', '.', '.']) }).ok, false, '`.` in every field');
   assert.equal(CHECKS.lesson_proposed({ output: lesson('test', '.') }).ok, false, '`.` as the proposed change');
+  // a field that runs on in indented lines is counted whole (real run on main bdbfe47: "Proposed change: Two parts.")
+  assert.equal(CHECKS.lesson_proposed({ output: lesson('test', 'Two parts.\n  1. Kit: `hook_done_check.js` refuses the stop.\n  2. Project: a boundary test in the spec template.') }).ok, true, 'a field continued in sub-bullets');
+  assert.equal(CHECKS.lesson_proposed({ output: lesson('test', 'Two parts.\n  ```\n  only code here\n  ```') }).ok, false, 'code alone does not fill a field');
   assert.equal(CHECKS.lesson_proposed({ output: lesson('test', 'tests/x.test.ts asserts it', ['a', 'b', 'c']) }).ok, false, 'one letter per field');
   assert.equal(CHECKS.lesson_proposed({ output: lesson('test', 'tests/x.test.ts asserts it', ['', '', '']) }).ok, false, 'blank fields');
   assert.equal(CHECKS.lesson_proposed({ output: lesson('text-only', 'none') }).ok, false, 'text-only with no reason');
@@ -318,6 +326,11 @@ test('hard checks fail for the right reasons', () => {
   const withItems = (items) => waitingSpec.replace('## Approval', `${items}\n\n## Approval`);
   const CW = (items, extra = {}) => CHECKS.critique_written({ files: { 'docs/specs/truncate-text.md': items === null ? waitingSpec : withItems(items) }, setup_state: { 'docs/specs/truncate-text.md': waitingSpec }, ...extra }, critic);
   assert.equal(CW('- C1. D1 has no negative case for a max below one (line 68). → ').ok, true, 'a real gap');
+  // a gap that opens with "Nothing" or "None of" is still a gap (real run on main 3a6390d: "Nothing tests the boundary")
+  for (const gap of ['Nothing tests the boundary `text.length === max` (line 68).', 'None of the tests cover a max below one (line 68).'])
+    assert.equal(CW(`- C1. ${gap} → `).ok, true, gap);
+  for (const items of ['- C1. Nothing. → ', '- C1. Nothing found. → ', '- C1. Nothing to report → ', '- C1. None. → ', '- C1. None here → ', '- C1. Nothing stands out. → '])
+    assert.equal(CW(items).ok, false, items);
   // the no-gaps statement names the commands the critic ran (spec-critic.md), verified against the session (finding:
   // any backticked text passed, run or not); the critic has no Bash, so its Grep/Glob search named in prose counts
   const NG = 'No gaps found after independent caller search and criterion review.';
