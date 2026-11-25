@@ -1,8 +1,11 @@
 #!/usr/bin/env node
 // PostToolUse on every tool inside a lane: enforce the lane's time and tool-call budget.
 // On exceed: write an Escalation into progress.md (if not present) and return a block decision.
+// The stage, its clock and its budget are read from the lane store (.claude/session/lanes/<slug>.json in the main
+// checkout, written only by lane.js advance; hardening plan Step 2), never from the lane's own lane.json, which the
+// lane can rewrite. A lane started before the store falls back to lane.json until its first move:
 // lane.json: {"feature": "...", "stage": "build", "started": "<iso>", "budget": {"hours": 4, "tool_calls": 800},
-//             "budget_override": {"review": {"hours": 4, "tool_calls": 400}}}   (a human's raise; survives lane.js stage)
+//             "budget_override": {"review": {"hours": 4, "tool_calls": 400}}}   (a human's raise; survives lane.js advance)
 import fs from 'node:fs';
 import path from 'node:path';
 import * as K from './kitlib.js';
@@ -14,22 +17,9 @@ const DEFAULT_BUDGET = {
   review: { hours: 1, tool_calls: 200 },
 };
 
-/** Hours since `started` ("YYYY-MM-DD[THH:MM[:SS[.ffffff]]]", local wall-clock time as /zi-implement writes it); 0 when it does not parse. */
-function hoursSince(started) {
-  const m = /^(\d{4})-(\d\d)-(\d\d)(?:[T ](\d\d):(\d\d)(?::(\d\d)(?:\.(\d+))?)?)?$/.exec(typeof started === 'string' ? started : '');
-  if (!m) return 0;
-  const [y, mo, day, h, mi, s] = m.slice(1, 7).map((x) => Number(x ?? 0));
-  const ms = Math.floor(Number(`0.${m[7] ?? 0}`) * 1000);
-  const t = new Date(Date.UTC(y, mo - 1, day, h, mi, s, ms)); // wall-clock arithmetic: no time zone or DST involved
-  if (t.getUTCMonth() !== mo - 1 || t.getUTCDate() !== day || t.getUTCHours() !== h) return 0;
-  const n = new Date();
-  const nowWall = Date.UTC(n.getFullYear(), n.getMonth(), n.getDate(), n.getHours(), n.getMinutes(), n.getSeconds(), n.getMilliseconds());
-  return (nowWall - t) / 3.6e6;
-}
-
 /**
  * Where a human raises a stage's budget, and the only place one is read from (#41): lane.json budget_override.<stage>.
- * The hook merges it over the stage budget on every call, and lane.js stage merges it again when the stage changes,
+ * The hook merges it over the stage budget on every call, and lane.js advance merges it again when the stage changes,
  * so a raise is neither lost on the next stage change nor delayed until one. Nothing reads a budget from the spec.
  */
 export function raiseHint(lane, stage) {
@@ -47,7 +37,7 @@ export function ensureEscalation(progress, reason, needs = 'a human to raise the
 export function main() {
   const d = K.readHookInput();
   if (!d || Object.keys(d).length === 0) return 0;
-  // The budget is the lane's, not the session's: elapsed hours come from lane.json `started`, so any session
+  // The budget is the lane's, not the session's: elapsed hours come from the lane store, so any session
   // working on the lane is over budget once the lane is. A subagent reports the main repo as cwd, which is how
   // 6h43m ran against a 1-hour budget with no event.
   const r = K.laneForHook(d);
@@ -56,22 +46,28 @@ export function main() {
   }
   const lane = r.lane;
   if (!lane) return 0;
-  const stage = lane.data.stage ?? 'build';
+  const rec = K.laneStoreRecord(lane);
+  const inStore = Boolean(rec && typeof rec.stage === 'string');
+  const clock = inStore ? K.storeClock(rec) : null;
+  const stage = inStore ? rec.stage : lane.data.stage ?? 'build';
+  // the stage's start: the store's (a move that re-enters the stage does not restart it); lane.json's for a legacy lane
+  const started = inStore ? clock.stage_started : lane.data.started;
+  const stored = inStore && rec.budget && typeof rec.budget === 'object' ? rec.budget : inStore ? {} : lane.data.budget;
   const override = lane.data.budget_override && typeof lane.data.budget_override === 'object' ? lane.data.budget_override[stage] : null;
   const budget = {
     ...(Object.hasOwn(DEFAULT_BUDGET, stage) ? DEFAULT_BUDGET[stage] : DEFAULT_BUDGET.build),
-    ...lane.data.budget,
+    ...stored,
     ...(override && typeof override === 'object' ? override : {}),
   };
   // #41: one counter per lane, stage and that stage's start. It was one file per session_id that nothing reset, so
   // every stage after the first was measured against the lane's lifetime calls while its hours ran from its own start.
-  // lane.js stage writes a new `started`, so a stage that is re-entered starts a new count, as its clock does.
-  const key = `${stage}.${String(lane.data.started ?? 'unstarted')}`.replace(/[^A-Za-z0-9_.-]/g, '_');
+  // A stage entered again (review → build) starts a new count, as its clock does.
+  const key = `${stage}.${String(started ?? 'unstarted')}`.replace(/[^A-Za-z0-9_.-]/g, '_');
   const counter = path.join(lane.root, K.SESSION_DIR, `budget.${key}.calls`);
   fs.mkdirSync(path.dirname(counter), { recursive: true });
   const n = (K.isFile(counter) ? parseInt(fs.readFileSync(counter, 'utf8'), 10) || 0 : 0) + 1;
   fs.writeFileSync(counter, String(n));
-  const hours = hoursSince(lane.data.started);
+  const hours = inStore ? clock.stage_hours ?? 0 : K.hoursSince(started);
   const over = [];
   if (n > Math.trunc(Number(budget.tool_calls ?? 1e9))) over.push(`${n} tool calls > budget ${budget.tool_calls}`);
   if (hours > Number(budget.hours ?? 1e9)) over.push(`${hours.toFixed(1)}h elapsed > budget ${budget.hours}h`);

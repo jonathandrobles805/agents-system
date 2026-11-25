@@ -574,6 +574,11 @@ test('the judge prompt is capped by bytes and goes to claude on stdin, so a prom
   assert.equal(got.stdin, p, 'the whole prompt on stdin');
   // the worker's short goal still goes as an argument, as before
   assert.deepEqual(JSON.parse(claude.headless('do x', tmpPath(t), env, 'x', 60000, 'tester').stdout).argv, ['-p', 'do x', '--permission-mode', 'default', '--agent', 'tester']);
+  // the worker's per-run grants (hardening plan Step 2) go to claude as --settings
+  assert.deepEqual(JSON.parse(claude.headless('do x', tmpPath(t), env, 'x', 60000, 'tester', { claudeSettings: '/s.json' }).stdout).argv, ['-p', 'do x', '--permission-mode', 'default', '--settings', '/s.json', '--agent', 'tester']);
+  const src = fs.readFileSync(path.join(path.dirname(new URL(import.meta.url).pathname), '..', '..', 'eval', 'runners', 'claude.js'), 'utf8');
+  assert.match(src, /SB\.writeRunSettings\(path\.join\(dir, 'claude-settings\.json'\), \{ root, wt: cwd, role: task\.role \?\? null \}\)/, 'the worker gets its role\'s settings, outside its repo');
+  assert.match(src, /headless\(task\.goal, cwd, env, settings, timeoutMs, agent, \{ claudeSettings \}\)/);
 });
 
 test('the judge gets the files the worker read and the searches and fetches it made, so it can tell a cited source the session never read (researcher r4)', () => {

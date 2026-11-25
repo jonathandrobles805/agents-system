@@ -793,7 +793,7 @@ test('README counts 19 planted faults; the suite runs 54 [inverts at Step 7]', (
   assert.match(read(REPO, 'README.md'), /the 19 faults from the spec/, 'DEFECT: the count is written by hand');
   const run = read(REPO, 'planted-faults', 'run.js');
   const ids = new Set([...run.matchAll(/\brecord\((\d+),/g)].map((m) => Number(m[1])));
-  assert.equal(ids.size, 61, 'the suite defines 61 (S0 added #46; #68 added #47, #48; 0016 E.11 added #49; 0016 E.7 added #50; hardening plan D3 added #51; #57-#59 added #52; #106 added #53; the shell scope fix added #54; hardening plan Step 2 added #55 and, for the spec approval (D1), #57; #107 added #56; #67/#82 added #58; dashboard step 0 added #59 and #60; the security sign-off (#58) added #61)');
+  assert.equal(ids.size, 63, 'the suite defines 63 (S0 added #46; #68 added #47, #48; 0016 E.11 added #49; 0016 E.7 added #50; hardening plan D3 added #51; #57-#59 added #52; #106 added #53; the shell scope fix added #54; hardening plan Step 2 added #55 and, for the spec approval (D1), #57; #107 added #56; #67/#82 added #58; dashboard step 0 added #59 and #60; the security sign-off (#58) added #61; rounds in the store added #62; the Step 2 narrowing (#63) added #63)');
 });
 
 test('the generated audit names a commit that is not HEAD [inverts at Step 7]', () => {
@@ -1104,15 +1104,18 @@ function secondLane(root, slug = 'other-lane') {
   return wt;
 }
 
-/** Put the lane well over its budget, in the local wall-clock format hook_budget_check.hoursSince parses. */
+/**
+ * Put the lane well over its budget, in the local wall-clock format kitlib.hoursSince parses. The clock and the budget
+ * are the lane store's (hardening plan Step 2), so the store's record is backdated, as seven hours of work would leave it.
+ */
 function overBudget(wt) {
-  const lj = path.join(wt, '.claude', 'lane.json');
-  const d = JSON.parse(fs.readFileSync(lj, 'utf8'));
-  const a = new Date(Date.now() - 7 * 3.6e6);
-  const p2 = (x) => String(x).padStart(2, '0');
-  d.started = `${a.getFullYear()}-${p2(a.getMonth() + 1)}-${p2(a.getDate())}T${p2(a.getHours())}:${p2(a.getMinutes())}:${p2(a.getSeconds())}`;
+  const sp = path.join(path.dirname(path.dirname(wt)), path.basename(path.dirname(wt)).replace(/-lanes$/, ''), '.claude', 'session', 'lanes', 'refund-route.json');
+  const d = JSON.parse(fs.readFileSync(sp, 'utf8'));
+  const at = K.isoSeconds(new Date(Date.now() - 7 * 3.6e6));
+  d.started = at;
+  d.moves = d.moves.map((m) => ({ ...m, at }));
   d.budget = { hours: 1, tool_calls: 800 };
-  fs.writeFileSync(lj, K.jsonDumps(d, { indent: 2 }));
+  fs.writeFileSync(sp, K.jsonDumps(d, { indent: 2 }));
 }
 
 test('#29 done-check gates a subagent that stops from the main repo', (t) => {

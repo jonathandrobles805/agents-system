@@ -82,7 +82,7 @@ if (( NODE_MAJOR < 22 )); then
   echo "node v22 or newer is required for kit scripts (found $(node -v))" >&2; exit 1
 fi
 
-# The launcher: agents run kit scripts as `kit <script> ...`, which the project's `Bash(kit *)` rule approves (#63).
+# The launcher: agents run kit scripts as `kit <script> ...`, which the project's rules name one by one (`Bash(kit lane next-step *)`, #63).
 # Written in place of any earlier launcher (a fresh file, not through a link), always pointing at this install.
 mkdir -p "$BIN_DIR"
 launcher_src="$(cat "$KIT_ROOT/kit/bin/kit.in")"

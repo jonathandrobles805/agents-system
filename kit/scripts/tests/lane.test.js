@@ -2,11 +2,14 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
+import os from 'node:os';
 import { spawnSync } from 'node:child_process';
 import { git, commitAll, nodeApi, approveSpec } from './fixtures.js';
 import { runScript, setEnv, tmpPath } from './helpers.js';
 import { project, spec, review } from './testdata.js';
 import * as P from '../permission_probe.js';
+import * as K from '../kitlib.js';
+import * as L from '../lane.js';
 
 const lane = (...args) => runScript('lane.js', args);
 const read = (...p) => fs.readFileSync(path.join(...p), 'utf8');
@@ -268,6 +271,152 @@ test('advance: a lane started before the store keeps working; its lane.json stag
   write(lf, read(lf).replace('"stage": "build"', '"stage": "review"'));
   assert.equal(lane('advance', 'refund-route', 'build', '--repo', root).returncode, 0);
   assert.deepEqual(storeOf(root).moves.map((m) => [m.from, m.to]), [['review', 'build']]);
+});
+
+// hardening plan Step 2: rounds and wall time are kept in the store by advance, not in the lane's own files
+
+/** A started lane at review, its criteria citing a logged red and green run, as the tester and implementer leave it. */
+function atReview(t, { maxRounds = null } = {}) {
+  setEnv(t, 'KIT_STATUS_NO_GH', '1');
+  const { root } = project(t);
+  if (maxRounds !== null) {
+    const kj = path.join(root, '.claude', 'kit.json');
+    write(kj, JSON.stringify({ ...JSON.parse(read(kj)), max_rounds: maxRounds }, null, 2));
+    commitAll(root, 'max_rounds');
+  }
+  fs.mkdirSync(path.join(root, 'docs', 'goals'), { recursive: true });
+  write(path.join(root, 'docs', 'goals', 'refund-route.md'), GOAL);
+  const wt = JSON.parse(lane('start', 'refund-route', '--repo', root).stdout).worktree;
+  assert.equal(lane('advance', 'refund-route', 'test', '--repo', root).returncode, 0);
+  write(path.join(wt, '.claude/session/refund-route.log'), LOG_RED + LOG_GREEN);
+  const prog = path.join(wt, 'docs/specs/refund-route.progress.md');
+  write(prog, read(prog).replaceAll('| — | — |', '| refund-route.log#1 | refund-route.log#4 |'));
+  assert.equal(lane('advance', 'refund-route', 'build', '--repo', root).returncode, 0);
+  assert.equal(lane('advance', 'refund-route', 'review', '--repo', root).returncode, 0);
+  return { root, wt };
+}
+const statusOf = (root) => JSON.parse(runScript('kit_status.js', ['--repo', root, '--json']).stdout);
+const laneStatus = (root) => statusOf(root).lanes.find((l) => l.slug === 'refund-route');
+
+test('rounds: each review → build move counts a FAIL round in the store; a round past the limit parks the lane with its reason', (t) => {
+  const { root } = atReview(t);
+  assert.deepEqual(L.laneRounds(root, storeOf(root)), { round: 1, limit: 3, failed: 0, parked: null });
+  assert.deepEqual(laneStatus(root).rounds, { round: 1, limit: 3, failed: 0, parked: null });
+  for (const n of [1, 2]) {
+    assert.equal(lane('advance', 'refund-route', 'build', '--repo', root).returncode, 0, `FAIL round ${n} sends the work back`);
+    assert.equal(storeOf(root).failed_rounds, n);
+    assert.equal(lane('advance', 'refund-route', 'review', '--repo', root).returncode, 0);
+  }
+  const ns = JSON.parse(lane('next-step', 'refund-route', '--repo', root).stdout);
+  assert.deepEqual(ns.rounds, { round: 3, limit: 3, failed: 2, parked: false });
+  // the third FAIL would start round 4 of 3: lane.js stage (advance's old name, the same call) parks the lane instead
+  const r = lane('stage', 'refund-route', 'build', '--repo', root);
+  assert.equal(r.returncode, 2, r.stderr);
+  assert.match(r.stderr, /review → build refused: the lane is parked/);
+  assert.match(r.stderr, /3 review FAIL rounds; round 4 would pass the limit of 3/);
+  assert.match(r.stderr, /kit lane advance refund-route build --by <name>/, 'it names the command the human runs');
+  const rec = storeOf(root);
+  assert.equal(rec.stage, 'parked');
+  assert.equal(rec.failed_rounds, 3);
+  assert.match(rec.parked.reason, /round 4 would pass the limit of 3/);
+  assert.deepEqual(rec.moves.slice(-1).map((m) => [m.from, m.to]), [['review', 'parked']]);
+  assert.match(read(root, 'ROADMAP.md'), /\| refund-route \| M1 \| escalated \|/);
+  // readers: kit_status (the dashboard's source) and next-step say so, from the store
+  const st = statusOf(root);
+  const l = st.lanes.find((x) => x.slug === 'refund-route');
+  assert.equal(l.position, 'escalated');
+  assert.ok(l.rounds.parked && l.rounds.round === 3 && l.rounds.limit === 3, JSON.stringify(l.rounds));
+  assert.ok(st.needs_you.some((n) => n.slug === 'refund-route' && /round 4 would pass/.test(n.failure)), JSON.stringify(st.needs_you));
+  const parked = JSON.parse(lane('next-step', 'refund-route', '--repo', root).stdout);
+  assert.ok(parked.stage === 'escalated' && parked.needs_human && /kit lane advance refund-route build --by <name>/.test(parked.reason), JSON.stringify(parked));
+  // a merge is a fact in git: a parked lane the owner merged anyway goes to retro, and nobody is recorded as unparking it
+  const wt = path.join(path.dirname(root), `${path.basename(root)}-lanes`, 'refund-route');
+  write(path.join(wt, 'src', 'api', 'routes.ts'), '// built\n');
+  commitAll(wt, 'D1');
+  lane('evidence', 'refund-route', '--repo', root);
+  commitAll(wt, 'evidence');
+  git(['merge', '-q', '--no-ff', 'wt/refund-route', '-m', 'merge'], root);
+  const m = lane('merged', 'refund-route', '--repo', root);
+  assert.equal(m.returncode, 0, m.stderr);
+  assert.ok(storeOf(root).stage === 'retro' && storeOf(root).unparked === undefined, JSON.stringify(storeOf(root)));
+});
+
+test('rounds: a parked lane refuses every build move until a named human lets it go on, for one more round', (t) => {
+  const { root, wt } = atReview(t, { maxRounds: 1 });
+  let r = lane('advance', 'refund-route', 'build', '--repo', root);
+  assert.ok(r.returncode === 2 && /round 2 would pass the limit of 1/.test(r.stderr), `kit.json max_rounds sets the limit: ${r.stderr}`);
+  for (const to of ['test', 'review']) {
+    r = lane('advance', 'refund-route', to, '--repo', root);
+    assert.ok(r.returncode === 2 && r.stderr.includes(`parked → ${to} is not an allowed move`) && r.stderr.includes('--by <name>'), r.stderr);
+  }
+  r = lane('advance', 'refund-route', 'build', '--repo', root);
+  assert.ok(r.returncode === 2 && r.stderr.includes('only a named human lets it go on'), r.stderr);
+  r = lane('advance', 'refund-route', 'parked', '--repo', root);
+  assert.equal(r.returncode, 2, 'nothing moves a lane to parked but the round limit');
+  // the lane rewriting its own lane.json changes nothing: the store is the record
+  const lf = path.join(wt, '.claude', 'lane.json');
+  write(lf, JSON.stringify({ ...JSON.parse(read(lf)), stage: 'build', failed_rounds: 0, round_limit: 99 }, null, 2));
+  assert.equal(lane('advance', 'refund-route', 'review', '--repo', root).returncode, 2);
+  assert.equal(storeOf(root).stage, 'parked');
+  assert.equal(laneStatus(root).position, 'escalated');
+  // the human's word: one more round, recorded with their name; the next FAIL parks it again
+  r = lane('advance', 'refund-route', 'build', '--repo', root, '--by', 'Jonathan Robles');
+  assert.equal(r.returncode, 0, r.stderr);
+  const rec = storeOf(root);
+  assert.equal(rec.stage, 'build');
+  assert.equal(rec.parked, undefined);
+  assert.equal(rec.round_limit, 2);
+  assert.ok(rec.unparked.length === 1 && rec.unparked[0].by === 'Jonathan Robles' && rec.unparked[0].round === 2, JSON.stringify(rec.unparked));
+  assert.match(read(root, 'ROADMAP.md'), /\| refund-route \| M1 \| building \|/);
+  assert.deepEqual(laneStatus(root).rounds, { round: 2, limit: 2, failed: 1, parked: null });
+  assert.equal(lane('advance', 'refund-route', 'review', '--repo', root).returncode, 0);
+  r = lane('advance', 'refund-route', 'build', '--repo', root);
+  assert.ok(r.returncode === 2 && /2 review FAIL rounds; round 3 would pass the limit of 2/.test(r.stderr), r.stderr);
+});
+
+test('wall time is the store\'s: started and each move\'s time; the budget hook reads it, not the lane\'s lane.json', (t) => {
+  const { root, wt } = atReview(t);
+  const sp = path.join(root, '.claude', 'session', 'lanes', 'refund-route.json');
+  const seven = K.isoSeconds(new Date(Date.now() - 7 * 3.6e6));
+  const rec = storeOf(root);
+  assert.ok(typeof rec.started === 'string' && rec.started === rec.moves[0].at, 'the lane\'s start is recorded');
+  write(sp, JSON.stringify({ ...rec, started: seven, moves: rec.moves.map((m) => ({ ...m, at: seven })), budget: { hours: 1, tool_calls: 800 } }, null, 2));
+  const l = laneStatus(root);
+  assert.ok(l.elapsed_hours > 6.9 && l.elapsed_hours < 7.1 && l.started === seven, JSON.stringify({ e: l.elapsed_hours, s: l.started }));
+  assert.ok(JSON.parse(lane('next-step', 'refund-route', '--repo', root).stdout).elapsed_hours > 6.9);
+  // the lane resets its own clock and raises its budget in lane.json: the hook still reads the store
+  const lf = path.join(wt, '.claude', 'lane.json');
+  write(lf, JSON.stringify({ ...JSON.parse(read(lf)), started: K.isoSeconds(), budget: { hours: 100, tool_calls: 100000 } }, null, 2));
+  const h = runScript('hook_budget_check.js', [], { stdin: JSON.stringify({ hook_event_name: 'PostToolUse', session_id: 's', cwd: wt, tool_name: 'Read', tool_input: { file_path: 'x' } }) });
+  assert.match(h.stdout, /budget exceeded for stage 'review': 7\.0h elapsed > budget 1h/, JSON.stringify(h));
+  // re-entering the stage it is at does not restart its clock (#53)
+  assert.equal(lane('advance', 'refund-route', 'review', '--repo', root).returncode, 0);
+  assert.equal(K.storeClock(storeOf(root)).stage_started, seven);
+  // a review FAIL starts a new build stage, with its own clock
+  assert.equal(lane('advance', 'refund-route', 'build', '--repo', root).returncode, 0);
+  const c = K.storeClock(storeOf(root));
+  assert.ok(c.stage_hours < 0.1 && c.elapsed_hours > 6.9, JSON.stringify(c));
+});
+
+test('rounds and time: a lane recorded before these fields counts from 0 and never crashes', (t) => {
+  const { root, wt } = atReview(t);
+  const sp = path.join(root, '.claude', 'session', 'lanes', 'refund-route.json');
+  const { started: _s, failed_rounds: _f, budget: _b, ...old } = storeOf(root);
+  write(sp, JSON.stringify(old, null, 2));
+  assert.deepEqual(laneStatus(root).rounds, { round: 1, limit: 3, failed: 0, parked: null });
+  assert.equal(laneStatus(root).started, old.moves[0].at, 'its start is its first move');
+  assert.equal(lane('advance', 'refund-route', 'build', '--repo', root).returncode, 0);
+  assert.equal(storeOf(root).failed_rounds, 1);
+  assert.equal(storeOf(root).started, old.moves[0].at);
+  // no store at all (a lane started before the store): its lane.json's stage, no rounds or time to show
+  fs.rmSync(path.join(root, '.claude', 'session', 'lanes'), { recursive: true });
+  const l = laneStatus(root);
+  assert.ok(l.rounds === null && l.elapsed_hours === null && l.stage === 'build', JSON.stringify({ r: l.rounds, e: l.elapsed_hours, s: l.stage }));
+  assert.equal(JSON.parse(lane('next-step', 'refund-route', '--repo', root).stdout).rounds, undefined);
+  const lf = path.join(wt, '.claude', 'lane.json');
+  write(lf, read(lf).replace('"stage": "build"', '"stage": "review"'));
+  assert.equal(lane('advance', 'refund-route', 'build', '--repo', root).returncode, 0);
+  assert.equal(storeOf(root).failed_rounds, 1, 'its first FAIL round is round 1');
 });
 
 test('wip count comes from the lane worktrees, not from ROADMAP', (t) => {
@@ -681,25 +830,74 @@ test('lane.js template prints a kit template with slug, date and commit; agents 
   assert.deepEqual(readers, []);
 });
 
-test('the permission probe has a case for every allow rule the kit ships, plus controls that must stay refused (#63)', () => {
+test('the permission probe has a case for every rule the kit ships, plus controls that must stay refused (#63, hardening plan Step 2)', async () => {
+  const SB = await import('../sandbox.js');
   const perms = JSON.parse(fs.readFileSync(P.FRAGMENT, 'utf8')).permissions;
-  const shipped = perms.allow;
-  const caseFor = (kind) => P.CASES.filter((c) => c.kind === kind).map((c) => c.rule).sort();
-  // every allow rule is proved approved; every ask rule is proved refused
-  assert.deepEqual(caseFor('allow'), [...perms.allow].sort());
-  assert.deepEqual(caseFor('ask'), [...perms.ask].sort());
-  assert.ok(P.CASES.every((c) => (c.kind === 'allow' ? c.expect === 'approved' : c.expect === 'denied')), 'allow cases expect approved, all others denied');
+  const floor = JSON.parse(fs.readFileSync(path.join(path.dirname(P.FRAGMENT), '..', 'security', 'floor.json'), 'utf8')).deny;
+  const grants = SB.laneGrants();
+  const rulesOf = (kind) => [...new Set(P.CASES.filter((c) => c.kind === kind).map((c) => c.rule))].sort();
+  // every allow rule is proved approved; every ask rule refused although Bash(kit *) is added to allow (ask beats allow)
+  assert.deepEqual(rulesOf('allow'), [...perms.allow].sort());
+  assert.deepEqual(rulesOf('ask'), [...perms.ask].sort());
+  assert.ok(P.CASES.filter((c) => c.kind === 'ask').every((c) => c.broad?.includes('Bash(kit *)')));
+  // every floor rule about reviews, merges, protection and rulesets is proved refused, although Bash(gh *) is allowed and
+  // without the guard, so the rule itself refused it
+  const gh = floor.filter((r) => r.startsWith('Bash(gh '));
+  assert.ok(gh.length >= 10, gh.join(', '));
+  assert.deepEqual(rulesOf('deny'), [...gh].sort());
+  assert.ok(P.CASES.filter((c) => c.kind === 'deny').every((c) => c.noGuard && c.broad?.includes('Bash(gh *)')));
+  // a lane: every per-run deny is proved over the project's allow rules (trusted, plus Bash(kit *)), and every per-run
+  // allow rule approved through --settings in a repository that is not trusted
+  assert.deepEqual(rulesOf('lane-deny'), [...grants.deny].sort());
+  assert.ok(P.CASES.filter((c) => c.kind === 'lane-deny').every((c) => c.via === 'lane' && c.broad?.includes('Bash(kit *)')));
+  // and in a skill that grants plain Bash, as /zi-run does in a launched lane
+  assert.ok(P.CASES.some((c) => c.kind === 'lane-deny-skill' && c.via === 'lane' && c.ask.startsWith('/') && c.command.startsWith('kit lane advance')));
+  const run = SB.runSettings({ root: os.tmpdir(), wt: '/w', grants, floor: [] }).permissions.allow.map((r) => (r === 'Edit(//w/**)' ? P.WORKTREE_EDIT : r));
+  assert.deepEqual(rulesOf('lane-allow'), [...new Set(run)].sort());
+  assert.ok(P.CASES.filter((c) => c.kind === 'lane-allow').every((c) => c.via === 'flag'));
+  assert.ok(P.CASES.every((c) => (['allow', 'allow-form', 'lane-allow'].includes(c.kind) ? c.expect === 'approved' : c.expect === 'denied')), 'allow cases expect approved, all others denied');
+  assert.equal(new Set(P.CASES.map((c) => c.id)).size, P.CASES.length, 'case ids are unique (--only picks by id)');
   // the xargs form, which Claude Code checks as `kit lane`, is probed against the real guard
   assert.ok(P.CASES.some((c) => c.kind === 'guard' && /xargs kit lane/.test(c.command)));
-  // merging stays the human's: an ask rule covers it, it beats Bash(kit *), and a skill granting plain Bash is probed too
-  assert.ok(perms.ask.includes('Bash(kit lane merge *)') && perms.allow.includes('Bash(kit *)'));
+  // merging stays the human's: an ask rule covers it, no allow rule approves it, and a skill granting plain Bash is probed
+  assert.ok(perms.ask.includes('Bash(kit lane merge *)') && !perms.allow.includes('Bash(kit *)'));
   assert.ok(P.CASES.some((c) => c.kind === 'ask-skill' && c.command.startsWith('kit lane merge')));
+  // the skills' `--repo .` form is probed as approved; "$PWD" in the arguments is a control (not approved, 2026-11-25)
+  assert.ok(P.CASES.some((c) => c.kind === 'allow-form' && c.command === 'kit lane wip --repo .'));
+  assert.ok(P.CASES.some((c) => c.kind === 'control' && c.command.includes('"$PWD"') && c.expect === 'denied'));
   // a security sign-off is the human's too (#58): Claude Code asks every time, and the probe proves the rule matches
   assert.ok(perms.ask.includes('Bash(kit lane signoff *)'));
   assert.ok(P.CASES.some((c) => c.kind === 'ask' && c.rule === 'Bash(kit lane signoff *)' && c.command.startsWith('kit lane signoff ')));
-  // the "$HOME" form Claude Code did not approve (2026-11-22) is a control, and no shipped rule uses it again
+  // the "$HOME" form Claude Code did not approve (2026-11-22) is a control, and no shipped rule uses it again; another
+  // tool called kit stays refused
   assert.ok(P.CASES.some((c) => c.id === 'home-form' && c.expect === 'denied'));
-  assert.ok(shipped.every((r) => !/\$|"/.test(r)), `a shipped rule relies on a $variable or quotes: ${shipped.join(', ')}`);
+  assert.ok(P.CASES.some((c) => c.id === 'other-kit' && c.command.startsWith('kit pack') && c.expect === 'denied'));
+  for (const r of [...perms.allow, ...grants.deny, ...Object.values(grants.roles).flat(), ...grants.session]) assert.ok(!/\$|"/.test(r), `a shipped rule relies on a $variable or quotes: ${r}`);
+});
+
+test('the probe runs each case with the rules its via names: project (trusted), lane (trusted plus --settings), flag (--settings only)', (t) => {
+  // a stand-in claude reports its arguments, the project settings, the per-run settings and whether the repo is trusted
+  const bin = path.join(tmpPath(t), 'bin');
+  fs.mkdirSync(bin, { recursive: true });
+  const out = path.join(tmpPath(t), 'seen.jsonl');
+  fs.writeFileSync(path.join(bin, 'claude'), `#!${process.execPath}
+const fs = require('fs'), path = require('path');
+const a = process.argv.slice(2), i = a.indexOf('--settings');
+const cfg = JSON.parse(fs.readFileSync(path.join(process.env.CLAUDE_CONFIG_DIR, '.claude.json'), 'utf8'));
+fs.appendFileSync(${JSON.stringify(out)}, JSON.stringify({ argv: a, project: JSON.parse(fs.readFileSync('.claude/settings.json', 'utf8')), run: i >= 0 ? JSON.parse(fs.readFileSync(a[i + 1], 'utf8')) : null, trusted: Object.keys(cfg.projects ?? {}).length > 0, gh: process.env.GH_TOKEN ?? null }) + '\\n');
+process.stdout.write(JSON.stringify({ result: 'stub', permission_denials: [] }));
+`, { mode: 0o755 });
+  setEnv(t, 'PATH', `${bin}${path.delimiter}${process.env.PATH}`);
+  setEnv(t, 'GH_TOKEN', 'probe-must-not-see-this');
+  const tmp = tmpPath(t);
+  const byId = (id) => P.CASES.find((c) => c.id === id);
+  for (const id of ['merge-asks', 'gh-pr-merge', 'lane-kit-lane-advance', 'lane-kit-lane-check']) assert.equal(P.runCase(byId(id), tmp).got, 'inconclusive', id);
+  const [ask, gh, laneDeny, laneAllow] = fs.readFileSync(out, 'utf8').trim().split('\n').map((l) => JSON.parse(l));
+  assert.ok(ask.trusted && ask.run === null && ask.project.permissions.allow.includes('Bash(kit *)') && ask.project.hooks.PreToolUse.length === 1);
+  assert.ok(gh.trusted && gh.project.permissions.allow.includes('Bash(gh *)') && gh.project.hooks.PreToolUse.length === 0, 'a floor case runs without the guard');
+  assert.ok(laneDeny.trusted && laneDeny.run.permissions.deny.includes('Bash(kit lane advance *)') && laneDeny.project.permissions.allow.includes('Bash(kit lane advance *)'));
+  assert.ok(!laneAllow.trusted && laneAllow.run.permissions.allow.includes('Bash(kit lane check *)') && !('allow' in laneAllow.project.permissions), 'untrusted, and no project allow rule');
+  assert.ok([ask, gh, laneDeny, laneAllow].every((s) => s.gh === null), 'no GitHub token reaches a probe session');
 });
 
 // The whole lane, as the agents run it, with the fixture's real vitest and no --reporter flag: the tester runs the
