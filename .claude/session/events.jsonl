@@ -1,1 +1,0 @@
-{"event": "blocked", "tool": "Bash", "command": "kit lane signoff s --by x", "result": "blocked", "summary": "kit lane signoff from a lane agent; only the orchestrator (the main session, outside the lane) moves, gates, starts or merges a lane", "ts": "2026-11-25T14:35:27"}
