@@ -98,9 +98,9 @@
     "ci-job:template/mutation": { "purpose": "Measures how well the tests catch changes to the code; warning-only until the gate says otherwise." },
     "ci-job:template/mutation-gate": { "purpose": "Decides whether the mutation job is allowed to block." },
     "ci-job:template/dashboard": { "purpose": "Publishes a static dashboard to GitHub Pages when the project opts in." },
-    "ci-job:kit/scripts": { "purpose": "Runs the kit's own unit tests on Node 20 and 22, the planted-fault suite, the hook settings check and the install check." },
+    "ci-job:kit/scripts": { "purpose": "Runs the kit's own unit tests on every supported Node major (22), the planted-fault suite, the hook settings check and the install check." },
     "ci-job:kit/docs": { "purpose": "Checks that the kit's own research document passes its own validator." },
     "ci-job:kit/eval-smoke": { "purpose": "On kit PRs: proves the eval gate with recorded fixtures and names the gated paths the PR touches; no credential reaches a pull request (0016 E.11)." },
-    "ci-job:kit/eval-smoke-main": { "purpose": "On pushes to main: runs the smoke set against the real agents over the gated paths the push touched, with the credential from the main environment; fails loudly when none arrives." }
+    "ci-job:kit-eval-main/eval-smoke-main": { "purpose": "On pushes to main that change agents, skills, templates, workflows or the eval (a paths filter; any other push starts nothing), or by hand: runs the smoke set against the real agents over the gated paths the push touched, with the credential from the main environment; fails loudly when none arrives." }
   }
 }
