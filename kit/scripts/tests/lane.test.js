@@ -862,8 +862,9 @@ test('the permission probe has a case for every rule the kit ships, plus control
   // merging stays the human's: an ask rule covers it, no allow rule approves it, and a skill granting plain Bash is probed
   assert.ok(perms.ask.includes('Bash(kit lane merge *)') && !perms.allow.includes('Bash(kit *)'));
   assert.ok(P.CASES.some((c) => c.kind === 'ask-skill' && c.command.startsWith('kit lane merge')));
-  // a variable in a kit command's arguments (`--repo "$PWD"`, as the skills write it) is probed
-  assert.ok(P.CASES.some((c) => c.kind === 'allow-form' && c.command.includes('"$PWD"')));
+  // the skills' `--repo .` form is probed as approved; "$PWD" in the arguments is a control (not approved, 2026-11-25)
+  assert.ok(P.CASES.some((c) => c.kind === 'allow-form' && c.command === 'kit lane wip --repo .'));
+  assert.ok(P.CASES.some((c) => c.kind === 'control' && c.command.includes('"$PWD"') && c.expect === 'denied'));
   // a security sign-off is the human's too (#58): Claude Code asks every time, and the probe proves the rule matches
   assert.ok(perms.ask.includes('Bash(kit lane signoff *)'));
   assert.ok(P.CASES.some((c) => c.kind === 'ask' && c.rule === 'Bash(kit lane signoff *)' && c.command.startsWith('kit lane signoff ')));

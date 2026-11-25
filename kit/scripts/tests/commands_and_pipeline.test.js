@@ -69,6 +69,21 @@ test('every kit command a skill tells the session to run is allowed or asks in t
   assert.ok(perms.ask.includes('Bash(kit lane merge *)') && !perms.allow.some((r) => covers(r, 'kit lane merge')));
 });
 
+test('no skill or agent writes "$PWD" or "$HOME" in a kit command; the repo is `--repo .` (permission probe, 2026-11-25)', () => {
+  // Claude Code did not approve `kit lane wip --repo "$PWD"` under `Bash(kit lane wip *)` (probe case repo-pwd-control,
+  // owner's Mac), so a skill written that way prompts, and a headless session is refused. Every kit script defaults
+  // --repo to the working directory, so `--repo .` means the same and is approved (repo-dot-argument).
+  const agents = fs.readdirSync(path.join(KIT, 'agents')).filter((f) => f.endsWith('.md')).map((f) => path.join(KIT, 'agents', f));
+  for (const p of [...COMMANDS, ...agents]) {
+    for (const line of read(p).split('\n')) {
+      for (const m of line.matchAll(/`(kit [^`]*)`|^\s*(kit .*)$/g)) {
+        const cmd = m[1] ?? m[2];
+        assert.ok(!/\$(PWD|HOME)\b|\$\{(PWD|HOME)\}|\$\(pwd\)/.test(cmd), `${rel(p)}: \`${cmd}\` puts a shell variable in a kit command`);
+      }
+    }
+  }
+});
+
 test('every description and argument-hint is one double-quoted YAML string', () => {
   // unquoted, a `: ` or a leading `[` makes the line invalid YAML; Claude Code then loads the skill with no metadata
   const DQ = /^"(?:[^"\\]|\\.)*"$/;

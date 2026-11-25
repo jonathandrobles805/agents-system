@@ -10,7 +10,7 @@ Plan feature: `$slug`
 
 ## Step 1: preconditions
 ```
-kit lane wip --repo "$PWD"
+kit lane wip --repo .
 ```
 If exit code is 2, stop: the WIP limit is reached. Say which lanes are in flight and what the human can merge or escalate.
 
@@ -21,7 +21,7 @@ Spawn the `planner` agent with: the slug, the research slugs, the paths of `ARCH
 
 ## Step 2b: unknown budget (script decides, not the planner)
 ```
-kit lane unknowns docs/specs/$slug.md --repo "$PWD" --json
+kit lane unknowns docs/specs/$slug.md --repo . --json
 ```
 - exit 2 (`research`): more than 3 unknowns. Stop. Tell the human which questions are open and that `/zi-research $slug` must run again. Do not continue to critique.
 - exit 3 (`resolve`): 1–3 unknowns. For each item spawn a `researcher` with the item's `Resolve by` method (an item without a method goes back to the planner first). Then re-run the planner with the answers and run this step again.
@@ -32,13 +32,13 @@ Spawn `spec-critic` on `docs/specs/$slug.md`. Then spawn the `planner` again wit
 
 ## Step 4: validate
 ```
-kit validate_docs docs/specs/$slug.md --repo "$PWD"
-kit lane precheck $slug --repo "$PWD"
+kit validate_docs docs/specs/$slug.md --repo .
+kit lane precheck $slug --repo .
 ```
 `precheck` is expected to fail only on "needs 'approved'" and "no recorded approval" at this point. Any other reason (open questions, overlap, invalid spec) goes back to the planner. Repeat until those are the only two.
 
 ## Step 5: hand to the human
 ```
-kit lane roadmap-set $slug waiting-approval --repo "$PWD" --spec docs/specs/$slug.md
+kit lane roadmap-set $slug waiting-approval --repo . --spec docs/specs/$slug.md
 ```
-Commit `docs/specs/$slug.md`, `docs/research/*`, `ROADMAP.md` on a branch `spec/$slug`, then `kit lane publish $slug --repo "$PWD" --branch spec/$slug --title "spec: <feature>" --body-file <a file holding the spec's Summary section, e.g. /tmp/$slug-summary.md>`: it pushes the branch and opens the PR as the kit's GitHub App (never with your login) and prints the PR URL. Tell the human: they approve the spec by saying yes to merging this PR. When they say so: set `Status: approved` in `docs/specs/$slug.md` on `spec/$slug`, commit, push it with the same `kit lane publish` command, then run `kit lane merge --pr <url> --repo "$PWD" --by <their name>`. Claude Code asks them before it runs; it waits for CI, merges, and records their yes (who, when, the merged commit) in the lane store. That record is the approval: nobody writes the spec's `Approved by:` line, and a name written there counts for nothing. If they merged the PR on GitHub themselves, run the same `kit lane merge` command: it records that merge. Nothing is built before that.
+Commit `docs/specs/$slug.md`, `docs/research/*`, `ROADMAP.md` on a branch `spec/$slug`, then `kit lane publish $slug --repo . --branch spec/$slug --title "spec: <feature>" --body-file <a file holding the spec's Summary section, e.g. /tmp/$slug-summary.md>`: it pushes the branch and opens the PR as the kit's GitHub App (never with your login) and prints the PR URL. Tell the human: they approve the spec by saying yes to merging this PR. When they say so: set `Status: approved` in `docs/specs/$slug.md` on `spec/$slug`, commit, push it with the same `kit lane publish` command, then run `kit lane merge --pr <url> --repo . --by <their name>`. Claude Code asks them before it runs; it waits for CI, merges, and records their yes (who, when, the merged commit) in the lane store. That record is the approval: nobody writes the spec's `Approved by:` line, and a name written there counts for nothing. If they merged the PR on GitHub themselves, run the same `kit lane merge` command: it records that merge. Nothing is built before that.

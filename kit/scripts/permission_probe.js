@@ -76,9 +76,11 @@ export const CASES = [
   { id: 'git-add', kind: 'allow', rule: 'Bash(git add *)', expect: 'approved', tool: 'Bash', command: 'git add new.txt', setup: (repo) => fs.writeFileSync(path.join(repo, 'new.txt'), 'x\n'), ask: run('git add new.txt'), ran: (r) => /^A\s+new\.txt$/m.test(git(r.repo, ['status', '--short'])) },
   { id: 'git-commit', kind: 'allow', rule: 'Bash(git commit *)', expect: 'approved', tool: 'Bash', command: 'git commit -m probe', setup: (repo) => { fs.writeFileSync(path.join(repo, 'new.txt'), 'x\n'); git(repo, ['add', 'new.txt']); }, ask: run('git commit -m probe'), ran: (r) => /probe/.test(git(r.repo, ['log', '--oneline', '-1'])) },
   { id: 'edit', kind: 'allow', rule: 'Edit(/**)', expect: 'approved', tool: 'Edit', command: null, ask: 'Use the Read tool on README.md, then the Edit tool to replace the line "# probe" with "# probe edited". Nothing else.', ran: (r) => fs.readFileSync(path.join(r.repo, 'README.md'), 'utf8').includes('# probe edited') },
-  // the skills pass "$PWD" in a kit command's arguments (`--repo "$PWD"`): the rule must still approve it (#63 found a
-  // rule naming "$PWD" did not match; this is a variable in the command, not in the rule)
-  bash('pwd-argument', 'allow-form', 'Bash(kit lane wip *)', 'kit lane wip --repo "$PWD"', { ran: (r) => r.results.some((x) => !x.error && /"in_flight"/.test(x.text)) }),
+  // the skills pass the repo as `--repo .` (every kit script defaults --repo to the working directory): the rule
+  // approves it. "$PWD" in the arguments is a control: Claude Code did not approve `kit lane wip --repo "$PWD"` under
+  // `Bash(kit lane wip *)` (owner's Mac, 2026-11-25), so no skill writes a shell variable in a kit command
+  bash('repo-dot-argument', 'allow-form', 'Bash(kit lane wip *)', 'kit lane wip --repo .', { ran: (r) => r.results.some((x) => !x.error && /"in_flight"/.test(x.text)) }),
+  bash('repo-pwd-control', 'control', null, 'kit lane wip --repo "$PWD"', { ran: (r) => r.results.some((x) => !x.error && /"in_flight"/.test(x.text)) }),
   // the human's decisions (ask rules): a headless session has nobody to answer an ask, so Claude Code refuses them;
   // refused here although Bash(kit *) is added to allow proves the ask rule matched (ask beats allow) (#63, Step 2)
   bash('merge-asks', 'ask', 'Bash(kit lane merge *)', 'kit lane merge probe --by probe', { broad: ['Bash(kit *)'] }),

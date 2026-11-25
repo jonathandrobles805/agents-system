@@ -40,7 +40,7 @@ Get it with `kit lane template spec --slug <slug>`; it comes with the slug, date
 
 ## Unknowns
 Open questions must be empty when you finish. Every `[unknown]` in your draft carries `Resolve by: <method>`.
-Run `kit lane unknowns docs/specs/<slug>.md --repo "$PWD"` on your draft:
+Run `kit lane unknowns docs/specs/<slug>.md --repo .` on your draft:
 - exit 3 (1–3 unknowns): stop and list each item with its `Resolve by` method. The plan stage spawns one researcher per item and runs you again with the answers; fold them in then. (A subagent cannot rely on spawning subagents: that depends on the Claude Code version.)
 - exit 2 (more than 3): stop. Say "research insufficient" with the list. Do not finish a spec.
 - exit 0: continue. The script decides the count; you do not.
