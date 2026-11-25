@@ -165,7 +165,8 @@ export function setupGates(cwd, env = process.env) {
  * the progress row, and a run whose exit contradicts `record` stops the setup), `commit`, `template` (lane.js template),
  * `hook` (one of the kit's hook scripts run on a tool call's input, as Claude Code runs it, so the event it records is
  * the hook's own; an exit other than `exit` stops the setup), `evidence` (lane.js evidence: the committed copy of the
- * check log). The project's dependencies are installed in the worktree (`install`, installDeps) before any step.
+ * check log), `merge` (the lane squash-merged into main and pushed, then lane.js merged: the lane at retro, as after a
+ * real merge). The project's dependencies are installed in the worktree (`install`, installDeps) before any step.
  * Returns the worktree.
  */
 function startLane(root, dir, lane, env, head, install = installDeps) {
@@ -205,6 +206,14 @@ function startLane(root, dir, lane, env, head, install = installDeps) {
       const r = spawnSync(process.execPath, [path.join(K.KIT_DIR, 'scripts', step.hook)], { cwd: wt, env, input, encoding: 'utf8' });
       if (r.status !== (step.exit ?? 0)) throw new Error(`eval setup: ${step.hook} on ${step.tool} exited ${r.status}, expected ${step.exit ?? 0}: ${r.stderr}`);
     } else if (step.evidence) laneJs(['evidence', lane.slug, '--repo', root]);
+    else if (step.merge) {
+      // the owner's squash merge of the lane's PR, as GitHub makes it (kit lane merge), pushed to origin; then
+      // lane.js merged, which verifies the squash, checks the committed evidence and moves the lane to retro (#107, #119)
+      F.git(['merge', '--squash', '-q', `wt/${lane.slug}`], root);
+      F.git(['commit', '-q', '-m', `${lane.slug} (#1)`], root);
+      F.git(['push', '-q', 'origin', 'main'], root);
+      laneJs(['merged', lane.slug, '--repo', root]);
+    }
     else throw new Error(`eval setup: unknown lane step ${JSON.stringify(step)}`);
   }
   return wt;

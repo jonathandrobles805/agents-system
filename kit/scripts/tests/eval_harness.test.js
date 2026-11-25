@@ -15,6 +15,9 @@ import * as K from '../kitlib.js';
 import * as V from '../validate_docs.js';
 import * as F from './fixtures.js';
 import { setEnv, tmpPath } from './helpers.js';
+import { spawnSync } from 'node:child_process';
+
+const spawnSyncNode = (script, cwd, input) => spawnSync(process.execPath, [script], { cwd, input, encoding: 'utf8' });
 
 const impl = () => loadTasks().find((t) => t.id === 'implementer-red-then-green');
 
@@ -1397,6 +1400,36 @@ test('claude runner setup: a lane step runs a kit hook as Claude Code would (its
   const stubs = { install: () => null, gates: () => [] };
   assert.throws(() => claude.fixtureRepo({ ...task, setup: { ...task.setup, lane: { slug: 'truncate-text', steps: [{ stage: 'build' }, { hook: 'hook_guard_edit.js', tool: 'Write', tool_input: { file_path: 'src/text/format.ts' }, exit: 0 }] } } }, path.join(dir, 'b'), path.join(dir, 'b', 'home', '.claude'), stubs), /exited 2, expected 0/);
   assert.throws(() => claude.fixtureRepo({ ...task, setup: { ...task.setup, lane: { slug: 'truncate-text', steps: [{ hook: '../lane.js', tool: 'Write' }] } } }, path.join(dir, 'c'), path.join(dir, 'c', 'home', '.claude'), stubs), /not one of the kit's hook scripts/);
+});
+
+test('claude runner setup: a merge step squash-merges the lane, as the owner would, and leaves it at retro, sealed (#107)', (t) => {
+  const dir = tmpPath(t);
+  const task = {
+    id: 'setup-merge', fixture: 'node-api',
+    setup: {
+      files: { 'src/text/format.ts': { from: 'setups/truncate-text/format.ts' }, 'tests/format.test.ts': { from: 'setups/truncate-text/format.test.ts' }, 'docs/specs/truncate-text.md': { from: 'setups/truncate-text/spec.approved.md' } , 'ROADMAP.md': { from: 'setups/truncate-text/roadmap.md' }},
+      lane: { slug: 'truncate-text', steps: [
+        { stage: 'test' }, { check: 'D1', command: 'node -e "console.log(\'not ok 1 - tests/truncate.test.ts > truncate > shortens text longer than max to max characters ending in an ellipsis\'); process.exit(1)"', record: 'red' }, { stage: 'build' },
+        { write: { 'src/text/format.ts': { from: 'setups/truncate-text/format.done.ts' } } },
+        { check: 'D1', command: 'node -e ""', record: 'green' }, { commit: 'truncate-text: D1' },
+        { evidence: true }, { commit: 'truncate-text: evidence' }, { merge: true },
+      ] },
+    },
+  };
+  const { root, cwd } = claude.fixtureRepo(task, dir, path.join(dir, 'home', '.claude'), { install: () => ({}), gates: () => {} });
+  // main holds the lane's work as one squash commit, pushed to origin
+  assert.equal(F.git(['log', '-1', '--format=%s', 'main'], root).trim(), 'truncate-text (#1)');
+  assert.match(F.git(['show', 'main:src/text/format.ts'], root), /export function truncate/);
+  assert.equal(F.git(['rev-parse', 'main'], root).trim(), F.git(['--git-dir', path.join(dir, 'origin.git'), 'rev-parse', 'main'], root).trim());
+  // the lane is at retro in the store, so a later session's events stay out of the committed evidence
+  assert.equal(JSON.parse(fs.readFileSync(path.join(root, '.claude', 'session', 'lanes', 'truncate-text.json'), 'utf8')).stage, 'retro');
+  const ev = path.join(cwd, 'docs', 'specs', 'truncate-text.events.jsonl');
+  const sealed = fs.readFileSync(ev, 'utf8');
+  const input = JSON.stringify({ session_id: 'retro', cwd, hook_event_name: 'PostToolUse', tool_name: 'Bash', tool_input: { command: 'cat LESSONS.md' }, tool_response: '# Lessons' });
+  spawnSyncNode(path.join(K.KIT_DIR, 'scripts', 'hook_event_log.js'), cwd, input);
+  assert.equal(fs.readFileSync(ev, 'utf8'), sealed, 'the committed events file is unchanged');
+  assert.equal(F.git(['status', '--porcelain', '--', 'docs'], cwd).trim(), '');
+  assert.match(fs.readFileSync(path.join(root, 'ROADMAP.md'), 'utf8'), /\| truncate-text \|[^\n]*\| merged \|/, 'the ROADMAP row says merged');
 });
 
 test('transcriptSummary keeps the prompt, each tool call with its input and result, and the final answer, once', () => {

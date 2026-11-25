@@ -18,10 +18,10 @@ An incident is a mistake that passed every gate. It gets the same treatment as a
 Then `git fetch origin && kit lane merged <slug> --repo "$PWD"` so ROADMAP.md says merged even if nothing else recorded it (the script verifies it in git first).
 
 ## Step 2: retro agent
-Spawn `retro` with: the spec, progress, review, log, events (from the lane worktree if it still exists, else from `main`), the merged PR number, and `LESSONS.md`. It prints proposed lesson entries and stops. It does not write.
+Spawn `retro` with: the spec, progress, review, log, events (from the lane worktree if it still exists, else from `main`), the merged PR number, and `LESSONS.md`. It prints proposed lesson entries, then its observations (things it noticed that the lane did not record as a failure), and stops. It does not write.
 
 ## Step 3: human decides
-For each proposed lesson, ask the human: accept, edit, or drop. Use AskUserQuestion when available. Do not accept on their behalf.
+For each proposed lesson, ask the human: accept, edit, or drop. Use AskUserQuestion when available. Do not accept on their behalf. Show the observations after the lessons. They are not lessons: the human may drop them or ask for a goal or an issue, and none is written to `LESSONS.md` as it stands.
 
 ## Step 4: write
 For accepted lessons:

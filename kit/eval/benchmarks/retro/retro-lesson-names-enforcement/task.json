@@ -15,6 +15,9 @@
       },
       "docs/specs/truncate-text.md": {
         "from": "setups/truncate-text/spec.approved.md"
+      },
+      "ROADMAP.md": {
+        "from": "setups/truncate-text/roadmap.md"
       }
     },
     "lane": {
@@ -103,7 +106,7 @@
           "commit": "truncate-text: evidence (events and check log)"
         },
         {
-          "stage": "review"
+          "merge": true
         }
       ]
     }
@@ -125,7 +128,7 @@
     },
     {
       "id": "r3",
-      "text": "Every lesson comes from something the lane recorded (a review FAIL, a blocked or test_weakened event, an escalation), cited by file; none is invented."
+      "text": "Every lesson comes from something the lane recorded (a review FAIL, a blocked or test_weakened event, an escalation, a spec amendment), cited by file; none is invented. Anything else the session noticed is listed under Observations, not as a lesson; an observation is never a reason to score 0."
     }
   ],
   "expected": {

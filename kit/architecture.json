@@ -484,6 +484,7 @@
     {"file": "kit/scripts/tests/dashboard.test.js", "from": "test:dashboard", "kind": "tests", "to": "script:dashboard/server"},
     {"file": "kit/scripts/tests/dashboard.test.js", "from": "test:dashboard", "kind": "tests", "to": "script:kitlib"},
     {"file": "kit/scripts/tests/dashboard.test.js", "from": "test:dashboard", "kind": "tests", "to": "script:lane"},
+    {"file": "kit/scripts/tests/eval_harness.test.js", "from": "test:eval_harness", "kind": "tests", "to": "hook:event_log"},
     {"file": "kit/scripts/tests/eval_harness.test.js", "from": "test:eval_harness", "kind": "tests", "to": "hook:guard_edit"},
     {"file": "kit/scripts/tests/eval_harness.test.js", "from": "test:eval_harness", "kind": "tests", "to": "script:eval/harness"},
     {"file": "kit/scripts/tests/eval_harness.test.js", "from": "test:eval_harness", "kind": "tests", "to": "script:eval/runners/claude"},
