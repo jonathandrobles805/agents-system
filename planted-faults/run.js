@@ -923,6 +923,21 @@ process.stderr.write('fake gh 57: unexpected ' + a.join(' ')); process.exit(9);
     const merged58 = run('lane.js', ['merged', 'refund-route', '--repo', r58]);
     const caught58 = early58.returncode === 2 && /not merged/.test(early58.stderr) && seen58 === 'merged' && merged58.returncode === 0 && read(path.join(r58, 'ROADMAP.md')).includes('| refund-route | M1 | merged |');
     record(58, 'a lane squash-merged into main (as lane.js merge does) is never recognised as merged', 'lane.js laneMerge, shared by lane.js merged, advance, kit_status and next-step: ancestry, a merge recorded from GitHub, the lane\'s whole-diff patch on main (squash) or every commit\'s (rebase) (#67, #82)', caught58, `before the merge: exit ${early58.returncode}; after the squash: kit_status ${seen58}, lane.js merged exit ${merged58.returncode} (${(merged58.stderr || merged58.stdout).trim().split('\n')[0]})`);
+    // 59 a page on another site reaches the local dashboard by naming it under its own host (DNS rebinding): the server
+    //    answers a request whose Host is not 127.0.0.1:<port> or localhost:<port>
+    const root58 = F.nodeApi(path.join(tmp, 'node-api-58'));
+    const probe58 = (reqs) => {
+      const r = sh(process.execPath, [path.join(ROOT, 'planted-faults', 'dashboard_probe.js'), '--repo', root58], { input: JSON.stringify(reqs), env: childEnv() });
+      try {
+        return { statuses: JSON.parse(r.stdout), stderr: r.stderr };
+      } catch {
+        return { statuses: [], stderr: r.stderr || r.stdout };
+      }
+    };
+    const h58 = probe58([{ path: '/api/status', headers: { Host: '127.0.0.1:{port}' } }, { path: '/api/status', headers: { Host: 'localhost:{port}' } },
+      { path: '/api/status', headers: { Host: 'evil.example' } }, { path: '/api/status', headers: { Host: 'evil.example:{port}' } }]);
+    const [ok58a, ok58b, bad58a, bad58b] = h58.statuses;
+    record(59, 'a request naming the local dashboard under another Host (DNS rebinding) is answered', 'dashboard server hostAllowed: only 127.0.0.1:<port> and localhost:<port>', ok58a === 200 && ok58b === 200 && [403, 421].includes(bad58a) && [403, 421].includes(bad58b), `own hosts -> ${ok58a},${ok58b}; evil.example -> ${bad58a}; evil.example:port -> ${bad58b} ${h58.stderr.trim().split('\n')[0]}`);
   } finally {
     if (a.keep) process.stderr.write(`fixtures kept at ${tmp}\n`);
     else fs.rmSync(tmp, { recursive: true, force: true });

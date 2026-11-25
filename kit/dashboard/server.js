@@ -513,11 +513,19 @@ async function doPost(state, req, res, u, q) {
   sendJson(res, 404, { ok: false, error: 'not found' });
 }
 
+/** True when the Host header names this server: 127.0.0.1:<port> or localhost:<port>, the port it listens on. */
+export function hostAllowed(req) {
+  const host = (req.headers.host ?? '').toLowerCase();
+  const port = req.socket.localPort;
+  return host === `127.0.0.1:${port}` || host === `localhost:${port}`;
+}
+
 export function makeHandler(state) {
   return async (req, res) => {
     try {
       res.setHeader('Server', SERVER_VERSION);
       req.resume(); // request bodies are never read
+      if (!hostAllowed(req)) return sendJson(res, 421, { error: 'misdirected request: Host must be 127.0.0.1 or localhost with this server\'s port' }); // DNS rebinding guard
       let target = req.url ?? '/';
       if (target.startsWith('//')) target = `/${target.replace(/^\/+/, '')}`; // http.server reduces a leading '//' to '/'
       const u = splitTarget(target);
