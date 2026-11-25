@@ -139,13 +139,23 @@ export function fingerprint(files) {
   return parts.join('|');
 }
 
-/** New events of an events.jsonl since byte `offset`: [events, newOffset]. Unparseable lines are skipped. */
+/**
+ * New events of an events.jsonl since byte `offset`: [events, newOffset, rewritten]. Only complete lines are consumed:
+ * the offset stops after the last newline, so a line a writer has half written is read whole on a later tick.
+ * Unparseable complete lines are skipped. A file smaller than `offset` was rewritten (or replaced) under us: nothing is
+ * read from it, the offset restarts after its last complete line and `rewritten` is true, so the caller can say so.
+ */
 export function tailEvents(p, offset) {
-  if (!K.isFile(p)) return [[], 0];
+  if (!K.isFile(p)) return [[], 0, false];
   const fd = fs.openSync(p, 'r');
   let chunk;
+  let rewritten = false;
   try {
     const size = fs.fstatSync(fd).size;
+    if (size < offset) {
+      rewritten = true;
+      offset = 0; // the whole file is the "new" part; only its end is kept, below
+    }
     const len = Math.max(0, size - offset);
     chunk = Buffer.alloc(len);
     let got = 0;
@@ -158,18 +168,32 @@ export function tailEvents(p, offset) {
   } finally {
     fs.closeSync(fd);
   }
+  const end = chunk.lastIndexOf(0x0a) + 1; // 0 when no newline yet: nothing complete to read
+  if (rewritten) return [[], offset + end, true];
   const out = [];
-  for (const line of K.splitlines(chunk.toString('utf8'))) {
+  for (const line of K.splitlines(chunk.subarray(0, end).toString('utf8'))) {
     try {
       out.push(JSON.parse(line));
     } catch {
       // not JSON: skip
     }
   }
-  return [out, offset + chunk.length];
+  return [out, offset + end, false];
 }
 
-const laneEventsPath = (l) => path.join(l.worktree, 'docs', 'specs', `${l.slug}.events.jsonl`);
+/**
+ * The event files of one lane, each tagged with where it comes from: the committed events file, at the path the kit
+ * itself uses (Lane.eventsPath: the work root the lane was started under), and the worktree's session events file,
+ * where lane.js writes start/launch/resume/risk/reroute.
+ */
+export function laneEventFiles(l) {
+  const found = K.findLane(l.worktree);
+  const lane = found && found.root === l.worktree ? found : new K.Lane(l.worktree, { feature: l.slug });
+  return [
+    { path: lane.eventsPath, source: 'committed' },
+    { path: path.join(l.worktree, K.SESSION_DIR, 'events.jsonl'), source: 'session' },
+  ];
+}
 
 /** One watcher pass: recompute + broadcast on a changed fingerprint, then stream new event lines. */
 function watchTick(state) {
@@ -187,10 +211,15 @@ function watchTick(state) {
   for (const s of state.status) {
     for (const l of s.lanes) {
       if (!l.worktree) continue;
-      const [fresh, off] = tailEvents(laneEventsPath(l), state.eventOffsets.get(l.slug) ?? 0);
-      if (fresh.length) {
-        state.eventOffsets.set(l.slug, off);
-        for (const e of fresh) state.broadcast({ type: 'event', lane: l.slug, project: s.project, root: s.root, data: e });
+      for (const f of laneEventFiles(l)) {
+        // offsets are per file, not per slug: two projects can have a lane of the same name
+        const [fresh, off, rewritten] = tailEvents(f.path, state.eventOffsets.get(f.path) ?? 0);
+        state.eventOffsets.set(f.path, off);
+        const send = (data) => state.broadcast({ type: 'event', lane: l.slug, project: s.project, root: s.root, data });
+        if (rewritten) {
+          send({ ts: new Date().toISOString(), event: 'events_file_rewritten', source: f.source, file: path.relative(l.worktree, f.path), summary: `${path.basename(f.path)} was rewritten; events written before the rewrite may be missing here` });
+        }
+        for (const e of fresh) send(e !== null && typeof e === 'object' && !Array.isArray(e) ? { ...e, source: f.source } : { value: e, source: f.source });
       }
     }
   }
@@ -202,8 +231,7 @@ export function startWatcher(state, interval) {
   for (const s of state.status) {
     for (const l of s.lanes) {
       if (l.worktree) {
-        const p = laneEventsPath(l);
-        state.eventOffsets.set(l.slug, K.isFile(p) ? fs.statSync(p).size : 0);
+        for (const f of laneEventFiles(l)) state.eventOffsets.set(f.path, K.isFile(f.path) ? tailEvents(f.path, 0)[1] : 0);
       }
     }
   }
