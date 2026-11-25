@@ -2058,13 +2058,27 @@ export const CHECKS = {
     // the lesson rules ask for every field, not for content in it: each free-text field holds at least three words of
     // letters (letterWords), so blank fields or `.` in each are no lesson. `Enforced by` and `Status` are names from
     // the template's own choices (validate_docs parseEnforcedBy)
+    // a field's text runs on past its own line until the next field or heading: "Proposed change: Two parts." followed by
+    // indented bullets naming them is one field, counted whole (real run on main bdbfe47)
     const thin = [];
     let title = '';
+    let field = null;
+    const close = () => {
+      if (field && letterWords(field.text) < 3) thin.push(`'${title.slice(0, 40)}' ${field.name}: "${field.text.trim().slice(0, 20)}"`);
+      field = null;
+    };
+    // fenced code under a field is its sketch, not its words: "." above a sketch is still an empty field
+    let code = false;
     for (const l of entry) {
-      if (l.startsWith('## ')) title = l.slice(3).trim();
-      const m = /^\s*-\s*(What went wrong|Root cause|Rule|Proposed change)\s*:(.*)$/i.exec(l);
-      if (m && letterWords(m[2]) < 3) thin.push(`'${title.slice(0, 40)}' ${m[1]}: "${m[2].trim().slice(0, 20)}"`);
+      const m = /^\s{0,1}-\s*(What went wrong|Root cause|Rule|Proposed change)\s*:(.*)$/i.exec(l);
+      if (/^\s*```/.test(l)) code = !code;
+      else if (code) continue;
+      else if (l.startsWith('## ')) [close(), title = l.slice(3).trim()];
+      else if (m) [close(), field = { name: m[1], text: m[2] }];
+      else if (/^\s{0,1}-\s*[A-Za-z][\w ]*:/.test(l)) close();
+      else if (field) field.text += `\n${l}`;
     }
+    close();
     return thin.length ? { ok: false, why: `${thin.length} lesson field(s) with fewer than three words: ${thin.slice(0, 3).join('; ')}` } : { ok: true, why: `${n} lesson entr${n === 1 ? 'y' : 'ies'}, each valid` };
   },
   /**
