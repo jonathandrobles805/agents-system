@@ -226,6 +226,9 @@ test('hard checks fail for the right reasons', () => {
   // every free-text field holds content (finding: blank fields, or `.` in each, passed)
   assert.equal(CHECKS.lesson_proposed({ output: lesson('test', 'tests/x.test.ts asserts it', ['.', '.', '.']) }).ok, false, '`.` in every field');
   assert.equal(CHECKS.lesson_proposed({ output: lesson('test', '.') }).ok, false, '`.` as the proposed change');
+  // a field that runs on in indented lines is counted whole (real run on main bdbfe47: "Proposed change: Two parts.")
+  assert.equal(CHECKS.lesson_proposed({ output: lesson('test', 'Two parts.\n  1. Kit: `hook_done_check.js` refuses the stop.\n  2. Project: a boundary test in the spec template.') }).ok, true, 'a field continued in sub-bullets');
+  assert.equal(CHECKS.lesson_proposed({ output: lesson('test', 'Two parts.\n  ```\n  only code here\n  ```') }).ok, false, 'code alone does not fill a field');
   assert.equal(CHECKS.lesson_proposed({ output: lesson('test', 'tests/x.test.ts asserts it', ['a', 'b', 'c']) }).ok, false, 'one letter per field');
   assert.equal(CHECKS.lesson_proposed({ output: lesson('test', 'tests/x.test.ts asserts it', ['', '', '']) }).ok, false, 'blank fields');
   assert.equal(CHECKS.lesson_proposed({ output: lesson('text-only', 'none') }).ok, false, 'text-only with no reason');

@@ -4,6 +4,9 @@ All notable changes to the kit. Each entry names the decision or lesson that cau
 
 ## [0.3.0] - unreleased
 
+### Fixed (real-agent smoke on main bdbfe47: one false fail in the eval's checks)
+- **A lesson field may run on below its first line.** `lesson_proposed` counted only the words on a field's own line, so "Proposed change: Two parts." followed by indented lines naming the parts failed as a field of fewer than three words. A field's text now runs to the next field or heading; fenced code under it is its sketch and does not count as words, so "." above a sketch still fails.
+
 ### Fixed (real-agent smoke on main 3a6390d: two false fails in the eval's checks, one agent instruction)
 - **A table cell may hold an escaped pipe.** `tableRows` split `\|` like a cell border, so a reviewer citing `grep -n '"verify"\|"test"' .claude/kit.json` in its Evidence cell had the command cut at the pipe, and `review_has_evidence` failed rows R7 and R13 of correct work. Cells now split only on unescaped pipes (GitHub Markdown), and a command escaped for the table matches the one the session ran.
 - **"Nothing tests the boundary" is a gap, not an empty critique.** `critique_written` read any item starting with "Nothing" or "None" as "nothing found". Now only "Nothing.", "Nothing found", "Nothing to report", "None.", "None here" and the like count as saying nothing.
