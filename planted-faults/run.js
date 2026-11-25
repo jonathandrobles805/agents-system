@@ -893,6 +893,36 @@ process.stderr.write('fake gh 57: unexpected ' + a.join(' ')); process.exit(9);
       mg57.returncode === 0 && after57.returncode === 0 && open57.returncode === 0 &&
       scope57.returncode === 2 && /no recorded approval for refund-route/.test(scope57.stderr) && mgf57.returncode === 0 && scoped57.returncode === 0;
     record(57, "an agent writes the spec's approval line, or a fix lane scopes its in-lane spec before its spec/<slug> PR is merged", "lane.js start and scope accept only the owner's yes that lane.js merge recorded when it merged the spec PR (hardening plan Step 2, D1)", caught57, `line only: start -> exit ${start57.returncode} (${(start57.stderr || '').trim().split('\n')[0].slice(0, 90)}); after the recorded merge -> exit ${after57.returncode}; fix lane scope before the merge -> exit ${scope57.returncode}, after -> exit ${scoped57.returncode}`);
+
+    // 58 a lane squash-merged into main (as lane.js merge does) is never recognised as merged (#67, #82): the lane tip
+    //    is not an ancestor of main, so lane.js merged refused and the dashboard kept the lane at building. Planted: a
+    //    two-commit lane squashed into main after main moved on. Caught: lane.js merged accepts it and kit_status says
+    //    merged; before the squash, lane.js merged still refuses.
+    const r58 = path.join(tmp, 'node-api-58');
+    F.nodeApi(r58);
+    run('bootstrap.js', ['--repo', r58]);
+    write(path.join(r58, 'ROADMAP.md'), read(path.join(r58, 'ROADMAP.md')).replaceAll('| TODO(bootstrap: ROADMAP.md — feature) | TODO(bootstrap: ROADMAP.md — slug) | M1 | queued | — | — | — |', '| Refund route | refund-route | M1 | queued | — | — | — |'));
+    const kj58 = path.join(r58, '.claude', 'kit.json');
+    write(kj58, K.jsonDumps({ ...JSON.parse(read(kj58)), local_only: true, wip_limit: 2 }));
+    const c58 = F.commitAll(r58, 'roadmap');
+    write(path.join(r58, 'docs', 'specs', 'refund-route.md'), SPEC({ commit: c58.slice(0, 7) }));
+    F.commitAll(r58, 'spec');
+    F.approveSpec(r58, 'refund-route');
+    const wt58 = JSON.parse(run('lane.js', ['start', 'refund-route', '--repo', r58]).stdout || '{}').worktree;
+    for (const n of [1, 2]) {
+      fs.appendFileSync(path.join(wt58, 'src', 'api', 'routes.ts'), `// refund ${n}\n`);
+      F.commitAll(wt58, `refund ${n}`);
+    }
+    write(path.join(r58, 'docs', 'unrelated.md'), '# Unrelated\n\nmain, not the lane.\n');
+    F.commitAll(r58, 'main moves on');
+    const early58 = run('lane.js', ['merged', 'refund-route', '--repo', r58]);
+    F.git(['merge', '-q', '--squash', 'wt/refund-route'], r58);
+    F.git(['commit', '-q', '-m', 'refund route (#9)'], r58);
+    const pos58 = () => (JSON.parse(run('kit_status.js', ['--repo', r58, '--json']).stdout || '{"lanes":[]}').lanes.find((l) => l.slug === 'refund-route') ?? {}).position;
+    const seen58 = pos58();
+    const merged58 = run('lane.js', ['merged', 'refund-route', '--repo', r58]);
+    const caught58 = early58.returncode === 2 && /not merged/.test(early58.stderr) && seen58 === 'merged' && merged58.returncode === 0 && read(path.join(r58, 'ROADMAP.md')).includes('| refund-route | M1 | merged |');
+    record(58, 'a lane squash-merged into main (as lane.js merge does) is never recognised as merged', 'lane.js laneMerge, shared by lane.js merged, advance, kit_status and next-step: ancestry, a merge recorded from GitHub, the lane\'s whole-diff patch on main (squash) or every commit\'s (rebase) (#67, #82)', caught58, `before the merge: exit ${early58.returncode}; after the squash: kit_status ${seen58}, lane.js merged exit ${merged58.returncode} (${(merged58.stderr || merged58.stdout).trim().split('\n')[0]})`);
   } finally {
     if (a.keep) process.stderr.write(`fixtures kept at ${tmp}\n`);
     else fs.rmSync(tmp, { recursive: true, force: true });

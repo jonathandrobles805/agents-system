@@ -847,8 +847,8 @@ export async function resume(root, slug) {
  * A lane's record: one JSON file per lane in the MAIN checkout, under the gitignored .claude/session/, so it is outside
  * the lane's worktree and never committed. advance (with start, scope and merged, which move through it) is its only
  * writer. Fields: version, slug, stage, updated, and moves (each: from, to, at, the lane's HEAD commit). Later steps add
- * their own fields beside these (the spec approval, a security sign-off, rounds); a move keeps every field it does not
- * write.
+ * their own fields beside these (the spec approval, a security sign-off, rounds, and `merge`, which lane.js merge and
+ * merged write through recordMerge); a move keeps every field it does not write.
  */
 export function storeDir(root) {
   return pjoin(root, '.claude', 'session', 'lanes');
@@ -914,21 +914,123 @@ export function laneRuns(wt) {
   return out;
 }
 
-/** Why wt/<slug> does not count as merged into the base, or null when it does. */
-export function notMerged(root, slug) {
+// ---------------------------------------------------------------------------
+// Is the lane merged? (#67, #82) One answer for lane.js merged and advance, kit_status, next-step and the dashboard.
+// ---------------------------------------------------------------------------
+
+const gitRaw = (root, args, input) => spawnSync('git', args, { cwd: root, input, encoding: 'utf8', maxBuffer: 256 * 1024 * 1024 });
+const gitLine = (root, args) => {
+  const r = gitRaw(root, args);
+  return r.status === 0 ? r.stdout.trim() : '';
+};
+const isAncestor = (root, a, b) => gitRaw(root, ['merge-base', '--is-ancestor', a, b]).status === 0;
+
+/** The lane's base, branch, tip, start commit and number of its own commits (first parent, no merges). */
+export function laneRefs(root, slug) {
   const kit = asDict(K.loadKitJson(root));
   const base = kget(kit, 'default_branch', 'main');
-  let tip = '';
+  const kl = asDict(kget(kget(kit, 'lanes', {}), slug, null) || {});
+  const lj = pjoin(kl.worktree ? pjoin(kl.worktree) : pjoin(lanesDir(root), slug), '.claude', 'lane.json');
+  const laneJson = K.isFile(lj) ? asDict(JSON.parse(readText(lj))) : {};
+  const branch = kget(laneJson, 'branch', null) || `wt/${slug}`;
+  const start = kget(laneJson, 'start_commit', null) || kget(kl, 'start_commit', null);
+  const tip = gitLine(root, ['rev-parse', '--verify', '--quiet', `${branch}^{commit}`]);
+  const own = tip && start && tip !== start ? Number(gitLine(root, ['rev-list', '--first-parent', '--no-merges', '--count', `${start}..${tip}`]) || 0) : 0;
+  return { base, branch, tip, start, own };
+}
+
+/** `git patch-id` of a diff, whitespace kept where this git can (`--verbatim`, git 2.39+). Lines: `<patch-id> <commit>`. */
+function patchIds(root, diff) {
+  if (!diff) return [];
+  let r = gitRaw(root, ['patch-id', '--stable', '--verbatim'], diff);
+  if (r.status !== 0) r = gitRaw(root, ['patch-id', '--stable'], diff);
+  return r.status === 0 ? r.stdout.split('\n').filter(Boolean).map((l) => l.split(' ')) : [];
+}
+
+const DIFF_OPTS = ['--no-color', '--no-ext-diff', '--no-textconv', '--no-renames', '--binary'];
+
+/**
+ * Whether the lane is merged into the base, from git and the store alone (no network), and how:
+ *   ancestor  the lane tip is an ancestor of the base (a merge commit or a fast-forward)
+ *   recorded  lane.js merge or lane.js merged read the merge from GitHub and wrote it in the store, for this tip
+ *   squash    one commit on the base since the lane's merge-base has the patch of the lane's whole diff
+ *             (`merge-base..tip`), single- or multi-commit; `git cherry` compares commit by commit and misses this.
+ *             A one-commit lane's rebase merge reads as this too.
+ *   rebase    every lane commit not in the base has an equal patch in the base (`git cherry`: GitHub's rebase merge)
+ * A lane with no commits of its own, or no start commit to count them from, is never merged (field test #38); with no
+ * branch, the state is 'no-branch' and nothing is claimed. Each signal is a fact about content, so a false 'merged' needs
+ * a base commit carrying the lane's exact patch. A revert on the base does not un-merge a lane: the lane was merged and
+ * its retro is due; undoing the change is new work. A lane that moved on after its merge (a commit the merge did not
+ * carry) is not merged. Not detected (safe): a squash whose diff differs from the lane's (conflicts resolved, or base
+ * changes inside a hunk's context); `lane.js merged --pr` then asks GitHub.
+ */
+export function laneMerge(root, slug) {
+  const { base, branch, tip, start, own } = laneRefs(root, slug);
+  if (!tip) return { merged: false, state: 'no-branch', why: `no branch ${branch}` };
+  const no = (why) => ({ merged: false, state: 'not-merged', why: `${branch} is not merged into ${base} yet (${why})` });
+  if (!start) return no('no start_commit recorded, so the lane\'s own commits cannot be told from the base\'s');
+  if (!own) return no(`no lane commits in ${base}: the lane has no commits of its own`);
+  const yes = (how, commit = null) => ({ merged: true, state: 'merged', how, commit });
+  if (isAncestor(root, tip, base)) return yes('ancestor', tip);
+  const rec = asDict(kget(readStore(root, slug) ?? {}, 'merge', {}));
+  if (typeof rec.head === 'string' && (rec.head === tip || isAncestor(root, tip, rec.head))) return yes('recorded', rec.commit ?? null);
+  const mb = gitLine(root, ['merge-base', base, tip]);
+  if (!mb) return no(`no lane commits in ${base}`);
+  const lane = patchIds(root, gitRaw(root, ['diff', ...DIFF_OPTS, mb, tip]).stdout)[0]?.[0];
+  if (lane) {
+    const log = gitRaw(root, ['log', '-p', '--no-merges', '--format=commit %H', ...DIFF_OPTS, `${mb}..${base}`]).stdout;
+    const hit = patchIds(root, log).find(([pid]) => pid === lane);
+    if (hit) return yes('squash', hit[1]);
+  }
+  const cherry = gitLine(root, ['cherry', base, tip, mb]).split('\n').filter(Boolean);
+  if (cherry.length && cherry.every((l) => l.startsWith('- '))) return yes('rebase');
+  return no(`no lane commits in ${base}`);
+}
+
+/**
+ * Ask GitHub whether PR `pr` merged this lane: MERGED, from the lane's branch into the base, with a head that holds the
+ * local tip (a later local commit was not merged). The answer is GitHub's, so the merge commit need not be fetched.
+ */
+export function githubMerge(root, slug, pr) {
+  const { base, branch, tip, own } = laneRefs(root, slug);
+  const no = (why) => ({ merged: false, why: `PR ${pr}: ${why}` });
+  if (!tip || !own) return no(`${branch} has no commits of its own`);
+  let info;
   try {
-    tip = pyStrip(K.git(['rev-parse', '--verify', '--quiet', `wt/${slug}`], root));
+    info = asDict(JSON.parse(G.gh(root, ['pr', 'view', String(pr), '--json', 'number,state,mergeCommit,headRefOid,headRefName,baseRefName'])));
   } catch (e) {
-    if (!isCalledProcessError(e)) throw e;
+    return no(`GitHub could not be read (${e.message})`);
   }
-  const startC = kget(kget(kget(kit, 'lanes', {}), slug, null) || {}, 'start_commit', null);
-  if (tip && (tip === startC || spawnSync('git', ['merge-base', '--is-ancestor', tip, base], { cwd: root }).status !== 0)) {
-    return `wt/${slug} is not merged into ${base} yet (no lane commits in ${base})`;
+  if (info.state !== 'MERGED' || !info.mergeCommit?.oid) return no(`GitHub says ${String(info.state ?? 'unknown').toLowerCase()}, not merged`);
+  if (info.headRefName !== branch || info.baseRefName !== base) return no(`merged ${info.headRefName} into ${info.baseRefName}, not ${branch} into ${base}`);
+  if (info.headRefOid !== tip && !isAncestor(root, tip, info.headRefOid)) return no(`merged head ${String(info.headRefOid).slice(0, 7)} does not hold ${branch} at ${tip.slice(0, 7)}`);
+  return { merged: true, how: 'github', pr: info.number ?? pr, commit: info.mergeCommit.oid, head: info.headRefOid };
+}
+
+/**
+ * Write a merge GitHub reported into the lane store (field `merge`: pr, commit, head, at), the copy laneMerge trusts,
+ * and into the lane's lane.json for the hooks to read. lane.json is in the lane's worktree, so laneMerge never reads it.
+ */
+export function recordMerge(root, slug, fact) {
+  const merge = { pr: fact.pr, commit: fact.commit, head: fact.head, at: K.isoSeconds() };
+  const lf = pjoin(lanesDir(root), slug, '.claude', 'lane.json');
+  const p = storePath(root, slug);
+  const prev = readStore(root, slug);
+  if (prev || K.isFile(lf)) {
+    // a lane started before the store gets its record here, at the stage its lane.json holds
+    const rec = { version: 1, slug, stage: laneStage(root, slug), moves: [], ...(prev ?? {}), merge };
+    fs.mkdirSync(path.dirname(p), { recursive: true });
+    const tmp = `${p}.${process.pid}.tmp`;
+    writeText(tmp, K.jsonDumps(rec, { indent: 2 }) + '\n');
+    fs.renameSync(tmp, p);
   }
-  return null;
+  if (K.isFile(lf)) writeText(lf, K.jsonDumps({ ...asDict(JSON.parse(readText(lf))), merge }, { indent: 2 }) + '\n');
+}
+
+/** Why the lane does not count as merged into the base, or null when it does (or its branch is gone: nothing to check). */
+export function notMerged(root, slug) {
+  const m = laneMerge(root, slug);
+  return m.merged || m.state === 'no-branch' ? null : m.why;
 }
 
 /** What is missing for a move that needs `why` (see MOVES); [] when nothing is. */
@@ -1720,6 +1822,7 @@ export async function main(argv = process.argv.slice(2)) {
     const pr = lanePr(root, a.slug, a.pr);
     if (!pr) return refuse([a.slug ? `no PR for '${a.slug}': pass --pr <number|url> or set the ROADMAP row's PR cell` : 'pass a slug or --pr <number|url>']);
     const opts = { timeoutMin: a.timeout_min, mutationBlocking: mutationBlocking(root).blocking };
+    let lane = null;
     try {
       if (a.cmd === 'merge') {
         // a lane that needs a security sign-off is not merged until one is recorded (#58). The PR names its own lane:
@@ -1744,6 +1847,7 @@ export async function main(argv = process.argv.slice(2)) {
           return 0;
         }
         const m = /^wt\/(.+)$/.exec(info.headRefName ?? '');
+        lane = m?.[1] ?? null;
         if (m) {
           if (a.slug && m[1] !== a.slug) return refuse([`PR ${pr} is the lane '${m[1]}', not '${a.slug}'; pass the lane's own slug`]);
           if (signoffRequired(laneFields(root, m[1]))) {
@@ -1751,7 +1855,19 @@ export async function main(argv = process.argv.slice(2)) {
           }
         }
       }
-      return a.cmd === 'ci' ? G.ciCommand(root, pr, { ...opts, wait: !!a.wait }) : G.mergeCommand(root, pr, { ...opts, by: a.by });
+      if (a.cmd === 'ci') return G.ciCommand(root, pr, { ...opts, wait: !!a.wait });
+      const code = G.mergeCommand(root, pr, { ...opts, by: a.by });
+      if (code !== 0 || !lane || !laneRefs(root, lane).tip) return code;
+      // record the merge this command just made (#82), so its squash reads as merged before main is pulled. The merge
+      // is done whatever happens here: a failure to record only says so, and lane.js merged asks GitHub again.
+      try {
+        const gm = githubMerge(root, lane, pr);
+        if (gm.merged) recordMerge(root, lane, gm);
+        else process.stderr.write(`lane: merge not recorded (${gm.why}); kit lane merged ${lane} --pr ${pr} asks GitHub again\n`);
+      } catch (e) {
+        process.stderr.write(`lane: merge not recorded (${e.message}); kit lane merged ${lane} --pr ${pr} asks GitHub again\n`);
+      }
+      return code;
     } catch (e) {
       return refuse([e.message]);
     }
@@ -1760,9 +1876,19 @@ export async function main(argv = process.argv.slice(2)) {
     return publish(root, { slug: a.slug, branch: a.branch, title: a.title, bodyFile: a.body_file, body: a.body, base: a.base });
   }
   if (a.cmd === 'merged') {
-    // Verify in git before writing the word: refuse to mark a lane merged that is not an ancestor of base.
-    const unmerged = notMerged(root, a.slug);
-    if (unmerged) return refuse([unmerged]);
+    // Verify before writing the word: git first (laneMerge: ancestry, a recorded merge, a rebase or squash merge); then,
+    // when the lane's PR is known (--pr, else its ROADMAP row), GitHub's own answer, which is recorded so every
+    // later reader (advance below, kit_status, next-step) agrees (#67, #82).
+    let unmerged = notMerged(root, a.slug);
+    const pr = unmerged ? lanePr(root, a.slug, a.pr) : null;
+    if (pr) {
+      const gm = githubMerge(root, a.slug, pr);
+      if (gm.merged) {
+        recordMerge(root, a.slug, gm);
+        unmerged = null;
+      } else unmerged = [unmerged, gm.why];
+    }
+    if (unmerged) return refuse([unmerged].flat());
     // The worktree is about to go, and with it the gitignored check log every log#N citation points at (#35).
     const gaps = evidenceGaps(root, a.slug);
     if (gaps.length) {

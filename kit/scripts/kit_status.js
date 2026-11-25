@@ -189,19 +189,9 @@ export function laneState(root, row, kit) {
       [behind, ahead] = parts.map((x) => L.pyInt(x));
     }
   }
-  // merged is a fact from git, not a word in ROADMAP: the lane branch (or its last commit) is an ancestor of base.
-  let mergedInGit = false;
-  const branch = kget(laneJson, 'branch', null) || `wt/${slug}`;
-  const startCommit = kget(laneJson, 'start_commit', null) || kget(kget(lanes, slug, null) || {}, 'start_commit', null);
-  const tip = gitOr(['rev-parse', '--verify', '--quiet', branch], root);
-  // Only a lane with commits of its own can be merged: a lane that only took base in would otherwise look merged
-  // (field test #38). Own commits = the lane's first-parent line since it started, without merges; sync.sh merges
-  // base with --no-ff so that line stays the lane's own.
-  if (tip && startCommit && tip !== startCommit) {
-    const own = Number(gitOr(['rev-list', '--first-parent', '--no-merges', '--count', `${startCommit}..${tip}`], root) || 0);
-    const ancestor = spawnSync('git', ['merge-base', '--is-ancestor', tip, base], { cwd: root }).status === 0;
-    mergedInGit = ancestor && own > 0;
-  }
+  // merged is a fact from git, not a word in ROADMAP: lane.js laneMerge, the one answer lane.js merged also gives
+  // (a merge, fast-forward, rebase or squash of a lane with commits of its own, field test #38; #67, #82)
+  const mergedInGit = row.status !== 'merged' && L.laneMerge(root, slug).merged;
   // position
   let pos;
   if (row.status === 'merged' || mergedInGit) pos = 'merged';
