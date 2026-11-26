@@ -47,6 +47,10 @@ export function main() {
   const ti = d.tool_input && typeof d.tool_input === 'object' ? d.tool_input : {};
   const e = { session_id: d.session_id ?? null, lane: lane ? lane.slug : null, hook: ev, tool };
   if (r.via === 'ambiguous') e.lane_ambiguous = r.slugs;
+  // Who did it: a subagent's payloads (start, its own tool calls, stop) carry agent_id and agent_type; the main
+  // session's carry neither, so the fields are absent there rather than null.
+  if (text(d.agent_id)) e.agent_id = d.agent_id;
+  if (text(d.agent_type)) e.agent_type = d.agent_type;
   if (ev === 'SubagentStart' || ev === 'SubagentStop') {
     e.event = ev === 'SubagentStart' ? 'subagent_start' : 'subagent_stop';
     e.agent = (d.agent_type || d.agent_name) ?? null;
