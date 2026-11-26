@@ -622,6 +622,7 @@
     {"file": "planted-faults/run.js", "from": "tool:planted-faults", "kind": "runs", "to": "script:eval/harness"},
     {"file": "planted-faults/run.js", "from": "tool:planted-faults", "kind": "runs", "to": "script:kit_status"},
     {"file": "planted-faults/run.js", "from": "tool:planted-faults", "kind": "imports", "to": "script:kitlib"},
+    {"file": "planted-faults/run.js", "from": "tool:planted-faults", "kind": "imports", "to": "script:lane"},
     {"file": "planted-faults/run.js", "from": "tool:planted-faults", "kind": "runs", "to": "script:lane"},
     {"file": "planted-faults/run.js", "from": "tool:planted-faults", "kind": "imports", "to": "script:pr_gate"},
     {"file": "planted-faults/run.js", "from": "tool:planted-faults", "kind": "runs", "to": "script:sandbox"},

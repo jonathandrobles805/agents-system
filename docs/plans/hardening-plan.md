@@ -257,14 +257,14 @@ Steps 1–9 of the skills work are done on branch `commands-to-skills`: 23 `zi-`
 
 ### Step 3. Gate (0016 step 3, plus D4)
 
-- [ ] Add `lane.js gate`:
+- [x] Add `lane.js gate`:
     - it runs the commands from the base branch's `kit.json`;
     - its verdict is tied to the commit;
     - no reviewer starts on a FAIL;
     - it runs again after updating from the base, and on a merge conflict it refuses and the lane parks for you (#56 S1.5);
     - a missing recorded command, or `none` without a reason, fails it (#56 S1.2);
     - done-check reads the verdict, not the lane's log. *(Owner's decision, 2026-11-25, option A: done-check keeps its quick log check when the implementer stops, since the gate cannot run before the implementer has finished; the gate's verdict is read where a reviewer would start, by `advance` and `next-step`, and nothing reaches review without it. Step 7 removes done-check as the evidence gate.)*
-    - Progress: PR #130 (`kit lane gate`) does the first, second, third and fifth bullets: the base's committed kit.json checks on the lane's HEAD, contained (containment from D4 too), a verdict bound to the commit, no reviewer without a PASS for the exact HEAD (no verdict, FAIL and stale refused), a missing check or bare `none` failing it, and a gate FAIL counting a round (D2). Planted fault 64. Still to do: the re-run after updating from the base with a conflict parking the lane, and done-check reading the verdict.
+    - Progress: PR #130 (`kit lane gate`) does the first, second, third and fifth bullets: the base's committed kit.json checks on the lane's HEAD, contained (containment from D4 too), a verdict bound to the commit, no reviewer without a PASS for the exact HEAD (no verdict, FAIL and stale refused), a missing check or bare `none` failing it, and a gate FAIL counting a round (D2). Planted fault 64. PR #132 does the fourth: `kit lane gate <slug> --sync` updates the lane from the base's tip (fetched) and gates the result; a merge conflict is undone and parks the lane for the owner; `next-step` sends a reviewed lane to it before the sign-off and the merge, and `lane.js merge` refuses a PR head the gate did not pass after it contained the base's current tip (`syncProblem`). Planted fault 66. The sixth is settled by the owner's decision above.
 - [x] Add D4's protected-file check, containment (non-interactive, with a time limit and closed stdin; only the exit code and output come back), and the risk re-check. Code: containment in PR #130; the protected-file check and the risk re-check in PR #131 (`protectedChanges`, `riskChanges` in `lane.js`): the lane's own diff from its merge-base with the base; a change to the spec after its approved commit, `.claude/`, CI configuration, a package.json's `scripts` or test configuration fails the gate and no check runs on it; a lane approved below high risk (spec at its approved commit, and goal) whose diff touches a high-risk path, matched as whole path parts (`src/auth/`, `billing.ts`; not `author.ts`), fails it and `next-step` stops the lane for the owner (`escalated`). Planted fault 65 (MISSED on main, CAUGHT here).
 - **Done when:**
     - a failing or missing check starts no reviewer;
