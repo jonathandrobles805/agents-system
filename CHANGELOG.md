@@ -4,6 +4,9 @@ All notable changes to the kit. Each entry names the decision or lesson that cau
 
 ## [0.3.0] - unreleased
 
+### Fixed (hardening plan Step 4, found on kit-test)
+- **A project's secrets check no longer fails on the kit's own manifest (#133).** After `/zi-bootstrap --upgrade` on kit-test, the `secrets` job (gitleaks 8.24.3) flagged `.claude/kit-manifest.json`: the checksum of `app_token.js` matched the `generic-api-key` rule, so every upgraded project's CI was red and `kit lane merge` (correctly) refused to merge. The job now writes a gitleaks config that extends every default rule, or the project's own `.gitleaks.toml` (extended, not replaced), and allows only that one path. Test: the step's script, run as CI runs it, with and without a project config; the generated file is valid TOML and allows exactly `^\.claude/kit-manifest\.json$`.
+
 ### Added (hardening plan Step 3: the gate runs again before the merge, #56 S1.5; Step 3 complete)
 - **`kit lane gate <slug> --sync`** fetches the base and merges its tip into the lane, then gates the result. A merge conflict is undone (`git merge --abort`) and parks the lane for a human (`parked.conflict` lists the files; ROADMAP `escalated`); neither the kit nor an agent resolves one.
 - **`lane.js merge` refuses a lane PR whose head the gate did not PASS after it contained the base's current tip** (fetched first), before reading CI, and merges only that head. `next-step` sends a reviewed lane to the gate with `"sync": true` before its security sign-off and merge, so the sign-off is given on the final code; `/zi-run`'s `gate` and `wait-merge` rows say so, and `kit lane publish` pushes the update.
