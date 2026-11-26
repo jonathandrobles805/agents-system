@@ -197,17 +197,35 @@ const all = (conclusion = 'success', names = ['tests', 'format', 'integration', 
   names.map((n, i) => run(100 + i, n, 'completed', conclusion));
 const lane = (root, env, ...args) => runScript('lane.js', [...args, '--repo', root], { env });
 
+/**
+ * The lane PR the merge tests merge, as the gate leaves it (hardening plan Step 3, #56 S1.5): its head a real commit
+ * that contains the base's tip (origin is a local bare repo, so lane.js merge can fetch it), and the gate's PASS for
+ * that commit in the lane store. The merge mechanics below are tested on it.
+ */
+function gatedPr(t, root) {
+  const bare = path.join(tmpPath(t), 'origin.git');
+  F.git(['init', '-q', '--bare', bare], root);
+  F.git(['remote', 'set-url', 'origin', bare], root);
+  F.git(['push', '-q', 'origin', 'HEAD:main'], root);
+  const head = F.git(['rev-parse', 'HEAD'], root).trim();
+  const store = path.join(root, '.claude', 'session', 'lanes', 'footer.json');
+  fs.mkdirSync(path.dirname(store), { recursive: true });
+  fs.writeFileSync(store, JSON.stringify({ version: 1, slug: 'footer', gate: { verdict: 'PASS', commit: head, failed: [], checks: [] } }, null, 2));
+  return { ...PR, headRefOid: head };
+}
+
 test('lane.js merge waits through "no checks reported" and merges at the checked head once all are green', (t) => {
   const root = project(t);
-  const { env, calls } = fakeGh(t, { pr: PR, polls: [[], [run(1, 'tests', 'in_progress', null)], all()] });
+  const pr = gatedPr(t, root);
+  const { env, calls } = fakeGh(t, { pr, polls: [[], [run(1, 'tests', 'in_progress', null)], all()] });
   const r = lane(root, env, 'merge', 'footer', '--by', 'Jonathan');
   assert.equal(r.returncode, 0, r.stderr + r.stdout);
   assert.match(r.stdout, /not reported yet/);
-  assert.match(r.stdout, /merged \(squash\) at head aaaaaaa/);
+  assert.match(r.stdout, new RegExp(`merged \\(squash\\) at head ${pr.headRefOid.slice(0, 7)}`));
   assert.match(r.stdout, /warning: branch protection on main is off/);
   const merge = calls().find((c) => c.args[0] === 'pr' && c.args[1] === 'merge');
   assert.deepEqual(merge.args.slice(0, 5), ['pr', 'merge', '4', '--squash', '--match-head-commit']);
-  assert.equal(merge.args[5], PR.headRefOid);
+  assert.equal(merge.args[5], pr.headRefOid);
   assert.ok(merge.args.join(' ').includes('for Jonathan'));
 });
 
@@ -237,9 +255,10 @@ test('lane.js merge records no approval when a spec PR is not merged (red CI)', 
 
 test('lane.js merge uses the owner\'s ruleset bypass (--admin) only after every check is green and only where GitHub enforces protection for admins', (t) => {
   const root = project(t);
+  const pr = gatedPr(t, root);
   const mergeOf = (calls) => calls().find((c) => c.args[0] === 'pr' && c.args[1] === 'merge');
   // enforce_admins on: --admin is passed, after the checks are green
-  let g = fakeGh(t, { pr: PR, polls: [[run(1, 'tests', 'in_progress', null)], all()], protection: 'on', enforceAdmins: true });
+  let g = fakeGh(t, { pr, polls: [[run(1, 'tests', 'in_progress', null)], all()], protection: 'on', enforceAdmins: true });
   let r = lane(root, g.env, 'merge', 'footer', '--by', 'Jonathan');
   assert.equal(r.returncode, 0, r.stderr + r.stdout);
   assert.ok(mergeOf(g.calls).args.includes('--admin'), 'the owner bypass for the ruleset');
@@ -248,29 +267,29 @@ test('lane.js merge uses the owner\'s ruleset bypass (--admin) only after every 
   const order = g.calls().map((c) => c.args.join(' '));
   assert.ok(order.findIndex((c) => c.includes('.enforce_admins.enabled')) > order.findLastIndex((c) => c.includes('/check-runs')), 'read after the checks went green');
   // enforce_admins off: never --admin (it would let an admin skip the checks), and a warning
-  g = fakeGh(t, { pr: PR, polls: [all()], protection: 'on', enforceAdmins: false });
+  g = fakeGh(t, { pr, polls: [all()], protection: 'on', enforceAdmins: false });
   r = lane(root, g.env, 'merge', 'footer', '--by', 'Jonathan');
   assert.equal(r.returncode, 0, r.stderr + r.stdout);
   assert.ok(!mergeOf(g.calls).args.includes('--admin'));
   assert.match(r.stdout, /warning: branch protection on main does not apply to admins \(enforce_admins off\)/);
   // no protection: never --admin, and the existing warning
-  g = fakeGh(t, { pr: PR, polls: [all()] });
+  g = fakeGh(t, { pr, polls: [all()] });
   r = lane(root, g.env, 'merge', 'footer', '--by', 'Jonathan');
   assert.ok(!mergeOf(g.calls).args.includes('--admin'));
   assert.match(r.stdout, /warning: branch protection on main is off/);
   // red CI with enforce_admins on: no merge at all, so no --admin
-  g = fakeGh(t, { pr: PR, polls: [all('failure')], protection: 'on', enforceAdmins: true });
+  g = fakeGh(t, { pr, polls: [all('failure')], protection: 'on', enforceAdmins: true });
   r = lane(root, g.env, 'merge', 'footer', '--by', 'Jonathan');
   assert.notEqual(r.returncode, 0);
   assert.equal(mergeOf(g.calls), undefined);
   // protection unreadable (not a 404): never --admin, and the 'unknown' warning
-  g = fakeGh(t, { pr: PR, polls: [all()], protection: 'error' });
+  g = fakeGh(t, { pr, polls: [all()], protection: 'error' });
   r = lane(root, g.env, 'merge', 'footer', '--by', 'Jonathan');
   assert.equal(r.returncode, 0, r.stderr + r.stdout);
   assert.ok(!mergeOf(g.calls).args.includes('--admin'));
   assert.match(r.stdout, /warning: branch protection on main is unknown/);
   // the PR moved to another base after the checks were read (views: lane head check, mergeCommand's first read, the checks poll, then the re-read, 4th): refused, nothing merged
-  g = fakeGh(t, { pr: PR, polls: [all()], protection: 'on', enforceAdmins: true, prAfter: { after: 3, pr: { baseRefName: 'release' } } });
+  g = fakeGh(t, { pr, polls: [all()], protection: 'on', enforceAdmins: true, prAfter: { after: 3, pr: { baseRefName: 'release' } } });
   r = lane(root, g.env, 'merge', 'footer', '--by', 'Jonathan');
   assert.equal(r.returncode, 2);
   assert.match(r.stderr, /changed while it was being merged \(base main -> release/);
@@ -298,28 +317,34 @@ test('mergeCommand with a signed-off head merges only that head: a push while th
 
 test('lane.js merge refuses red CI, a draft, a closed PR, no --by, and CI that never finishes', (t) => {
   const root = project(t);
+  const pr = gatedPr(t, root);
   const noMerge = (calls) => assert.ok(!calls().some((c) => c.args[0] === 'pr' && c.args[1] === 'merge'), 'must not merge');
-  let g = fakeGh(t, { pr: PR, polls: [[...all(), run(200, 'kit-checks', 'completed', 'failure')]] });
+  let g = fakeGh(t, { pr, polls: [[...all(), run(200, 'kit-checks', 'completed', 'failure')]] });
   let r = lane(root, g.env, 'merge', 'footer', '--by', 'Jonathan');
   assert.ok(r.returncode === 2 && r.stderr.includes('CI red') && r.stderr.includes('kit-checks: failure'), r.stderr);
   noMerge(g.calls);
-  g = fakeGh(t, { pr: { ...PR, isDraft: true }, polls: [all()] });
+  g = fakeGh(t, { pr: { ...pr, isDraft: true }, polls: [all()] });
   r = lane(root, g.env, 'merge', 'footer', '--by', 'Jonathan');
   assert.ok(r.returncode === 2 && r.stderr.includes('draft'), r.stderr);
   noMerge(g.calls);
-  g = fakeGh(t, { pr: { ...PR, state: 'MERGED' }, polls: [all()] });
+  g = fakeGh(t, { pr: { ...pr, state: 'MERGED' }, polls: [all()] });
   r = lane(root, g.env, 'merge', '--pr', '4', '--by', 'Jonathan');
   assert.ok(r.returncode === 2 && r.stderr.includes('is merged, not open'), r.stderr);
-  g = fakeGh(t, { pr: PR, polls: [all()] });
+  g = fakeGh(t, { pr, polls: [all()] });
   r = lane(root, g.env, 'merge', 'footer');
   assert.ok(r.returncode === 2 && r.stderr.includes('--by'), r.stderr);
   noMerge(g.calls);
-  g = fakeGh(t, { pr: PR, polls: [[run(1, 'tests', 'queued', null)]] });
+  g = fakeGh(t, { pr, polls: [[run(1, 'tests', 'queued', null)]] });
   r = lane(root, g.env, 'merge', 'footer', '--by', 'Jonathan', '--timeout-min', '0');
   assert.ok(r.returncode === 2 && r.stderr.includes('still pending after 0 min'), r.stderr);
   noMerge(g.calls);
   r = lane(root, g.env, 'merge', 'nope', '--by', 'Jonathan');
   assert.ok(r.returncode === 2 && r.stderr.includes("no PR for 'nope'"), r.stderr);
+  // a lane PR whose head the gate never passed (Step 3, #56 S1.5): refused before CI is even read
+  g = fakeGh(t, { pr: { ...pr, headRefOid: 'a'.repeat(40) }, polls: [all()] });
+  r = lane(root, g.env, 'merge', 'footer', '--by', 'Jonathan');
+  assert.ok(r.returncode === 2 && r.stderr.includes("footer cannot merge PR 4: the gate's verdict is for") && r.stderr.includes('not aaaaaaa'), r.stderr);
+  noMerge(g.calls);
 });
 
 test('lane.js ci reports the state from the PR head: pending is not green', (t) => {

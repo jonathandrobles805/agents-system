@@ -675,6 +675,10 @@ test('next step walks the pipeline from facts', (t) => {
   commitAll(wt, 'D1');
   const head = git(['rev-parse', 'HEAD'], wt).trim();
   write(path.join(wt, 'docs/specs/refund-route.review.md'), review({ head: head.slice(0, 10), verdict: 'PASS' }));
+  // reviewed: the gate runs again on the lane updated from the base before the sign-off and the merge (#56 S1.5)
+  ns = stage();
+  assert.ok(ns.stage === 'gate' && ns.sync === true && /before the merge the gate's verdict is for/.test(ns.reason), JSON.stringify(ns));
+  gatePass(root, 'refund-route');
   ns = stage();
   // the fixture's spec is high risk (it touches payment code), and the feature profile adds a human security sign-off
   // for high risk: the stage waits for it and names what it requires (#58)
@@ -696,6 +700,7 @@ test('next step walks the pipeline from facts', (t) => {
   commitAll(wt, 'D1 again');
   const head2 = git(['rev-parse', 'HEAD'], wt).trim();
   write(path.join(wt, 'docs/specs/refund-route.review.md'), review({ head: head2.slice(0, 10), verdict: 'PASS' }));
+  gatePass(root, 'refund-route');
   ns = stage();
   assert.equal(ns.stage, 'security-signoff', JSON.stringify(ns));
   assert.match(ns.reason, new RegExp(`the recorded one is stale: Jonathan Robles signed off ${head.slice(0, 7)} at .*, and the lane is now at ${head2.slice(0, 7)}; review the commits since`));
@@ -751,7 +756,11 @@ process.stderr.write('fake gh: past the sign-off'); process.exit(9);
   assert.deepEqual({ by: so.by, commit: so.commit, branch: so.branch }, { by: 'Jonathan Robles', commit: head1, branch: 'wt/refund-route' });
   assert.match(so.at, /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d/);
   assert.equal(storeOf(root).stage, 'build', 'the sign-off moves no stage');
+  // the sign-off alone is not enough: the gate must have passed that head too (Step 3, #56 S1.5)
   let m = merge(head1);
+  refused(m, /refund-route cannot merge PR 5: the gate has not run on this lane/);
+  gatePass(root, 'refund-route');
+  m = merge(head1);
   assert.doesNotMatch(m.stderr, /security sign-off/);
   assert.match(m.stderr, /fake gh: past the sign-off/);
   // the PR's head is not the signed commit (a push after the sign-off): refused as stale
@@ -762,6 +771,7 @@ process.stderr.write('fake gh: past the sign-off'); process.exit(9);
   refused(merge(head1), new RegExp(`the recorded one is stale: .* the lane is now at ${head2.slice(0, 7)}`));
   // signed off again at the new HEAD: accepted
   assert.equal(signoff('--by', 'Jonathan Robles').returncode, 0);
+  gatePass(root, 'refund-route');
   m = merge(head2);
   assert.match(m.stderr, /fake gh: past the sign-off/);
   // a lane whose profile asks for no sign-off: signoff refuses, says how to merge, and records nothing new

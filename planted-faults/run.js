@@ -18,6 +18,7 @@ import { fileURLToPath } from 'node:url';
 import { ArgumentParser } from '../kit/scripts/args.js';
 import * as K from '../kit/scripts/kitlib.js';
 import * as G from '../kit/scripts/pr_gate.js';
+import * as L from '../kit/scripts/lane.js';
 import * as F from '../kit/scripts/tests/fixtures.js';
 import { GOOD_RESEARCH, review as REVIEW, spec as SPEC } from '../kit/scripts/tests/testdata.js';
 
@@ -929,6 +930,7 @@ process.stderr.write('fake gh 61: past the sign-off'); process.exit(9);
     const forged61 = merge61(h61);
     // the human signs off; the merge goes on; then a later commit on the lane makes the sign-off stale
     const so61 = run('lane.js', ['signoff', 'refund-route', '--repo', r61, '--by', 'Jonathan Robles']);
+    F.gatePass(r61, 'refund-route'); // the gate passed that head too (Step 3); this fault is about the sign-off
     const signed61 = merge61(h61);
     writeP(path.join(wt61, 'src', 'api', 'routes.ts'), '// refund route, changed after the sign-off\n');
     const h61b = F.commitAll(wt61, 'after the sign-off');
@@ -1157,6 +1159,46 @@ process.stderr.write('fake gh 61: past the sign-off'); process.exit(9);
     const caught65 = script65.code === 1 && script65.failed.includes('protected-files') && kit65.code === 1 && kit65.failed.includes('protected-files') &&
       clean65.code === 0 && risk65.code === 1 && risk65.failed.join(',') === 'risk';
     record(65, 'a lane changes a package.json script or kit.json so the checks run what it wants, or a lane approved at normal risk changes a high-risk path', "lane.js gate fails on a protected file (the spec after approval, .claude/, CI config, package.json scripts, test config) and runs no check on it; its risk re-check matches high-risk paths against the lane's own diff and stops a lane not approved as high risk (hardening plan Step 3, D4)", caught65, `script -> exit ${script65.code} [${script65.failed}]; kit.json -> exit ${kit65.code} [${kit65.failed}]; reverted -> exit ${clean65.code}; billing in a normal-risk lane -> exit ${risk65.code} [${risk65.failed}]`);
+    // 66 the gate before the merge (hardening plan Step 3; #56 S1.5): a lane merges code the gate never checked
+    //    against the base's current tip, or a merge conflict with the base is resolved by guesswork -> the merge needs a
+    //    gate PASS for the PR head after kit lane gate --sync updated it from the base; a conflict is undone and parks
+    //    the lane for a human
+    const r66 = path.join(tmp, 'node-api-66');
+    F.nodeApi(r66);
+    run('bootstrap.js', ['--repo', r66]);
+    write(path.join(r66, 'ROADMAP.md'), read(path.join(r66, 'ROADMAP.md')).replaceAll('| TODO(bootstrap: ROADMAP.md — feature) | TODO(bootstrap: ROADMAP.md — slug) | M1 | queued | — | — | — |', '| Refund route | refund-route | M1 | queued | — | — | — |'));
+    const kj66 = path.join(r66, '.claude', 'kit.json');
+    const cmds66 = { ...JSON.parse(read(kj66)).commands };
+    delete cmds66.lint_all;
+    for (const n of ['test', 'coverage', 'format', 'integration', 'typecheck', 'lint', 'boundaries', 'audit']) cmds66[n] = 'true';
+    write(kj66, K.jsonDumps({ ...JSON.parse(read(kj66)), local_only: true, commands: cmds66 }));
+    const c66 = F.commitAll(r66, 'bootstrap');
+    write(path.join(r66, 'docs', 'specs', 'refund-route.md'), SPEC({ commit: c66.slice(0, 7) }));
+    F.commitAll(r66, 'spec');
+    F.approveSpec(r66, 'refund-route');
+    const wt66 = JSON.parse(run('lane.js', ['start', 'refund-route', '--repo', r66]).stdout || '{}').worktree;
+    write(path.join(wt66, 'src', 'api', 'routes.ts'), '// the lane\'s refund route\n');
+    F.commitAll(wt66, 'lane: D1');
+    const pass66 = run('lane.js', ['gate', 'refund-route', '--repo', r66]);
+    // another lane merges first: a new file on the base (no conflict)
+    write(path.join(r66, 'src', 'other.ts'), 'export const other = 1;\n');
+    const tip66 = F.commitAll(r66, 'another lane');
+    // the merge's own check (lane.js merge calls it before reading CI); absent before this fault's fix
+    const syncProblem66 = typeof L.syncProblem === 'function' ? L.syncProblem : () => null;
+    const stale66 = syncProblem66(r66, 'refund-route', F.git(['rev-parse', 'HEAD'], wt66).trim()) ?? '';
+    const sync66 = run('lane.js', ['gate', 'refund-route', '--sync', '--repo', r66]);
+    const head66 = F.git(['rev-parse', 'HEAD'], wt66).trim();
+    const has66 = spawnSync('git', ['merge-base', '--is-ancestor', tip66, head66], { cwd: wt66 }).status === 0;
+    const ok66 = syncProblem66(r66, 'refund-route', head66);
+    // then a lane edits the same line the lane did: a conflict
+    write(path.join(r66, 'src', 'api', 'routes.ts'), '// the base\'s line\n');
+    F.commitAll(r66, 'a conflicting change');
+    const conflict66 = run('lane.js', ['gate', 'refund-route', '--sync', '--repo', r66]);
+    const st66 = JSON.parse(read(path.join(r66, '.claude', 'session', 'lanes', 'refund-route.json')));
+    const clean66 = F.git(['status', '--porcelain', '--untracked-files=no'], wt66).trim() === '' && F.git(['rev-parse', 'HEAD'], wt66).trim() === head66;
+    const caught66 = pass66.returncode === 0 && /does not contain main's tip/.test(stale66) && sync66.returncode === 0 && has66 && ok66 === null &&
+      conflict66.returncode === 2 && /is parked: a merge conflict with main/.test(conflict66.stderr) && st66.stage === 'parked' && (st66.parked?.conflict ?? []).includes('src/api/routes.ts') && clean66;
+    record(66, "a lane merges code the gate never checked against the base's current tip, or a merge conflict with the base is resolved by guesswork", "the merge needs a gate PASS for the PR head after kit lane gate --sync updated it from the base's tip; a conflict is undone and parks the lane for a human (hardening plan Step 3, #56 S1.5)", caught66, `gated -> exit ${pass66.returncode}; base moved: ${stale66 ? 'merge refused (head lacks the tip)' : 'merge allowed'}; --sync -> exit ${sync66.returncode}, contains the tip ${has66}; conflict -> exit ${conflict66.returncode}, stage ${st66.stage}, conflict [${st66.parked?.conflict ?? ''}], worktree clean ${clean66}`);
   } finally {
     if (a.keep) process.stderr.write(`fixtures kept at ${tmp}\n`);
     else fs.rmSync(tmp, { recursive: true, force: true });
