@@ -361,7 +361,7 @@ test('the real kit: every agent has hooks, and the committed snapshot is current
 
 test('the real kit: the /zi-run stages are the stages next-step can answer, in the order the pipeline runs', () => {
   const m = M.buildManifest(REAL_KIT);
-  assert.deepEqual(m.pipeline.map((s) => s.id).slice(0, 9), ['start', 'research', 'plan', 'approve', 'lane', 'test', 'build', 'review', 'wait-merge']);
+  assert.deepEqual(m.pipeline.map((s) => s.id).slice(0, 10), ['start', 'research', 'plan', 'approve', 'lane', 'test', 'build', 'gate', 'review', 'wait-merge']);
   assert.equal(m.pipeline.find((s) => s.id === 'approve').pause, 1);
   assert.equal(m.pipeline.find((s) => s.id === 'wait-merge').pause, 2);
   assert.ok(m.pipeline.find((s) => s.id === 'build').agents.includes('implementer'));

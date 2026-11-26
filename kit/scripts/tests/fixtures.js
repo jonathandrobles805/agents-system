@@ -4,7 +4,7 @@ import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { jsonDumps } from '../kitlib.js';
-import { recordSpecApproval } from '../lane.js';
+import { recordSpecApproval, storePath, lanesDir } from '../lane.js';
 
 // Hermetic git: the developer's global config (commit signing, hooks) must not affect test repositories.
 process.env.GIT_CONFIG_COUNT = '1';
@@ -30,6 +30,21 @@ export function commitAll(root, msg) {
 export function approveSpec(root, slug, { by = 'Jonathan Robles', commit = null, pr = null } = {}) {
   const c = commit ?? git(['rev-parse', 'HEAD'], root).trim();
   return recordSpecApproval(root, slug, { by, at: new Date().toISOString().slice(0, 19), merged_at: null, pr, head: null, commit: c });
+}
+
+/**
+ * Stand-in for a gate PASS (lane.js gate, hardening plan Step 3) on the lane's HEAD, for a test about something after
+ * the gate: the verdict the store would hold. A test about the gate itself runs lane.js gate.
+ */
+export function gatePass(root, slug) {
+  const wt = path.join(lanesDir(root), slug);
+  const commit = git(['rev-parse', 'HEAD'], wt).trim();
+  const p = storePath(root, slug);
+  const rec = fs.existsSync(p) ? JSON.parse(fs.readFileSync(p, 'utf8')) : { version: 1, slug };
+  rec.gate = { verdict: 'PASS', commit, at: new Date().toISOString().slice(0, 19), failed: [], checks: [], report: null, fixture: true };
+  fs.mkdirSync(path.dirname(p), { recursive: true });
+  fs.writeFileSync(p, JSON.stringify(rec, null, 2) + '\n');
+  return commit;
 }
 
 const write = (p, text) => {
