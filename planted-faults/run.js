@@ -1015,6 +1015,7 @@ process.stderr.write('fake gh 61: past the sign-off'); process.exit(9);
     run('lane.js', ['advance', 'refund-route', 'build', '--repo', r62]);
     const loops62 = [];
     for (let i = 0; i < 3; i++) {
+      F.gatePass(r62, 'refund-route'); // the gate passed each round's code (Step 3); this fault is about the review FAILs
       run('lane.js', ['stage', 'refund-route', 'review', '--repo', r62]);
       loops62.push(run('lane.js', ['stage', 'refund-route', 'build', '--repo', r62]));
     }
@@ -1059,6 +1060,58 @@ process.stderr.write('fake gh 61: past the sign-off'); process.exit(9);
     const main63 = hook('hook_guard_bash.js', { session_id: 'pf', cwd: root, hook_event_name: 'PreToolUse', tool_name: 'Bash', tool_input: { command: 'kit lane advance refund-route build' } });
     const caught63 = laneOk63 && outsideOk63 && agent63.returncode === 2 && main63.returncode === 0;
     record(63, 'a lane session may approve advance, start or a merge, or a session may merge or approve another way than kit lane merge', "the lane's per-run --settings (kit/hooks/settings.lane.json) deny the stage moves, gate, start and merges; the project's rules name each kit command, ask on kit lane merge and deny gh pr merge, approving reviews and their gh api forms (floor); guard-bash refuses those kit commands to a subagent (hardening plan Step 2)", caught63, `lane: ${laneMoves63.map((c) => `${c.split(' ').slice(0, 3).join(' ')} -> ${inLane63(c)}`).join(', ')} (--settings ${flag63 >= 0 ? 'passed' : 'missing'}); outside: ${Object.entries(outside63).map(([k, v]) => `${k} ${v}`).join(', ')}; subagent advance -> exit ${agent63.returncode}, main session -> exit ${main63.returncode}`);
+    // 64 the gate (hardening plan Step 3; 0016 E.1 Add 2; #56 S1.2, S1.4): a reviewer starts on a lane whose recorded
+    //    checks fail, are missing or "none" with no reason, or hang, or on a gate verdict for an older commit -> lane.js
+    //    gate re-runs the base's committed kit.json checks on the lane's HEAD, contained, stdin closed, with a time limit,
+    //    and advance build → review needs its PASS for that exact HEAD
+    const r64 = path.join(tmp, 'node-api-64');
+    F.nodeApi(r64);
+    run('bootstrap.js', ['--repo', r64]);
+    write(path.join(r64, 'ROADMAP.md'), read(path.join(r64, 'ROADMAP.md')).replaceAll('| TODO(bootstrap: ROADMAP.md — feature) | TODO(bootstrap: ROADMAP.md — slug) | M1 | queued | — | — | — |', '| Refund route | refund-route | M1 | queued | — | — | — |'));
+    const kj64 = path.join(r64, '.claude', 'kit.json');
+    const ci64 = ['test', 'coverage', 'format', 'integration', 'typecheck', 'lint', 'boundaries', 'audit'];
+    const cmds64 = (over) => {
+      const c = { ...JSON.parse(read(kj64)).commands };
+      delete c.lint_all;
+      for (const n of ci64) c[n] = 'true';
+      for (const [k, v] of Object.entries(over)) if (v === undefined) delete c[k]; else c[k] = v;
+      return c;
+    };
+    // the base records a hanging test, a failing lint, no typecheck and an audit turned off with no reason
+    write(kj64, K.jsonDumps({ ...JSON.parse(read(kj64)), local_only: true, gate_timeout_min: 0.02, commands: cmds64({ test: 'sleep 30', lint: 'exit 1', typecheck: undefined, audit: 'none' }) }));
+    const c64 = F.commitAll(r64, 'bootstrap');
+    write(path.join(r64, 'docs', 'specs', 'refund-route.md'), SPEC({ commit: c64.slice(0, 7) }));
+    F.commitAll(r64, 'spec');
+    F.approveSpec(r64, 'refund-route');
+    const wt64 = JSON.parse(run('lane.js', ['start', 'refund-route', '--repo', r64]).stdout || '{}').worktree;
+    run('lane.js', ['advance', 'refund-route', 'test', '--repo', r64]);
+    write(path.join(wt64, '.claude', 'session', 'refund-route.log'), '=== 2026-11-11T10:00:00 test: npx vitest run -> exit 1\nnot ok 1 - exposes refund\n\n=== 2026-11-11T10:05:00 test: npx vitest run -> exit 0\nok 1 - exposes refund\n\n');
+    const prog64 = path.join(wt64, 'docs', 'specs', 'refund-route.progress.md');
+    write(prog64, read(prog64).replaceAll('| — | — |', '| refund-route.log#1 | refund-route.log#4 |'));
+    run('lane.js', ['advance', 'refund-route', 'build', '--repo', r64]);
+    // every criterion is green in the lane's log, so before the gate this went straight to a reviewer
+    const noGate64 = run('lane.js', ['advance', 'refund-route', 'review', '--repo', r64]);
+    const t64 = Date.now();
+    const fail64 = run('lane.js', ['gate', 'refund-route', '--repo', r64]);
+    const secs64 = (Date.now() - t64) / 1000;
+    const store64 = path.join(r64, '.claude', 'session', 'lanes', 'refund-route.json');
+    const rec64 = () => (fs.existsSync(store64) ? JSON.parse(read(store64)) : {});
+    const failed64 = [...(rec64().gate?.failed ?? [])].sort().join(',');
+    const hung64 = (rec64().gate?.checks ?? []).find((c) => c.name === 'test')?.timed_out === true;
+    const onFail64 = run('lane.js', ['advance', 'refund-route', 'review', '--repo', r64]);
+    // the owner fixes the base's checks; the lane's HEAD passes; then a later lane commit makes that verdict stale
+    write(kj64, K.jsonDumps({ ...JSON.parse(read(kj64)), commands: cmds64({}) }));
+    F.commitAll(r64, 'kit.json: every check recorded');
+    const pass64 = run('lane.js', ['gate', 'refund-route', '--repo', r64]);
+    write(path.join(wt64, 'src', 'later.ts'), 'export const later = 1;\n');
+    F.commitAll(wt64, 'a commit after the gate');
+    const stale64 = run('lane.js', ['advance', 'refund-route', 'review', '--repo', r64]);
+    run('lane.js', ['gate', 'refund-route', '--repo', r64]);
+    const ok64 = run('lane.js', ['advance', 'refund-route', 'review', '--repo', r64]);
+    const caught64 = noGate64.returncode === 2 && /the gate has not run/.test(noGate64.stderr) && fail64.returncode === 1 && /^GATE: FAIL/.test(fail64.stdout) &&
+      failed64 === 'audit,lint,test,typecheck' && hung64 && secs64 < 25 && onFail64.returncode === 2 && /the gate FAILED/.test(onFail64.stderr) &&
+      pass64.returncode === 0 && stale64.returncode === 2 && /\(stale\)/.test(stale64.stderr) && ok64.returncode === 0;
+    record(64, 'a reviewer starts on a lane whose recorded checks fail, are missing or "none" with no reason, or hang, or on a gate verdict for an older commit', "lane.js gate re-runs the base's committed kit.json checks on the lane's HEAD, contained, stdin closed, with a time limit; advance build → review needs its PASS for that exact HEAD (hardening plan Step 3)", caught64, `no gate: review -> exit ${noGate64.returncode}; gate -> exit ${fail64.returncode} failed [${failed64}] test hung-and-stopped ${hung64} in ${secs64.toFixed(1)}s; review on FAIL -> exit ${onFail64.returncode}; fixed: gate -> exit ${pass64.returncode}; stale review -> exit ${stale64.returncode}; after a new gate -> exit ${ok64.returncode}`);
   } finally {
     if (a.keep) process.stderr.write(`fixtures kept at ${tmp}\n`);
     else fs.rmSync(tmp, { recursive: true, force: true });

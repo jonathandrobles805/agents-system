@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 import { spawnSync } from 'node:child_process';
-import { git, commitAll, nodeApi, approveSpec } from './fixtures.js';
+import { git, commitAll, nodeApi, approveSpec, gatePass } from './fixtures.js';
 import { runScript, setEnv, tmpPath } from './helpers.js';
 import { project, spec, review } from './testdata.js';
 import * as P from '../permission_probe.js';
@@ -217,8 +217,10 @@ test('advance: start writes the store; an illegal move is refused with a reason;
   write(prog, read(prog).replaceAll('| — | — |', '| refund-route.log#1 | — |'));
   assert.equal(lane('advance', 'refund-route', 'build', '--repo', root).returncode, 0);
   write(prog, read(prog).replaceAll('| refund-route.log#1 | — |', '| refund-route.log#1 | refund-route.log#4 |'));
+  gatePass(root, 'refund-route');
   assert.equal(lane('advance', 'refund-route', 'review', '--repo', root).returncode, 0);
   assert.equal(lane('advance', 'refund-route', 'build', '--repo', root).returncode, 0, 'a review FAIL sends the work back');
+  gatePass(root, 'refund-route');
   assert.equal(lane('advance', 'refund-route', 'review', '--repo', root).returncode, 0);
   const rec = storeOf(root);
   assert.deepEqual(rec.moves.map((m) => m.to), ['build', 'test', 'build', 'review', 'build', 'review']);
@@ -292,6 +294,7 @@ function atReview(t, { maxRounds = null } = {}) {
   const prog = path.join(wt, 'docs/specs/refund-route.progress.md');
   write(prog, read(prog).replaceAll('| — | — |', '| refund-route.log#1 | refund-route.log#4 |'));
   assert.equal(lane('advance', 'refund-route', 'build', '--repo', root).returncode, 0);
+  gatePass(root, 'refund-route');
   assert.equal(lane('advance', 'refund-route', 'review', '--repo', root).returncode, 0);
   return { root, wt };
 }
@@ -305,6 +308,7 @@ test('rounds: each review → build move counts a FAIL round in the store; a rou
   for (const n of [1, 2]) {
     assert.equal(lane('advance', 'refund-route', 'build', '--repo', root).returncode, 0, `FAIL round ${n} sends the work back`);
     assert.equal(storeOf(root).failed_rounds, n);
+    gatePass(root, 'refund-route');
     assert.equal(lane('advance', 'refund-route', 'review', '--repo', root).returncode, 0);
   }
   const ns = JSON.parse(lane('next-step', 'refund-route', '--repo', root).stdout);
@@ -369,6 +373,7 @@ test('rounds: a parked lane refuses every build move until a named human lets it
   assert.ok(rec.unparked.length === 1 && rec.unparked[0].by === 'Jonathan Robles' && rec.unparked[0].round === 2, JSON.stringify(rec.unparked));
   assert.match(read(root, 'ROADMAP.md'), /\| refund-route \| M1 \| building \|/);
   assert.deepEqual(laneStatus(root).rounds, { round: 2, limit: 2, failed: 1, parked: null });
+  gatePass(root, 'refund-route');
   assert.equal(lane('advance', 'refund-route', 'review', '--repo', root).returncode, 0);
   r = lane('advance', 'refund-route', 'build', '--repo', root);
   assert.ok(r.returncode === 2 && /2 review FAIL rounds; round 3 would pass the limit of 2/.test(r.stderr), r.stderr);
@@ -390,6 +395,7 @@ test('wall time is the store\'s: started and each move\'s time; the budget hook 
   const h = runScript('hook_budget_check.js', [], { stdin: JSON.stringify({ hook_event_name: 'PostToolUse', session_id: 's', cwd: wt, tool_name: 'Read', tool_input: { file_path: 'x' } }) });
   assert.match(h.stdout, /budget exceeded for stage 'review': 7\.0h elapsed > budget 1h/, JSON.stringify(h));
   // re-entering the stage it is at does not restart its clock (#53)
+  gatePass(root, 'refund-route');
   assert.equal(lane('advance', 'refund-route', 'review', '--repo', root).returncode, 0);
   assert.equal(K.storeClock(storeOf(root)).stage_started, seven);
   // a review FAIL starts a new build stage, with its own clock
@@ -661,6 +667,9 @@ test('next step walks the pipeline from facts', (t) => {
   write(prog, read(prog).replaceAll('| refund-route.log#1 | refund-route.log#4 |', '| refund-route.log#1 | — |'));
   assert.equal(stage().stage, 'build');
   write(prog, read(prog).replaceAll('| refund-route.log#1 | — |', '| refund-route.log#1 | refund-route.log#4 |'));
+  // all green: the gate runs before any reviewer (Step 3); a PASS for an older commit is stale
+  assert.equal(stage().stage, 'gate');
+  gatePass(root, 'refund-route');
   assert.equal(stage().stage, 'review');
   write(path.join(wt, 'src', 'api', 'routes.ts'), '// built\n');
   commitAll(wt, 'D1');
@@ -957,7 +966,9 @@ test('end to end: a fix lane goes start → scope → test → build → review 
   write(prog, read(prog).replace(/\| — \|\s*$/m, `| ${green.ref} |`));
   commitAll(wt, 'truncate-text: D1');
   assert.equal(JSON.parse(lane('check', 'truncate-text', 'suite', '--repo', root, '--', 'npx vitest run').stdout).exit, 0);
-  // reviewer
+  // the gate (Step 3) stands between green and the reviewer: next-step names it; its run is gate.test.js's subject
+  assert.equal(next().stage, 'gate');
+  gatePass(root, 'truncate-text');
   assert.equal(next().stage, 'review');
   ok(lane('advance', 'truncate-text', 'review', '--repo', root), 'advance review');
   ok(lane('evidence', 'truncate-text', '--repo', root), 'evidence');
