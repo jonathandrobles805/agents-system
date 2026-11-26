@@ -1,12 +1,10 @@
 // Shared by capture.spec.js and interactions.spec.js. Nothing here changes the page under test.
-import { FIXTURE } from './serve.js';
+import { NOW } from './serve.js';
 
 export const TARGET = process.env.PARITY_TARGET ?? 'original';
 export const WIDTHS = [375, 768, 1024, 1440, 1920];
 export const HEIGHT = 900;
-/** Browser clock for every run: the fixture's build time + 60 s, so refund-route's last event is inside the 2-minute
- *  "running" window (model.js:21) and the same for both builds. */
-export const NOW = Date.parse(FIXTURE.built_at) + 60_000;
+export { NOW }; // the browser's frozen clock and the server's starting one (serve.js)
 export const TZ = 'America/Los_Angeles'; // the fixture's event timestamps are local time without an offset
 
 /**

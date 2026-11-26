@@ -54,6 +54,10 @@ const STATES = [
   ['live1-wt', 'live1', '#/worktrees'],
   ['live1-arch', 'live1', '#/arch/system'],
   ['dup-wt', 'livedup', '#/worktrees'],
+  // review rounds (#126): the lane list's round pills, a lane at round 2, a parked lane with its Parked row
+  ['rounds-wt', 'rounds', '#/worktrees'],
+  ['rounds-lane', 'rounds', '#/worktrees', async (p) => p.click('.mk[data-lane=search-index]')],
+  ['rounds-parked', 'rounds', '#/worktrees', async (p) => p.click('.mk[data-lane=webhooks]')],
   ['pages-wt', 'pages', ''],
   ['pages-arch', 'pages', '#/arch/system'],
   ['empty-wt', 'empty', ''],

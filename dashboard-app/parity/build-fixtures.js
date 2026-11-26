@@ -22,7 +22,7 @@ const OUT = path.resolve(process.argv[2] ?? path.join(HERE, '.data'));
 process.env.CLAUDE_HOME = path.join(OUT, 'claude-home');
 process.env.KIT_STATUS_NO_GH = '1';
 
-const { commitAll, git } = await import(path.join(SCRIPTS, 'tests', 'fixtures.js'));
+const { approveSpec, commitAll, git } = await import(path.join(SCRIPTS, 'tests', 'fixtures.js'));
 const { spec, review, write } = await import(path.join(SCRIPTS, 'tests', 'testdata.js'));
 
 function run(script, args, { stdin, cwd, ok = true } = {}) {
@@ -36,12 +36,13 @@ function hook(script, payload) {
   return run(script, [], { stdin: JSON.stringify({ session_id: 'parity-fixture', ...payload }), cwd: payload.cwd, ok: false });
 }
 
-function setup(root, rows, { wip = 3 } = {}) {
+function setup(root, rows, { wip = 3, commands = null } = {}) {
   run('bootstrap.js', ['--repo', root]);
   const kj = path.join(root, '.claude', 'kit.json');
   const d = JSON.parse(fs.readFileSync(kj, 'utf8'));
   d.wip_limit = wip;
   d.local_only = true; // the fixtures have no remote; they say so (as kit/scripts/tests/testdata.js does)
+  if (commands) d.commands = { ...d.commands, ...commands };
   fs.writeFileSync(kj, JSON.stringify(d, null, 2) + '\n');
   const rm = path.join(root, 'ROADMAP.md');
   fs.writeFileSync(rm, fs.readFileSync(rm, 'utf8').replaceAll(
@@ -64,6 +65,51 @@ function writeSpec(root, slug, feature, commit, { approved = true } = {}) {
 function startLane(root, slug) {
   return JSON.parse(run('lane.js', ['start', slug, '--repo', root]).stdout).worktree;
 }
+
+// The kit's own lane tests' test-log runs (kit/scripts/tests/lane.test.js, LOG_RED and LOG_GREEN), read the way GOAL
+// is read below. Each round lane cites them from progress.md, as lane.test.js atReview does.
+const LANE_TEST = fs.readFileSync(path.join(SCRIPTS, 'tests', 'lane.test.js'), 'utf8');
+const LOG_RED = JSON.parse(LANE_TEST.match(/const LOG_RED = ('.*');/)[1].replaceAll("'", '"'));
+const LOG_GREEN = JSON.parse(LANE_TEST.match(/const LOG_GREEN = ('.*');/)[1].replaceAll("'", '"'));
+
+/** `lane.js advance`; `code` is the exit the move must give (2: refused, which is how advance parks a lane). */
+function advance(root, slug, to, code = 0) {
+  const r = run('lane.js', ['advance', slug, to, '--repo', root], { ok: false });
+  if (r.status !== code) throw new Error(`lane.js advance ${slug} ${to} → ${r.status}, expected ${code}\n${r.stdout}\n${r.stderr}`);
+  return r;
+}
+
+/** `lane.js gate`, which must PASS: every check is recorded as off in kit.json (CI_GATE_OFF below). */
+function gate(root, slug) {
+  const r = run('lane.js', ['gate', slug, '--repo', root], { ok: false });
+  if (r.status !== 0) throw new Error(`lane.js gate ${slug} → ${r.status}\n${r.stdout}\n${r.stderr}`);
+}
+
+/**
+ * A started lane taken to review through lane.js, the path kit/scripts/tests/lane.test.js atReview takes: advance to
+ * test, the red and green runs logged and cited, advance to build, the gate, advance to review.
+ */
+function toReview(root, wt, slug) {
+  advance(root, slug, 'test');
+  write(wt, `.claude/session/${slug}.log`, LOG_RED + LOG_GREEN);
+  const prog = path.join(wt, 'docs', 'specs', `${slug}.progress.md`);
+  fs.writeFileSync(prog, fs.readFileSync(prog, 'utf8').replaceAll('| — | — |', `| ${slug}.log#1 | ${slug}.log#4 |`));
+  advance(root, slug, 'build');
+  gate(root, slug);
+  advance(root, slug, 'review');
+}
+
+/** One review FAIL round: review → build (counted by advance), then the gate and back to review. */
+function failRound(root, slug) {
+  advance(root, slug, 'build');
+  gate(root, slug);
+  advance(root, slug, 'review');
+}
+
+// lane.js gate runs every check kit.json records on the base. The fixture repos have no installed dependencies, so
+// node-api records each check as off, with its reason, the way a project turns a check off ("none: <reason>").
+const CI_GATE_OFF = Object.fromEntries(['test', 'coverage', 'format', 'integration', 'typecheck', 'lint', 'boundaries', 'audit', 'mutation']
+  .map((n) => [n, 'none: parity fixture, no dependencies installed']));
 
 // the kit checkout the server runs from (serve.js): remove the old one before wiping OUT, then prune
 for (const t of ['original', 'react']) {
@@ -88,6 +134,10 @@ writeSpec(nodeApi, 'export-csv', 'Export CSV', c);
 writeSpec(nodeApi, 'audit-log', 'Audit log', c);
 writeSpec(nodeApi, 'rate-limits', 'Rate limits', c, { approved: false });
 c = commitAll(nodeApi, 'specs');
+// lane.js start needs the approval recorded in the lane store, which kit lane merge --pr writes when the owner merges
+// the spec PR on GitHub. The fixtures have no remote, so this uses the kit's own tests' stand-in for that merge
+// (kit/scripts/tests/fixtures.js approveSpec, which calls lane.js recordSpecApproval). rate-limits stays unapproved.
+for (const slug of ['refund-route', 'export-csv', 'audit-log']) approveSpec(nodeApi, slug, { commit: c });
 
 const wtRefund = startLane(nodeApi, 'refund-route'); // building, with events
 const wtExport = startLane(nodeApi, 'export-csv'); // escalated
@@ -124,6 +174,28 @@ c = setup(pySvc, [['Billing export', 'billing-export'], ['Health check', 'health
 writeSpec(pySvc, 'billing-export', 'Billing export', c, { approved: false });
 commitAll(pySvc, 'specs');
 
+// rounds-api: a third project for review rounds (#126), served alone (scenario 'rounds'), so node-api and
+// python-service, which the interaction tests read, are as they were. It is the planted-faults node-api repository in
+// a directory of its own, so the project is named rounds-api. All through lane.js: advance counts each review → build
+// move and parks the lane when another round would pass max_rounds.
+execFileSync(process.execPath, [path.join(REPO, 'planted-faults', 'make_fixtures.js'), path.join(OUT, 'repos-rounds')], { stdio: 'ignore' });
+const rounds = path.join(OUT, 'repos-rounds', 'rounds-api');
+fs.renameSync(path.join(OUT, 'repos-rounds', 'node-api'), rounds);
+fs.rmSync(path.join(OUT, 'repos-rounds', 'python-service'), { recursive: true, force: true });
+c = setup(rounds, [['Search index', 'search-index'], ['Webhooks', 'webhooks']], { wip: 2, commands: CI_GATE_OFF });
+writeSpec(rounds, 'search-index', 'Search index', c);
+writeSpec(rounds, 'webhooks', 'Webhooks', c);
+c = commitAll(rounds, 'specs');
+for (const slug of ['search-index', 'webhooks']) approveSpec(rounds, slug, { commit: c });
+const wtSearch = startLane(rounds, 'search-index'); // back at build after one review FAIL: round 2 of 3
+const wtHooks = startLane(rounds, 'webhooks'); // parked: a third review FAIL would start round 4 of 3
+toReview(rounds, wtSearch, 'search-index');
+advance(rounds, 'search-index', 'build');
+toReview(rounds, wtHooks, 'webhooks');
+failRound(rounds, 'webhooks');
+failRound(rounds, 'webhooks');
+if (!/review → build refused: the lane is parked/.test(advance(rounds, 'webhooks', 'build', 2).stderr)) throw new Error('webhooks did not park');
+
 // a second checkout of node-api for the duplicate-name scenario (register #63)
 const dup = path.join(OUT, 'repos-dup', 'node-api');
 fs.mkdirSync(path.dirname(dup), { recursive: true });
@@ -134,10 +206,19 @@ const pages = path.join(OUT, 'pages');
 fs.mkdirSync(pages, { recursive: true });
 run('kit_status.js', ['--repo', nodeApi, '--out', path.join(pages, 'status.json')]);
 
-const kitCommit = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: REPO, encoding: 'utf8' }).trim();
+// The original page is the kit at the commit this branch is based on: the parent of the commit that added
+// dashboard-app/. Not HEAD: once the React build is committed, HEAD's kit/dashboard/index.html is that build, not
+// the original. PARITY_KIT_COMMIT names another commit.
+const gitOut = (args) => execFileSync('git', args, { cwd: REPO, encoding: 'utf8' }).trim();
+const added = gitOut(['log', '--format=%H', '--diff-filter=A', '--', 'dashboard-app/package.json']).split('\n').at(-1);
+const kitCommit = gitOut(['rev-parse', process.env.PARITY_KIT_COMMIT || `${added}^`]);
+// The data above was written by this checkout's kit scripts and the server runs from kitCommit: they must be the
+// same kit, apart from the page under test.
+const drift = gitOut(['diff', '--name-only', kitCommit, '--', 'kit', ':!kit/dashboard/index.html', ':!kit/architecture.json']);
+if (drift) throw new Error(`kit/ differs between this checkout and ${kitCommit.slice(0, 7)} (the original): ${drift.replaceAll('\n', ', ')}`);
 // a clean checkout of the kit at that commit for the original build; the React build gets its own (serve.js)
 execFileSync('git', ['worktree', 'add', '-q', '--detach', path.join(OUT, 'kit-original'), kitCommit], { cwd: REPO });
-const heads = Object.fromEntries([nodeApi, pySvc, dup, wtRefund, wtExport, wtAudit].map((r) => [r, git(['rev-parse', 'HEAD'], r).trim()]));
-const record = { kit_commit: kitCommit, built_at: new Date().toISOString(), guard_edit_exit: blocked.status, repos: { nodeApi, pySvc, dup }, worktrees: { wtRefund, wtExport, wtAudit }, heads };
+const heads = Object.fromEntries([nodeApi, pySvc, dup, rounds, wtRefund, wtExport, wtAudit, wtSearch, wtHooks].map((r) => [r, git(['rev-parse', 'HEAD'], r).trim()]));
+const record = { kit_commit: kitCommit, built_at: new Date().toISOString(), guard_edit_exit: blocked.status, repos: { nodeApi, pySvc, dup, rounds }, worktrees: { wtRefund, wtExport, wtAudit, wtSearch, wtHooks }, heads };
 fs.writeFileSync(path.join(OUT, 'fixture.json'), JSON.stringify(record, null, 2) + '\n');
 process.stdout.write(JSON.stringify(record, null, 2) + '\n');

@@ -7,6 +7,7 @@
 //   scenario 'live2'    server.js --repo node-api --repo python-service
 //            'live1'    server.js --repo node-api
 //            'livedup'  server.js --repo node-api --repo repos-dup/node-api (same project name twice, #63)
+//            'rounds'   server.js --repo repos-rounds/rounds-api (review rounds and a parked lane, #126)
 //            'pages'    a static server over index.html + status.json, no model.js (the Pages job, #7, #43, #64)
 //            'empty'    a static server over index.html alone (#36)
 import fs from 'node:fs';
@@ -22,6 +23,10 @@ export const HERE = path.dirname(fileURLToPath(import.meta.url));
 // touch the data the captures read.
 export const DATA = path.resolve(process.env.PARITY_DATA ?? path.join(HERE, '.data'));
 export const FIXTURE = JSON.parse(fs.readFileSync(path.join(DATA, 'fixture.json'), 'utf8'));
+
+/** Browser clock for every run, and the start of the server's (server-clock.js): the fixture's build time + 60 s, so
+ *  refund-route's last event is inside the 2-minute "running" window (model.js:21) and the same for both builds. */
+export const NOW = Date.parse(FIXTURE.built_at) + 60_000;
 
 export const kitDir = (target) => path.join(DATA, `kit-${target}`, 'kit');
 
@@ -69,11 +74,11 @@ export async function serve(target, scenario) {
     if (scenario === 'pages') fs.copyFileSync(path.join(DATA, 'pages', 'status.json'), path.join(dir, 'status.json'));
     return { ...(await staticServer(dir, log)), log };
   }
-  const repos = { live2: [FIXTURE.repos.nodeApi, FIXTURE.repos.pySvc], live1: [FIXTURE.repos.nodeApi], livedup: [FIXTURE.repos.nodeApi, FIXTURE.repos.dup] }[scenario];
+  const repos = { live2: [FIXTURE.repos.nodeApi, FIXTURE.repos.pySvc], live1: [FIXTURE.repos.nodeApi], livedup: [FIXTURE.repos.nodeApi, FIXTURE.repos.dup], rounds: [FIXTURE.repos.rounds] }[scenario];
   if (!repos) throw new Error(`unknown scenario ${scenario}`);
   const port = await freePort();
-  const child = spawn(process.execPath, [path.join(kit, 'dashboard', 'server.js'), ...repos.flatMap((r) => ['--repo', r]), '--port', String(port), '--no-open'], {
-    env: { ...process.env, PATH: pathWithoutClaude(), CLAUDE_HOME: path.join(DATA, 'claude-home'), KIT_STATUS_NO_GH: '1' },
+  const child = spawn(process.execPath, ['--import', path.join(HERE, 'server-clock.js'), path.join(kit, 'dashboard', 'server.js'), ...repos.flatMap((r) => ['--repo', r]), '--port', String(port), '--no-open'], {
+    env: { ...process.env, PARITY_NOW: String(NOW), PATH: pathWithoutClaude(), CLAUDE_HOME: path.join(DATA, 'claude-home'), KIT_STATUS_NO_GH: '1' },
     stdio: ['ignore', 'pipe', 'pipe'],
   });
   child.stderr.on('data', (d) => log.push(`stderr ${d}`));

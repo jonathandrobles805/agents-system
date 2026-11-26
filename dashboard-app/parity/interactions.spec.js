@@ -124,7 +124,10 @@ test('#40 hash routes, fallback view, re-render on the same hash', async ({ page
 test('#41 back and forward; an unknown component id is dropped', async ({ page }) => {
   const url = await shared('live2');
   const w = await open(page, url, '#/arch/system');
-  await page.click('.vi[data-view=agents]');
+  // the click sets location.hash; the view is drawn by the hashchange handler (index.html:295), which runs as a task of
+  // its own after the click returns. Without this wait the title was read before it: 1 of 10 runs failed on the
+  // original at f9e039c, unchanged. Same wait as the goBack/goForward steps below.
+  await page.click('.vi[data-view=agents]'); await quiet(page, w);
   expect(await text(page, '#vtitle')).toBe('Agent organization');
   await page.goBack(); await quiet(page, w);
   expect(await text(page, '#vtitle')).toBe('System architecture');
@@ -270,8 +273,8 @@ test('#48 node, inspector tab, group and blast-radius clicks', async ({ page }) 
   expect(await page.getAttribute('[data-itab=impact]', 'aria-selected')).toBe('true');
   // observed groups of script:lane, in order
   expect(await page.locator('.insp .li[data-group]').allInnerTexts()).toEqual([
-    // re-observed on the original at 0ae872a: main added a test file and a core script since 9b47008
-    '22 of 23 skills\nzi-architecture +21', '15 of 27 test files\napp_token.test.js +14', '5 of 8 agents\nimplementer +4', '4 of 16 CI jobs\neval-smoke +3',
+    // re-observed on the original at f9e039c (PARITY.md, "Rebase to f9e039c"): skills, test files and agents changed
+    '23 of 23 skills\nzi-architecture +22', '19 of 33 test files\napp_token.test.js +18', '6 of 8 agents\nimplementer +5', '4 of 16 CI jobs\neval-smoke +3',
     '2 of 22 core scripts\ndashboard/server.js +1', '2 of 2 tools\naudit/boards.js +1', '1 of 14 CI checks\nmutation-gate', '1 of 2 shell scripts\nrelease.sh',
   ]);
   // clicking the selected node again keeps the tab
@@ -289,7 +292,7 @@ test('#48 node, inspector tab, group and blast-radius clicks', async ({ page }) 
   await page.click('.insp .li[data-group=agent]'); await quiet(page, w);
   expect(await hash(page)).toBe('#/arch/deps/script%3Alane');
   await expect(page.locator('#view .cap').last()).toHaveText('agents that need lane.js');
-  expect(await page.locator('#view button.chip').allInnerTexts()).toHaveLength(5);
+  expect(await page.locator('#view button.chip').allInnerTexts()).toHaveLength(6); // re-observed on the original at f9e039c (5 before)
   // same group again inside Dependencies closes it
   await page.click('.depwrap [data-group=agent]');
   await expect(page.getByText('Click a group to list its members.')).toHaveCount(1);
@@ -326,10 +329,10 @@ test('#50 Enter and Space activate [data-node] only', async ({ page }) => {
 test('#51 #52 search keeps focus and caret; kind filter', async ({ page }) => {
   const url = await shared('live2');
   await open(page, url, '#/arch/deps');
-  expect(await page.locator('.li').count()).toBe(140); // re-observed on the original at 0ae872a (138 at 9b47008)
+  expect(await page.locator('.li').count()).toBe(146); // re-observed on the original at f9e039c (140 at 0ae872a, 138 at 9b47008)
   await page.click('#q');
   await page.keyboard.type('lane');
-  expect(await page.locator('.li').count()).toBe(20); // re-observed on the original at 0ae872a (19 at 9b47008): id, label or purpose contains "lane"
+  expect(await page.locator('.li').count()).toBe(21); // re-observed on the original at f9e039c (20 at 0ae872a, 19 at 9b47008): id, label or purpose contains "lane"
   await page.evaluate(() => document.querySelector('#q').setSelectionRange(2, 2));
   await page.keyboard.type('x');
   expect(await page.inputValue('#q')).toBe('laxne');
@@ -384,22 +387,63 @@ test('#56 Open Claude button', async ({ page }) => {
 });
 
 // ---------------------------------------------------------------------------------------------------- listeners and globals
-test('#58 #62 #69 listeners, one EventSource, no timers, storage or observers', async ({ page }) => {
+// #58 used to assert the original's exact addEventListener list (window:hashchange, five document listeners,
+// #refresh:click). No React build can have that list: React listens on its root. What the list protected is that each
+// click and key reaches its handler exactly once, after load and after re-renders. This test does the same clicks and
+// keys that reach each of the original's seven listeners, and asserts their result and the requests each makes
+// (a handler bound twice would fetch twice), after load and again after visiting every view and pressing Refresh.
+// Expected values observed on the original at f9e039c. PARITY.md, "Rebase to f9e039c", records why #58 was replaced.
+test('#58 #62 #69 each click and key reaches its handler once; one EventSource, no timers, storage or observers', async ({ page }) => {
   const url = await shared('live2');
   const w = await open(page, url, '#/arch/system');
-  // observed on the original after load
-  const DOC = ['window:hashchange', 'document:click', 'document:keydown', 'document:input', 'document:change', 'document:click', '#refresh:click'];
+  /** The requests one action makes, once the page is quiet again. */
+  const made = async (fn) => { const n = w.requests.length; await fn(); await quiet(page, w); return nonEventRequests({ requests: w.requests.slice(n) }); };
+  const handlers = async () => {
+    // window:hashchange
+    expect(await made(() => page.evaluate(() => { location.hash = '#/arch/agents'; }))).toEqual([]);
+    expect(await text(page, '#vtitle')).toBe('Agent organization');
+    // document:click, delegated: a view button
+    expect(await made(() => page.click('.vi[data-view=deps]'))).toEqual([]);
+    expect(await hash(page)).toBe('#/arch/deps');
+    // document:keydown: Enter on a [data-node]
+    await page.focus('.li[data-node="agent:planner"]');
+    expect(await made(() => page.keyboard.press('Enter'))).toEqual([]);
+    expect(await hash(page)).toBe('#/arch/deps/agent%3Aplanner');
+    // document:input: the search box
+    expect(await made(() => page.fill('#q', 'lane'))).toEqual([]);
+    expect(await page.locator('.li').count()).toBe(LANE_MATCHES);
+    expect(await made(() => page.fill('#q', ''))).toEqual([]);
+    // document:change: the kind filter
+    expect(await made(() => page.selectOption('#kindSel', 'agent'))).toEqual([]);
+    expect(await page.locator('.li').count()).toBe(8);
+    expect(await made(() => page.selectOption('#kindSel', ''))).toEqual([]);
+    // document:click, the second handler: a screen tab (data-tab)
+    expect(await made(() => page.click('#tab-worktrees'))).toEqual([]);
+    expect(await hash(page)).toBe('#/worktrees');
+    // a lane marker: one fetch of its events
+    expect(await made(() => page.click('.mk[data-lane=refund-route]'))).toEqual(['GET /api/events/refund-route']);
+    expect(await page.locator('#events .ev').count()).toBe(7);
+    // #refresh:click: status, map and events, each once
+    expect(await made(() => page.click('#refresh'))).toEqual(REFRESH);
+    expect(await made(() => page.click('#tab-arch'))).toEqual([]);
+    expect(await hash(page)).toBe('#/arch/system');
+  };
+  await handlers();
   let p = await parity(page);
   expect(p.es).toBe(1);
-  expect(p.listeners.filter((l) => /^(window|document|#refresh):/.test(l))).toEqual(DOC);
   expect([p.timers, p.storage, p.observers]).toEqual([0, 0, 0]);
   for (const v of ['agents', 'pipeline', 'deps', 'activity', 'system']) { await page.click(`.vi[data-view=${v}]`); await quiet(page, w); }
   await page.click('#refresh'); await quiet(page, w);
+  await handlers();
   p = await parity(page);
   expect(p.es).toBe(1);
-  expect(p.listeners.filter((l) => /^(window|document|#refresh):/.test(l))).toEqual(DOC);
   expect([p.timers, p.storage, p.observers]).toEqual([0, 0, 0]);
 });
+const LANE_MATCHES = 21; // observed on the original at f9e039c
+const REFRESH = [ // observed on the original at f9e039c
+  'GET /api/status', 'GET /api/architecture',
+  'GET /api/events/refund-route', 'GET /api/events/export-csv', 'GET /api/events/audit-log', 'GET /api/events/rate-limits', 'GET /api/events/other',
+];
 
 // ---------------------------------------------------------------------------------------------------- attributes and names
 test('#60 aria-selected strings; absent before the script runs', async ({ browser }) => {

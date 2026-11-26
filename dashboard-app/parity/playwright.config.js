@@ -17,7 +17,8 @@ export default defineConfig({
     // Software raster in one pass. Without these flags two captures of the same page differed by ±1–3 in a colour
     // channel on anti-aliased edges (11–167 px per image; parity/README: determinism check).
     launchOptions: {
-      executablePath: '/usr/bin/google-chrome',
+      // PARITY_CHROME: another Chrome binary (e.g. on macOS); both builds must be captured with the same one
+      executablePath: process.env.PARITY_CHROME || '/usr/bin/google-chrome',
       args: ['--disable-gpu', '--disable-gpu-rasterization', '--disable-partial-raster', '--disable-skia-runtime-opts', '--force-color-profile=srgb', '--disable-threaded-animation', '--disable-checker-imaging'],
     },
     timezoneId: TZ,

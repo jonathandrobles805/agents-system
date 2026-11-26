@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Checks on the committed kit/dashboard/index.html (decision 0018). Exits 1 on any failure.
+// Checks on the committed kit/dashboard/index.html (decision 0019). Exits 1 on any failure.
 //  1. drift: a fresh build from source is byte-identical to the committed file
 //  2. the literal import('./model.js') survives the build (register #75; kit test "index html is self contained")
 //  3. self-contained: no <script src>, no <link> (register #8)

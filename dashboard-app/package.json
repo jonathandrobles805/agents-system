@@ -2,7 +2,7 @@
   "name": "agent-kit-dashboard-app",
   "private": true,
   "type": "module",
-  "description": "Source of kit/dashboard/index.html (decision 0018) and its parity harness. Dev-only; the kit never installs this.",
+  "description": "Source of kit/dashboard/index.html (decision 0019) and its parity harness. Dev-only; the kit never installs this.",
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build",

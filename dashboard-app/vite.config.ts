@@ -1,4 +1,4 @@
-// Builds the one self-contained kit/dashboard/index.html (decision 0018).
+// Builds the one self-contained kit/dashboard/index.html (decision 0019).
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 import { viteSingleFile } from 'vite-plugin-singlefile';

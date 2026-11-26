@@ -1,4 +1,4 @@
-# 0018 The dashboard page is written in React and shipped as one committed, self-contained index.html
+# 0019 The dashboard page is written in React and shipped as one committed, self-contained index.html
 
 Date: 2026-11-23 · Status: accepted (amended 2026-11-23: items 7 and 9, from the build) · Depends on: 0007 (JavaScript with checked types) · Evidence: parity register `dashboard-app/PARITY.md` items #6–#8 and #73–#76, read from `kit/dashboard/index.html`, `kit/dashboard/server.js` and `kit/scripts/tests/dashboard.test.js` at 9b47008
 

@@ -59,6 +59,8 @@ function LaneCard({ s, l }: { s: Snap; l: Lane }) {
         <div className="m"><div className="n">{ev.blocked}</div><div className="t">edits blocked by hooks</div></div>
         <div className="m"><div className="n">{`${ev.tests_green} `}<span className="muted">{`/ ${ev.tests_red} red`}</span></div><div className="t">test runs</div></div>
         <div className="m"><div className="n">{ev.stop_refused}</div><div className="t">stop refused</div></div>
+        <div className="m"><div className="n">{l.rounds ? <>{`${l.rounds.round} `}<span className="muted">{`/ ${l.rounds.limit}`}</span></> : '—'}</div><div className="t">{`round${l.rounds?.parked ? ' · parked' : ''}`}</div></div>
+        <div className="m"><div className="n">{l.elapsed_hours == null ? '—' : `${l.elapsed_hours.toFixed(1)}h`}</div><div className="t">wall time</div></div>
       </div>
       <table>
         <tbody>
@@ -69,6 +71,7 @@ function LaneCard({ s, l }: { s: Snap; l: Lane }) {
             ? <tr><td>Review</td><td>{`${rv.verdict || '—'} · ${rv.valid ? 'valid' : 'invalid report'} · ${rv.head_matches ? 'matches HEAD' : 'stale (code changed after review)'}${rv.fails ? ` · ${rv.fails} FAIL` : ''}`}</td></tr>
             : <tr><td>Review</td><td>none yet</td></tr>}
           {pr.escalated ? <tr><td className="kr">Escalation</td><td><b>{pr.attempts}</b>{` attempts — ${pr.failure ?? ''}`}</td></tr> : null}
+          {l.rounds?.parked ? <tr><td className="kr">Parked</td><td>{l.rounds.parked.reason}</td></tr> : null}
           {l.last_check
             ? <tr><td>Last check</td><td className={l.last_check.result === 'ok' ? 'kg' : 'kr'}>{`${l.last_check.kind}: ${l.last_check.result} — ${l.last_check.summary || ''} `}<span className="muted">{(l.last_check.ts || '').replace('T', ' ')}</span></td></tr>
             : null}
@@ -116,6 +119,7 @@ function ProjectPage({ s, p }: { s: Snap; p: Project }) {
             {' '}<Pill txt={l.position} cls={POS_CLASS[l.position] || 'agent'} />
             {' '}{l.worktree ? <Pill txt={`${l.behind_base} behind`} cls={l.behind_base > 0 ? 'bad' : 'neutral'} /> : null}
             {' '}{l.progress.criteria ? <Pill txt={`${l.progress.green}/${l.progress.criteria} green`} cls={l.progress.green === l.progress.criteria ? 'ok' : 'neutral'} /> : null}
+            {' '}{l.rounds ? <Pill txt={l.rounds.parked ? `parked · round ${l.rounds.round} of ${l.rounds.limit}` : `round ${l.rounds.round} of ${l.rounds.limit}`} cls={l.rounds.parked ? 'bad' : 'neutral'} /> : null}
             {' '}{l.events.blocked ? <Pill txt={`${l.events.blocked} blocked`} cls="bad" /> : null}
             {' '}{l.risk === 'high-risk' ? <Pill txt="high-risk" cls="bad" /> : null}</span></div>
         ))

@@ -1,6 +1,6 @@
 # Parity register: kit/dashboard/index.html → React
 
-Original: `kit/dashboard/index.html` at 9b47008 (741 lines), with `model.js` (191) and `server.js` (592). Approved by Jonathan Robles in chat on 2026-11-23 with decisions #73–#79 and corrections 80a–80c. Decision file: `docs/decisions/0018-dashboard-in-react-single-file-build.md`.
+Original: `kit/dashboard/index.html` at 9b47008 (741 lines; since the rebase below, at f9e039c, 744 lines), with `model.js` (191) and `server.js` (592). Approved by Jonathan Robles in chat on 2026-11-23 with decisions #73–#79 and corrections 80a–80c. Decision file: `docs/decisions/0019-dashboard-in-react-single-file-build.md`.
 
 Verify by: **shot** = Playwright screenshot diff at 375/768/1024/1440/1920 × 900; **DOM** = normalised outerHTML diff (rules in 80b); **style** = computed-style diff; **test** = interaction test whose expected values come from the original.
 Status: PENDING until evidence is pasted in the Evidence section.
@@ -69,7 +69,7 @@ Status: PENDING until evidence is pasted in the Evidence section.
 55. Worktrees clicks: project, back, lane (stopPropagation), Close — :657-661 — test
 56. Open Claude button states — :662-666 — test
 57. selectLane render, fetch, render — :669-676 — test
-58. Listener counts (Refresh once; worktrees rebound per render) — :707, :574 — listener count
+58. Each click and key reaches its handler once (Refresh once; worktrees rebound per render) — :707, :574 — test (behaviour; was listener count, replaced at the f9e039c rebase)
 59. Text formatting esc/clip/time slices/— — :221-222, :456, :632 — DOM text
 60. aria-selected as "true"/"false"; absent before first render — :304-305 — DOM
 61. ARIA roles/labels/tabindex — throughout — axe both builds
@@ -89,7 +89,7 @@ Status: PENDING until evidence is pasted in the Evidence section.
 
 ## F. Decisions (2026-11-23)
 73. **Single file via `vite-plugin-singlefile`** (dev dependency). Vite cannot inline by itself; only option leaving server.js, the CI job and the test untouched.
-74. **Dev-only deps, built index.html committed.** Decision 0018. Drift check: rebuild from source, byte-diff against committed `kit/dashboard/index.html`, fail on any difference.
+74. **Dev-only deps, built index.html committed.** Decision 0019. Drift check: rebuild from source, byte-diff against committed `kit/dashboard/index.html`, fail on any difference.
 75. **Runtime `import('./model.js')` kept.** Prove the literal survives minification; test #8 unedited.
 76. **`<div id="root" style="display:contents">`.** Prove with computed style that `#arch` and `#worktrees` heights equal the original's.
 77. **Data: planted-faults fixture repos through the real `lane.js`.** Record the kit commit and the fixture build. Both builds run against the same data, served by the same `server.js`.
@@ -198,6 +198,48 @@ The +2 are React's own listeners on the newly mounted `#q` input and `#kindSel` 
 **Console:** 0 warnings on both builds. Errors are exactly the original's own (the favicon 404, and in static mode the `model.js` and `/api/status` 404s). The interaction tests fail on any other message.
 
 **a11y:** axe #61 passes, so no violation id or count beyond the original's.
+
+### Rebase to f9e039c (2026-11-25)
+`main` moved 16 commits, to f9e039c. One of them changed the original page: d105a59 (#126) adds a rounds pill to each lane row ("round N of M", or "parked · round N of M"), two metrics on the lane page (round, wall time) and a "Parked" table row. `server.js` changed too (#122 Host/Origin checks, #128 live feed `source`). The branch was rebased; `kit/dashboard/index.html` was taken from main as the original and the React build was regenerated from source afterwards.
+
+**Original.** `build-fixtures.js` used to take the original from the repository's `HEAD`. With the React build committed, `HEAD`'s page is the React build, so it now takes the parent of the commit that added `dashboard-app/` (the rebased base, f9e039c), or `PARITY_KIT_COMMIT`. It refuses to build if `kit/` in the working tree differs from that commit outside `index.html`, so the data and the server always come from the same kit. `fixture.json` records `kit_commit: f9e039c…`.
+
+**Harness changes, each the same for both builds.**
+- **Approvals.** Since #117 `lane.js start` needs an approval recorded by `kit lane merge --pr`, which needs GitHub. The fixtures have no remote, so they record it with the kit's own tests' stand-in (`kit/scripts/tests/fixtures.js approveSpec`, which calls `lane.js recordSpecApproval`).
+- **Rounds fixture (#126).** A third project, `rounds-api` (the planted-faults node-api repository in its own directory), served alone by a new scenario `rounds`. Both lanes are moved only by `lane.js advance` and `lane.js gate`: `search-index` goes to review and back once (round 2 of 3); `webhooks` fails three rounds and `advance` parks it. The red and green runs are cited the way `lane.test.js atReview` does. Its kit.json records each gate check as `none: parity fixture, no dependencies installed`, since the fixture has no installed dependencies. node-api and python-service are as before, so no existing interaction value moved because of the fixture.
+- **Captures.** Three new states, each at five widths: `rounds-wt` (the lane list with both pills), `rounds-lane` (round 2 / 3 and wall time) and `rounds-parked` (round 3 / 3 · parked, and the Parked row). The original's screenshots show all three.
+- **Server clock.** The server computes wall time from its own clock (`storeClock`), so two builds captured minutes apart would differ in that text. `parity/server-clock.js`, preloaded into `server.js` by `serve.js`, starts the server's clock at the browser's frozen `NOW`; it then runs at the normal rate.
+- **Browser.** `PARITY_CHROME` names the Chrome binary (default `/usr/bin/google-chrome`, unchanged). This rebase ran on macOS with Google Chrome 158, for the original and the React build alike.
+
+**Expected values re-observed on the original at f9e039c.** Each one was read from the original page, never from React; each is marked in the test.
+
+| Test | Old | New | Caused by |
+|---|---|---|---|
+| #48 groups of `script:lane` | 22 of 23 skills (zi-architecture +21) | 23 of 23 (+22) | skill and agent changes in 1d87456..f9e039c; the committed architecture edges do not pin it to one commit |
+| #48 | 15 of 27 test files (app_token.test.js +14) | 19 of 33 (+18) | six new test files: ci_policy (1add785, #120), lane_merged (511b9a0, #119), dashboard_security (f867bd7, #122), dashboard_live_feed (1ab5686, #128), gate (76d5b3c, #130), event_log_agent (f9e039c, #129); four of them test lane.js |
+| #48 | 5 of 8 agents (implementer +4) | 6 of 8 (+5) | as the skills row |
+| #48 agent chips in Dependencies | 5 | 6 | the same agent group |
+| #51 components | 140 | 146 | the six test files above; the eval-smoke CI job moved to kit-eval-main.yml (#120), net 0 |
+| #51 matches for "lane" | 20 | 21 | test:lane_merged (#119) |
+
+#61 (axe) needed no change: the original at f9e039c gives the same violations as `a11y-original.json`. (A first fixture put the rounds lanes in node-api; that run showed `scrollable-region-focusable` on the original, which is why the lanes moved to their own project.)
+
+**#41 was a race, not a regression.** Line 128 read `#vtitle` straight after the click, but the original draws the view in its `hashchange` handler (index.html:295), which runs as a task of its own after the click returns. On the original at f9e039c, unchanged, it failed 1 run in 10. The test now waits with `quiet(page, w)` after the click, as its other steps do; the assertion is unchanged, and the wait is the same for both builds.
+
+**#58 replaced (L1 resolved).** The old test asserted the original's exact listener list. React listens on its root (146 listeners), so no React build can have that list. What the list protected was that each click and key reaches its handler once, after load and after re-renders. The new test does the action behind each of the original's seven listeners (hashchange, the delegated click, keydown, input, change, the data-tab click, Refresh) and asserts its result and the requests it makes. A handler bound twice would fetch twice. It runs after load, then again after visiting every view and pressing Refresh. The EventSource, timer, storage and observer counts (#62, #69) are unchanged. Expected values were observed on the original: 21 "lane" matches, and Refresh makes 7 requests (status, architecture, and the five node-api lanes' events).
+
+**Results, React build against the new baseline (`npm run parity:all`).**
+- Captures: 40 tests, 170 states (155 + 15 rounds).
+- compare: png 0/170, text 0/170, styles 0/155, log 0/170 differing; dom 150/170.
+- Every DOM difference is the same pair of lines, E2: `<option selected="" value=…>` in the original and `<option value=…>` in React, inside `#projectSel`. Correction to E2 above: the original keeps `#projectSel` in the DOM, hidden, even with one project, so single-project and static captures carry it too. The 20 files without it are `empty-wt`, `nojs` and both first paints.
+- Interactions on React: 25/25 pass, the new #58 included.
+- `check-build.js`: all 5 PASS. A fresh build is byte-identical to `kit/dashboard/index.html` (279,111 bytes), and lines 1-181 are identical to the original at f9e039c.
+
+**Kit, with the React page in place.** Measured on this branch and on main (f9e039c) on the same Mac, at the same time:
+- `npm test`: 559 tests, 556 pass, 2 fail, 1 skipped on both. The same 2 fail on main ("real srt: a lane commits in its linked worktree…", "real shell writes outside the spec are still caught…"; known to fail on this Mac and pass in CI).
+- `node planted-faults/run.js`: 65/65 caught on both.
+- `npm run architecture:check`: 0 errors and 1 warning on both (`permission_probe.js` unreferenced). The manifest did not change.
+- App: `tsc` clean, `eslint --max-warnings 0` clean.
 
 ### Still unverified
 - **Lighthouse:** only axe has run.

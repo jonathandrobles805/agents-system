@@ -18,6 +18,8 @@ export interface Lane {
   review: { exists: boolean; verdict?: string | null; valid?: boolean; head_matches?: boolean; fails?: number };
   events: { blocked: number; tests_green: number; tests_red: number; stop_refused: number };
   last_check?: { kind: string; result: string; summary?: string; ts?: string } | null;
+  rounds?: { round: number; limit: number; failed: number; parked: { reason: string; at?: string | null } | null } | null;
+  elapsed_hours?: number | null;
 }
 
 export interface Project {
