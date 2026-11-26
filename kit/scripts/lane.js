@@ -1370,6 +1370,84 @@ export function gateProblem(root, slug, wt) {
   return [`the gate FAILED on ${s.head.slice(0, 7)} (${(s.gate.failed ?? []).join(', ') || 'see the report'}); fix it, commit, then ${run}. Report: ${s.gate.report ?? 'none'}`];
 }
 
+/** CI configuration a lane may never change: the files that decide what CI runs (D4; 0016 E.1 Add 4). */
+const CI_CONFIG = /^(\.github\/(workflows|actions)\/|\.gitlab-ci\.yml$|\.circleci\/|\.buildkite\/|azure-pipelines\.ya?ml$|bitbucket-pipelines\.yml$|Jenkinsfile$)/;
+/** Test configuration (the runner's own config files; a test's helpers and fixtures are test code, not config). */
+const TEST_CONFIG = /(^|\/)((vitest|vite|jest|playwright|cypress|karma|ava|wdio)\.(config|workspace|conf)\.[cm]?[jt]s|\.mocharc(\.[a-z]+)?|pytest\.ini|tox\.ini|noxfile\.py|phpunit\.xml(\.dist)?|\.rspec)$/;
+
+const gitShow = (cwd, rev, file) => {
+  const r = gitRaw(cwd, ['show', `${rev}:${file}`]);
+  return r.status === 0 ? r.stdout : null;
+};
+
+/** The `scripts` of a package.json at a commit, as canonical JSON ('' when the file or the field is absent). */
+function packageScripts(cwd, rev, file) {
+  const t = gitShow(cwd, rev, file);
+  if (t === null) return '';
+  try {
+    const sc = asDict(JSON.parse(t)).scripts;
+    return sc && typeof sc === 'object' ? JSON.stringify(Object.keys(sc).sort().map((k) => [k, sc[k]])) : '';
+  } catch {
+    return `unparseable:${t}`;
+  }
+}
+
+/**
+ * The protected files the lane changed since it left the base (D4; #56 S1.3; 0016 E.1 Add 4), so a lane cannot change
+ * what the base's commands run or what was approved: its spec after the approved commit, anything under `.claude/`
+ * (kit.json, settings, hooks), CI configuration, the `scripts` of any package.json, and test configuration. Each is a
+ * human's change, outside the lane. [] when none.
+ */
+export function protectedChanges(root, wt, slug, mergeBase, head) {
+  const changed = gitRaw(wt, ['diff', '--name-only', '--no-renames', mergeBase, head]).stdout.split('\n').filter(Boolean);
+  const out = [];
+  for (const f of changed) {
+    if (f.startsWith('.claude/')) out.push(`${f}: the kit's configuration (.claude/) is the owner's`);
+    else if (CI_CONFIG.test(f)) out.push(`${f}: CI configuration`);
+    else if (TEST_CONFIG.test(f)) out.push(`${f}: test configuration`);
+    else if (f === 'package.json' || f.endsWith('/package.json')) {
+      if (packageScripts(wt, mergeBase, f) !== packageScripts(wt, head, f)) out.push(`${f}: its "scripts" changed (dependencies may change; scripts decide what the checks run)`);
+    }
+  }
+  // the spec must be the one the owner approved: compared with its approved commit, not with the lane's start
+  const spec = `${K.workRoot(root)}/${slug}.md`;
+  const approval = specApproval(root, slug);
+  const approvedAt = approval?.commit && gitLine(wt, ['rev-parse', '--verify', '--quiet', `${approval.commit}^{commit}`]) ? approval.commit : mergeBase;
+  const was = gitShow(wt, approvedAt, spec);
+  if (was !== null && gitShow(wt, head, spec) !== was) out.push(`${spec}: the spec changed after its approved commit ${String(approvedAt).slice(0, 7)}`);
+  return out;
+}
+
+/** A high-risk path matched as whole path parts: `src/auth/x.ts`, `payment.ts`, `billing-api/` yes; `author.ts` no. */
+function riskPathRe(q) {
+  const e = String(q).toLowerCase().replace(/^\/+|\/+$/g, '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  return new RegExp(`(^|[/._-])${e}s?([/._-]|$)`, 'i');
+}
+
+/**
+ * The risk re-check (D4; 0016 E.1 Add 2 item 3): a lane that is not high risk, by its approved spec and its goal,
+ * whose own diff touches a high-risk path (the base's kit.json `high_risk_paths`, or the kit's defaults). Today's
+ * classification reads only the spec's file bullets, so a glob like `src/**` could hide a billing change. [] when the
+ * lane is high risk (it was classified and approved as such) or touches none.
+ */
+export function riskChanges(root, wt, slug, baseKit, mergeBase, head) {
+  const approval = specApproval(root, slug);
+  const spec = `${K.workRoot(root)}/${slug}.md`;
+  const text = (approval?.commit && gitShow(wt, approval.commit, spec)) || gitShow(wt, mergeBase, spec) || '';
+  const h = K.headerFields(K.stripHtmlComments(text.split('\n')));
+  const specRisk = h.has('risk') ? pyStrip(h.get('risk')[1]).toLowerCase() : '';
+  if (specRisk.includes('high') || goalFields(root, slug).risk === 'high') return [];
+  const paths = Object.hasOwn(baseKit, 'high_risk_paths') && Array.isArray(baseKit.high_risk_paths) ? baseKit.high_risk_paths : K.DEFAULT_HIGH_RISK_PATHS;
+  const res = paths.filter((q) => typeof q === 'string' && q.trim()).map((q) => [q, riskPathRe(q)]);
+  const changed = gitRaw(wt, ['diff', '--name-only', '--no-renames', mergeBase, head]).stdout.split('\n').filter(Boolean);
+  const out = [];
+  for (const f of changed) {
+    const hit = res.find(([, re]) => re.test(f));
+    if (hit) out.push(`${f}: a high-risk path ('${hit[0]}'), in a lane approved as ${specRisk || 'not high risk'}`);
+  }
+  return out;
+}
+
 /** Write fields into the lane's store record without a move (the gate's verdict). */
 function writeStoreFields(root, slug, fields) {
   const p = storePath(root, slug);
@@ -1416,8 +1494,19 @@ export async function gate(root, slug) {
   const env = { ...process.env, CI: '1', KIT_GATE: slug };
   for (const k of GATE_ENV_DROP) delete env[k];
   const checks = [];
+  // the lane's own changes since it left the base: protected files and the risk re-check come first (D4)
+  const mergeBase = gitLine(wt, ['merge-base', src.commit, head]);
+  const prot = mergeBase ? protectedChanges(root, wt, slug, mergeBase, head) : [`no common commit with ${src.ref}: the lane's changes cannot be told apart`];
+  const risk = mergeBase ? riskChanges(root, wt, slug, src.kit, mergeBase, head) : [];
+  checks.push({ name: 'protected-files', status: 'kit', result: prot.length ? 'FAIL' : 'pass', problems: prot });
+  checks.push({ name: 'risk', status: 'kit', result: risk.length ? 'FAIL' : 'pass', problems: risk });
   try {
     for (const c of gateChecks(src.kit)) {
+      // with a protected file changed, the checks would run what the lane changed: they are not run at all
+      if (prot.length && c.status === 'run') {
+        checks.push({ ...c, result: 'skipped', reason: 'a protected file changed' });
+        continue;
+      }
       if (c.status !== 'run') {
         checks.push({ ...c, result: c.status === 'off' ? 'off' : 'FAIL' });
         continue;
@@ -1433,7 +1522,10 @@ export async function gate(root, slug) {
   const verdict = failed.length ? 'FAIL' : 'PASS';
   const now = K.isoSeconds();
   const reportPath = pjoin(storeDir(root), `${slug}.gate.txt`);
-  const line = (c) => c.status === 'run'
+  const line = (c) => c.status === 'kit'
+    ? [`${c.result === 'pass' ? 'pass' : 'FAIL'}  ${c.name}${c.name === 'risk' && c.result === 'FAIL' ? ': the owner decides: revert these, or approve the spec again as high risk' : ''}`, ...c.problems.map((x) => `        ${x}`)].join('\n')
+    : c.result === 'skipped' ? `skip  ${c.name}: ${c.command}  (not run: ${c.reason})`
+    : c.status === 'run'
     ? `${c.result === 'pass' ? 'pass' : 'FAIL'}  ${c.name}: ${c.command}  (${c.timed_out ? `stopped at the time limit, ${Math.round(timeoutMs / 1000)}s` : `exit ${c.exit ?? c.signal}`}, ${c.seconds}s)`
     : c.status === 'off' ? `off   ${c.name}: none: ${c.reason}` : `FAIL  ${c.name}: missing (${c.reason}); record a command or "none: <reason>" in kit.json on ${base}`;
   const report = [
@@ -1455,7 +1547,8 @@ export async function gate(root, slug) {
   };
   writeStoreFields(root, slug, { gate: record });
   K.appendEvent(pjoin(wt, '.claude', 'session', 'events.jsonl'), { event: 'gate', result: verdict === 'PASS' ? 'ok' : 'fail', summary: `gate ${verdict} on ${head.slice(0, 7)}${failed.length ? `: ${failed.join(', ')}` : ''}` });
-  process.stdout.write(`${report.split('\n').filter((l) => !l.startsWith('---')).slice(0, 4 + checks.length).join('\n')}\nreport: ${reportPath}\n`);
+  const cut = report.indexOf('\n--- ');
+  process.stdout.write(`${(cut >= 0 ? report.slice(0, cut) : report).trimEnd()}\nreport: ${reportPath}\n`);
   if (verdict === 'PASS') return 0;
   // a gate FAIL ends the round (D2): counted once per commit, and the lane parks when another round would pass the limit
   if (stage === 'build' && !(prev && prev.verdict === 'FAIL' && prev.commit === head)) {
@@ -1865,6 +1958,8 @@ async function nextStepFeature(root, slug, { KS, kit, rows, row, g }) {
       // a reviewer starts only on the gate's PASS for the lane's HEAD (hardening plan Step 3)
       const gs = gateState(root, slug, st.worktree);
       if (gs.state === 'pass') return { slug, stage: 'review', reason: `all criteria green; the gate passed ${gs.head.slice(0, 7)}; review` };
+      // a low-risk lane that touched a high-risk path is stopped for the owner, not sent back to the implementer (D4)
+      if (gs.state === 'fail' && (gs.gate.failed ?? []).includes('risk')) return { slug, stage: 'escalated', needs_human: true, reason: `the gate's risk re-check stopped the lane on ${gs.head.slice(0, 7)}: it changed high-risk paths its approved spec does not cover; the owner decides (revert them, or approve the spec again as high risk). Report: ${gs.gate.report}` };
       if (gs.state === 'fail') return { slug, stage: 'build', reason: `the gate FAILED on ${gs.head.slice(0, 7)} (${(gs.gate.failed ?? []).join(', ')}); the implementer fixes what its report shows: ${gs.gate.report}` };
       return { slug, stage: 'gate', reason: gs.state === 'stale' ? `all criteria green; the gate's verdict is for ${String(gs.gate.commit).slice(0, 7)}, not HEAD ${gs.head.slice(0, 7)}; run the gate` : 'all criteria green; run the gate before any reviewer' };
     }

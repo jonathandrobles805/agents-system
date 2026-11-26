@@ -1112,6 +1112,51 @@ process.stderr.write('fake gh 61: past the sign-off'); process.exit(9);
       failed64 === 'audit,lint,test,typecheck' && hung64 && secs64 < 25 && onFail64.returncode === 2 && /the gate FAILED/.test(onFail64.stderr) &&
       pass64.returncode === 0 && stale64.returncode === 2 && /\(stale\)/.test(stale64.stderr) && ok64.returncode === 0;
     record(64, 'a reviewer starts on a lane whose recorded checks fail, are missing or "none" with no reason, or hang, or on a gate verdict for an older commit', "lane.js gate re-runs the base's committed kit.json checks on the lane's HEAD, contained, stdin closed, with a time limit; advance build → review needs its PASS for that exact HEAD (hardening plan Step 3)", caught64, `no gate: review -> exit ${noGate64.returncode}; gate -> exit ${fail64.returncode} failed [${failed64}] test hung-and-stopped ${hung64} in ${secs64.toFixed(1)}s; review on FAIL -> exit ${onFail64.returncode}; fixed: gate -> exit ${pass64.returncode}; stale review -> exit ${stale64.returncode}; after a new gate -> exit ${ok64.returncode}`);
+    // 65 the gate's protected files and risk re-check (hardening plan Step 3, D4; #56 S1.3; 0016 E.1 Add 2 item 3):
+    //    a lane changes a package.json script or kit.json so the base's commands run what it wants, or a lane approved
+    //    at normal risk changes a billing file its spec never named -> the gate fails on the protected file (and runs
+    //    no check on it), and the risk re-check stops the lane for the owner
+    const r65 = path.join(tmp, 'node-api-65');
+    F.nodeApi(r65);
+    run('bootstrap.js', ['--repo', r65]);
+    write(path.join(r65, 'ROADMAP.md'), read(path.join(r65, 'ROADMAP.md')).replaceAll('| TODO(bootstrap: ROADMAP.md — feature) | TODO(bootstrap: ROADMAP.md — slug) | M1 | queued | — | — | — |', '| Refund route | refund-route | M1 | queued | — | — | — |'));
+    const kj65 = path.join(r65, '.claude', 'kit.json');
+    const cmds65 = { ...JSON.parse(read(kj65)).commands };
+    delete cmds65.lint_all;
+    for (const n of ['test', 'coverage', 'format', 'integration', 'typecheck', 'lint', 'boundaries', 'audit']) cmds65[n] = 'true';
+    write(kj65, K.jsonDumps({ ...JSON.parse(read(kj65)), local_only: true, commands: cmds65 }));
+    const c65 = F.commitAll(r65, 'bootstrap');
+    // the owner approved this spec at normal risk: it names no high-risk path
+    write(path.join(r65, 'docs', 'specs', 'refund-route.md'), SPEC({ commit: c65.slice(0, 7) }).replace('- Risk: high-risk', '- Risk: normal').replace('- Risks: payments', '- Risks: none')
+      .replace('`src/domain/payment.ts` — the service [verified: src/domain/payment.ts:1-3]', '`src/api/routes.ts` — the routes [verified: src/api/routes.ts:1-3]'));
+    F.approveSpec(r65, 'refund-route', { commit: F.commitAll(r65, 'spec') });
+    const wt65 = JSON.parse(run('lane.js', ['start', 'refund-route', '--repo', r65]).stdout || '{}').worktree;
+    const store65 = path.join(r65, '.claude', 'session', 'lanes', 'refund-route.json');
+    const gate65 = () => {
+      const r = run('lane.js', ['gate', 'refund-route', '--repo', r65]);
+      return { code: r.returncode, failed: fs.existsSync(store65) ? (JSON.parse(read(store65)).gate?.failed ?? []) : [] };
+    };
+    const pj65 = path.join(wt65, 'package.json');
+    const pkg65 = read(pj65);
+    write(pj65, K.jsonDumps({ ...JSON.parse(pkg65), scripts: { ...(JSON.parse(pkg65).scripts ?? {}), test: 'true' } }, { indent: 2 }));
+    F.commitAll(wt65, 'lane: the test script');
+    const script65 = gate65();
+    write(pj65, pkg65);
+    const lkj65 = path.join(wt65, '.claude', 'kit.json');
+    write(lkj65, read(lkj65).replace('"test": "true"', '"test": "echo skipped"'));
+    F.commitAll(wt65, 'lane: kit.json');
+    const kit65 = gate65();
+    write(lkj65, K.jsonDumps({ ...JSON.parse(read(lkj65)), commands: cmds65 }));
+    F.git(['checkout', c65, '--', '.claude/kit.json'], wt65);
+    F.commitAll(wt65, 'lane: put them back');
+    const clean65 = gate65();
+    fs.mkdirSync(path.join(wt65, 'src', 'billing'), { recursive: true });
+    write(path.join(wt65, 'src', 'billing', 'charge.ts'), 'export const charge = 1;\n');
+    F.commitAll(wt65, 'lane: a billing change');
+    const risk65 = gate65();
+    const caught65 = script65.code === 1 && script65.failed.includes('protected-files') && kit65.code === 1 && kit65.failed.includes('protected-files') &&
+      clean65.code === 0 && risk65.code === 1 && risk65.failed.join(',') === 'risk';
+    record(65, 'a lane changes a package.json script or kit.json so the checks run what it wants, or a lane approved at normal risk changes a high-risk path', "lane.js gate fails on a protected file (the spec after approval, .claude/, CI config, package.json scripts, test config) and runs no check on it; its risk re-check matches high-risk paths against the lane's own diff and stops a lane not approved as high risk (hardening plan Step 3, D4)", caught65, `script -> exit ${script65.code} [${script65.failed}]; kit.json -> exit ${kit65.code} [${kit65.failed}]; reverted -> exit ${clean65.code}; billing in a normal-risk lane -> exit ${risk65.code} [${risk65.failed}]`);
   } finally {
     if (a.keep) process.stderr.write(`fixtures kept at ${tmp}\n`);
     else fs.rmSync(tmp, { recursive: true, force: true });
