@@ -45,13 +45,17 @@ Do not give the implementer any summary of the code. It reads the files itself; 
 ## Step 4: after the implementer stops
 Read `docs/specs/$slug.progress.md` in the worktree.
 - Escalation filled: `kit lane roadmap-set $slug escalated --repo <main repo>`, show the human the Escalation section, and stop. Nothing else.
-- All criteria green: run the full test command from `.claude/kit.json` once more in the worktree and confirm green. Then:
+- All criteria green: run the gate, which re-runs every recorded check on the lane's HEAD (commit first):
+```
+kit lane gate $slug --repo <main repo>
+```
+Exit 1 (`GATE: FAIL`): give the implementer only its report and run Step 3 again. Exit 0 (`GATE: PASS`):
 ```
 kit lane publish $slug --repo <main repo>
 kit lane roadmap-set $slug in-review --repo <main repo> --pr <PR url it printed>
 kit lane advance $slug review --repo <main repo>
 ```
-It refuses until every criterion cites a logged green run of its test; give the implementer its reasons.
+It refuses until every criterion cites a logged green run of its test and the gate passed the lane's HEAD; give the implementer its reasons.
 Then run `/zi-review $slug`.
 
 Never edit code yourself in this command. Never mark anything done that the Stop hook did not accept.

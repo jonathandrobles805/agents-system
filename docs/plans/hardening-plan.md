@@ -264,6 +264,7 @@ Steps 1–9 of the skills work are done on branch `commands-to-skills`: 23 `zi-`
     - it runs again after updating from the base, and on a merge conflict it refuses and the lane parks for you (#56 S1.5);
     - a missing recorded command, or `none` without a reason, fails it (#56 S1.2);
     - done-check reads the verdict, not the lane's log.
+    - Progress: PR #GATE_PR (`kit lane gate`) does the first, second, third and fifth bullets: the base's committed kit.json checks on the lane's HEAD, contained (containment from D4 too), a verdict bound to the commit, no reviewer without a PASS for the exact HEAD (no verdict, FAIL and stale refused), a missing check or bare `none` failing it, and a gate FAIL counting a round (D2). Planted fault 64. Still to do: the re-run after updating from the base with a conflict parking the lane, and done-check reading the verdict.
 - [ ] Add D4's protected-file check, containment (non-interactive, with a time limit and closed stdin; only the exit code and output come back), and the risk re-check.
 - **Done when:**
     - a failing or missing check starts no reviewer;
