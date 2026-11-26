@@ -262,6 +262,10 @@ test('gate: a lane approved as high risk may touch high-risk paths', (t) => {
 
 test('gate --sync: updates the lane from the base\'s new tip, then gates the result; the merge needs exactly that', (t) => {
   const { root, wt, store } = gateLane(t);
+  // the lane has a commit of its own, so the update is a real merge commit (not a fast-forward): it must work on a
+  // machine with no git identity configured, as on a CI runner
+  write(path.join(wt, 'src', 'api', 'refund.ts'), 'export const refund = 1;\n');
+  commitAll(wt, 'lane: D1');
   assert.equal(lane('gate', 'refund-route', '--repo', root).returncode, 0);
   const head0 = git(['rev-parse', 'HEAD'], wt).trim();
   assert.equal(L.syncProblem(root, 'refund-route', head0), null, 'nothing new on the base yet');
@@ -277,6 +281,7 @@ test('gate --sync: updates the lane from the base\'s new tip, then gates the res
   assert.deepEqual({ commit: store().gate.commit, base_tip: store().gate.synced.base_tip, merged: store().gate.synced.merged }, { commit: head1, base_tip: tip, merged: true });
   assert.equal(L.syncProblem(root, 'refund-route', head1), null);
   assert.ok(fs.existsSync(path.join(wt, 'src', 'other.ts')));
+  assert.equal(git(['rev-list', '--parents', '-n', '1', 'HEAD'], wt).trim().split(' ').length, 3, 'a merge commit, with both parents');
   // protected files and risk are judged on the lane's own changes, not the base's: the base's new file is not the lane's
   assert.ok(!store().gate.failed.length);
 });

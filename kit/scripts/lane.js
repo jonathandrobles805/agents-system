@@ -1515,7 +1515,10 @@ export async function gate(root, slug, { sync = false } = {}) {
     const bt = baseTip(root, base, { fetch: true });
     if (bt.why) return refuse([`cannot update from the base: ${bt.why}`]);
     const before = pyStrip(K.git(['rev-parse', 'HEAD'], wt));
-    const mr = gitRaw(wt, ['merge', '--no-edit', '-m', `Merge ${base} (${bt.tip.slice(0, 7)}) into wt/${slug}: the gate's update from the base`, bt.tip]);
+    // the merge commit is the repo's configured identity; with none set (a fresh machine, a CI runner), the kit's own,
+    // so the update never fails for want of a name
+    const ident = gitLine(wt, ['config', 'user.email']) ? [] : ['-c', 'user.name=agent-kit gate', '-c', 'user.email=agent-kit@localhost'];
+    const mr = gitRaw(wt, [...ident, 'merge', '--no-edit', '-m', `Merge ${base} (${bt.tip.slice(0, 7)}) into wt/${slug}: the gate's update from the base`, bt.tip]);
     if (mr.status !== 0) {
       const conflicts = gitRaw(wt, ['diff', '--name-only', '--diff-filter=U']).stdout.split('\n').filter(Boolean);
       gitRaw(wt, ['merge', '--abort']);
