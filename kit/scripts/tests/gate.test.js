@@ -4,7 +4,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
-import { git, commitAll } from './fixtures.js';
+import { git, commitAll, approveSpec } from './fixtures.js';
 import { runScript, setEnv } from './helpers.js';
 import { project } from './testdata.js';
 import { CI_COMMANDS } from '../bootstrap.js';
@@ -21,7 +21,7 @@ const LOG = '=== 2026-11-11T10:00:00 test: npx vitest run -> exit 1\nnot ok 1 - 
 const GOAL = '# Goal: refund route\n\n- Slug: refund-route\n- Date: 2026-11-11\n- Agreed by: Jonathan Robles and Claude on 2026-11-11\n- Status: agreed\n- Work type: feature\n- Risk: normal\n- Size: M\n\n## What we want\n\nA refund route.\n\n## Done looks like\n\n- POST /refund works\n';
 
 /** Every check CI runs passes (`true`), with `over` changing some; committed on main, then the lane starts at build. */
-function gateLane(t, over = {}, kitOver = {}) {
+function gateLane(t, over = {}, kitOver = {}, { risk = null } = {}) {
   setEnv(t, 'KIT_SANDBOX_RUNTIME', 'none');
   setEnv(t, 'KIT_STATUS_NO_GH', '1');
   const { root } = project(t);
@@ -39,7 +39,15 @@ function gateLane(t, over = {}, kitOver = {}) {
   write(kj, JSON.stringify({ ...kit, sandbox, ...kitOver, commands }, null, 2));
   // next-step walks the pipeline only for an agreed goal
   write(path.join(root, 'docs', 'goals', 'refund-route.md'), GOAL);
-  commitAll(root, 'kit.json: the checks the gate runs');
+  // a spec approved at another risk: the spec PR the owner merged says so (the approval is recorded at that commit)
+  if (risk) {
+    const sp = path.join(root, 'docs', 'specs', 'refund-route.md');
+    // a spec at normal risk names no high-risk path or keyword (validate_docs' risk-flag)
+    write(sp, read(sp).replace('- Risk: high-risk', `- Risk: ${risk}`).replace('- Risks: payments', '- Risks: none')
+      .replace('`src/domain/payment.ts` — the service [verified: src/domain/payment.ts:1-3]', '`src/api/routes.ts` — the routes [verified: src/api/routes.ts:1-3]'));
+  }
+  const c = commitAll(root, 'kit.json: the checks the gate runs');
+  if (risk) approveSpec(root, 'refund-route', { commit: c });
   const st = lane('start', 'refund-route', '--repo', root);
   assert.equal(st.returncode, 0, `start: ${st.stderr}`);
   const wt = JSON.parse(st.stdout).worktree;
@@ -106,14 +114,10 @@ test('gate: a check that hangs is stopped at the time limit, with its children; 
   assert.match(read(store().gate.report), /test: sleep 60 & sleep 60 {2}\(stopped at the time limit, 1s/);
 });
 
-test("gate: the checks come from the base's committed kit.json, not the lane's copy or the main checkout's file", (t) => {
-  const { root, wt, store } = gateLane(t, { test: 'exit 1' });
-  // the lane rewrites its own kit.json and commits it; the main checkout's working file says the same
-  for (const dir of [wt, root]) {
-    const kj = path.join(dir, '.claude', 'kit.json');
-    write(kj, read(kj).replace('"test": "exit 1"', '"test": "true"'));
-  }
-  commitAll(wt, 'lane: make the tests pass');
+test("gate: the checks come from the base's committed kit.json, not the main checkout's working file", (t) => {
+  const { root, store } = gateLane(t, { test: 'exit 1' });
+  const kj = path.join(root, '.claude', 'kit.json');
+  write(kj, read(kj).replace('"test": "exit 1"', '"test": "true"'));
   assert.equal(lane('gate', 'refund-route', '--repo', root).returncode, 1);
   assert.deepEqual(store().gate.failed, ['test']);
   assert.match(store().gate.base_ref, /refs\/heads\/main$/);
@@ -184,4 +188,69 @@ test('gate: refused at a stage that is not build or review, and when the kill sw
   assert.equal(lane('stop', '--repo', root, '--by', 'J', '--reason', 'x').returncode, 0);
   r = lane('gate', 'refund-route', '--repo', root);
   assert.ok(r.returncode === 2 && r.stderr.includes('kill switch'), r.stderr);
+});
+
+// D4: protected files (#56 S1.3; 0016 E.1 Add 4) and the risk re-check
+
+test('gate: a lane that changes .claude/ (kit.json), CI config or test config fails on protected files; the checks are not run', (t) => {
+  for (const [file, text, why] of [
+    ['.claude/kit.json', null, "the kit's configuration"],
+    ['.github/workflows/ci.yml', 'on: push\n', 'CI configuration'],
+    ['vitest.config.ts', 'export default {};\n', 'test configuration'],
+  ]) {
+    const { root, wt, store } = gateLane(t, { test: 'exit 1' });
+    const p = path.join(wt, file);
+    write(p, text ?? read(p).replace('"test": "exit 1"', '"test": "true"'));
+    commitAll(wt, `lane: ${file}`);
+    assert.equal(lane('gate', 'refund-route', '--repo', root).returncode, 1, file);
+    const g = store().gate;
+    assert.ok(g.failed.includes('protected-files'), `${file}: ${JSON.stringify(g.failed)}`);
+    assert.equal(g.checks.find((c) => c.name === 'test').result, 'skipped', 'a check is never run on what the lane changed');
+    assert.match(read(g.report), new RegExp(`${file.replace(/[.]/g, '\\.')}: ${why}`));
+  }
+});
+
+test("gate: a package.json's scripts are protected, its dependencies are not; a test file is not test config", (t) => {
+  const { root, wt, store } = gateLane(t);
+  const pj = path.join(wt, 'package.json');
+  const d = JSON.parse(read(pj));
+  write(pj, JSON.stringify({ ...d, dependencies: { ...(d.dependencies ?? {}), 'left-pad': '1.3.0' } }, null, 2));
+  write(path.join(wt, 'tests', 'refund.test.ts'), 'import { test } from "vitest";\ntest("x", () => {});\n');
+  commitAll(wt, 'lane: a dependency and a test');
+  assert.equal(lane('gate', 'refund-route', '--repo', root).returncode, 0, read(root, '.claude', 'session', 'lanes', 'refund-route.gate.txt'));
+  write(pj, JSON.stringify({ ...JSON.parse(read(pj)), scripts: { ...(d.scripts ?? {}), test: 'true' } }, null, 2));
+  commitAll(wt, 'lane: a script');
+  assert.equal(lane('gate', 'refund-route', '--repo', root).returncode, 1);
+  assert.match(read(store().gate.report), /package\.json: its "scripts" changed/);
+});
+
+test('gate: the spec changed after its approved commit fails on protected files', (t) => {
+  const { root, wt, store } = gateLane(t);
+  const sp = path.join(wt, 'docs', 'specs', 'refund-route.md');
+  write(sp, read(sp).replace('## Non-goals', '## Non-goals\n\n- anything the lane finds inconvenient'));
+  commitAll(wt, 'lane: rewrite the spec');
+  assert.equal(lane('gate', 'refund-route', '--repo', root).returncode, 1);
+  assert.match(read(store().gate.report), /docs\/specs\/refund-route\.md: the spec changed after its approved commit/);
+});
+
+test('gate: a lane not approved as high risk that touches a high-risk path is stopped for the owner; a near name is not', (t) => {
+  const { root, wt, store } = gateLane(t, {}, {}, { risk: 'normal' });
+  write(path.join(wt, 'src', 'author.ts'), 'export const author = 1;\n');
+  commitAll(wt, 'lane: author, not auth');
+  assert.equal(lane('gate', 'refund-route', '--repo', root).returncode, 0, read(root, '.claude', 'session', 'lanes', 'refund-route.gate.txt'));
+  write(path.join(wt, 'src', 'billing', 'charge.ts'), 'export const charge = 1;\n');
+  commitAll(wt, 'lane: billing, which its spec never named');
+  assert.equal(lane('gate', 'refund-route', '--repo', root).returncode, 1);
+  assert.deepEqual(store().gate.failed, ['risk']);
+  assert.match(read(store().gate.report), /src\/billing\/charge\.ts: a high-risk path \('billing'\), in a lane approved as normal/);
+  greenRuns(wt);
+  const ns = JSON.parse(lane('next-step', 'refund-route', '--repo', root).stdout);
+  assert.ok(ns.stage === 'escalated' && ns.needs_human && /risk re-check/.test(ns.reason), JSON.stringify(ns));
+});
+
+test('gate: a lane approved as high risk may touch high-risk paths', (t) => {
+  const { root, wt } = gateLane(t);
+  write(path.join(wt, 'src', 'billing', 'charge.ts'), 'export const charge = 1;\n');
+  commitAll(wt, 'lane: billing, in a high-risk lane');
+  assert.equal(lane('gate', 'refund-route', '--repo', root).returncode, 0, read(root, '.claude', 'session', 'lanes', 'refund-route.gate.txt'));
 });
