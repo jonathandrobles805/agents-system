@@ -3,6 +3,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { git, commitAll, approveSpec } from './fixtures.js';
 import { runScript, setEnv } from './helpers.js';
@@ -304,4 +305,24 @@ test('gate --sync: a merge conflict with the base is undone and parks the lane f
   assert.deepEqual(store().parked.conflict, ['src/api/routes.ts']);
   assert.equal(store().gate.commit, head, 'the last verdict is still the one for HEAD; the conflict wrote none');
   assert.match(L.syncProblem(root, 'refund-route', head), /does not contain main's tip/);
+});
+
+// #139: under srt a check's TMPDIR is srt's (CLAUDE_CODE_TMPDIR, else /tmp/claude, which srt never creates)
+
+test('gate under srt: a check gets the lane scratch as its TMPDIR, so a test that makes a temp folder passes (#139)', (t) => {
+  const { root, store } = gateLane(t, { test: `node -e "const fs=require('fs'),os=require('os');fs.rmSync(fs.mkdtempSync(os.tmpdir()+'/x-'),{recursive:true});console.log('TMPDIR='+os.tmpdir())"` });
+  // a stand-in for srt 0.0.82's one rule that matters here (sandbox-utils.js): the child's TMPDIR is
+  // CLAUDE_CODE_TMPDIR, else CLAUDE_TMPDIR, else /tmp/claude, never created; here that default is a path that never exists
+  const bin = fs.mkdtempSync(path.join(os.tmpdir(), 'fake-srt-'));
+  t.after(() => fs.rmSync(bin, { recursive: true, force: true }));
+  write(path.join(bin, 'srt'), '#!/bin/sh\nwhile [ "$1" != "--" ]; do shift; done; shift\nTMPDIR="${CLAUDE_CODE_TMPDIR:-${CLAUDE_TMPDIR:-/nonexistent/srt-default-tmp}}" exec "$@"\n');
+  fs.chmodSync(path.join(bin, 'srt'), 0o755);
+  setEnv(t, 'PATH', `${bin}:${process.env.PATH}`);
+  setEnv(t, 'KIT_SANDBOX_RUNTIME', 'srt');
+  const scratch = path.join(os.tmpdir(), 'kit-lane-refund-route');
+  fs.rmSync(scratch, { recursive: true, force: true });
+  const r = lane('gate', 'refund-route', '--repo', root);
+  assert.equal(r.returncode, 0, read(root, '.claude', 'session', 'lanes', 'refund-route.gate.txt'));
+  assert.equal(store().gate.runtime, 'srt');
+  assert.ok(fs.statSync(scratch).isDirectory(), 'the gate made the scratch');
 });

@@ -5,6 +5,7 @@ All notable changes to the kit. Each entry names the decision or lesson that cau
 ## [0.3.0] - unreleased
 
 ### Fixed (hardening plan Step 4, found on kit-test)
+- **The gate's checks under srt get a temp folder that exists (#139).** On the owner's Mac (srt 0.0.82) the first real gate run failed `test`: srt sets a child's `TMPDIR` to `CLAUDE_CODE_TMPDIR`, else `/tmp/claude`, and never creates it, so `mkdtemp(os.tmpdir())` failed with ENOENT (checked in srt 0.0.82's `sandbox-utils.js`). The gate now creates the lane's scratch, already writable in the sandbox, and passes it as `CLAUDE_CODE_TMPDIR` (`sandbox.sandboxTmpEnv`). Test: the gate through a stand-in srt applying that rule fails with the same ENOENT without the fix and passes with it.
 - **A project's secrets check no longer fails on the kit's own manifest (#133).** After `/zi-bootstrap --upgrade` on kit-test, the `secrets` job (gitleaks 8.24.3) flagged `.claude/kit-manifest.json`: the checksum of `app_token.js` matched the `generic-api-key` rule, so every upgraded project's CI was red and `kit lane merge` (correctly) refused to merge. The job now writes a gitleaks config that extends every default rule, or the project's own `.gitleaks.toml` (extended, not replaced), and allows only that one path. Test: the step's script, run as CI runs it, with and without a project config; the generated file is valid TOML and allows exactly `^\.claude/kit-manifest\.json$`.
 
 ### Added (hardening plan Step 3: the gate runs again before the merge, #56 S1.5; Step 3 complete)
