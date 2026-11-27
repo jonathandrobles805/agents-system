@@ -149,6 +149,7 @@ export function sandboxConfig({ root, wt, slug, agent = 'implementer', env = pro
     agent,
     // the worktree, the scratch, then what a commit in a linked worktree writes in the main repository's .git
     allowWrite: [wt, scratch, ...(git?.allowWrite ?? [])],
+    scratch,
     denyWrite: git?.denyWrite ?? [],
     gitCommon: git?.common ?? null,
     denyRead: denyReadPaths(wt, floor, kit),
@@ -163,6 +164,17 @@ export function sandboxConfig({ root, wt, slug, agent = 'implementer', env = pro
  * with a missing key rather than filling defaults, so that a typo cannot silently drop a rule). Verified end to end:
  * an allowed host connected, an undeclared host got "403 host is not on the allow list".
  */
+/**
+ * Environment for a command run inside the sandbox that is not Claude Code (the gate's checks): srt sets the child's
+ * TMPDIR to CLAUDE_CODE_TMPDIR, else CLAUDE_TMPDIR, else /tmp/claude, and never creates it (srt 0.0.82,
+ * sandbox-utils.js). Claude Code makes its own; a test runner does not, and mkdtemp(os.tmpdir()) fails. So point it at
+ * the lane's scratch, which allowWrite already holds; the caller creates it (#139). The container mounts the scratch
+ * and no runtime leaves the host TMPDIR, so both get nothing.
+ */
+export function sandboxTmpEnv(cfg) {
+  return cfg.runtime === 'srt' ? { CLAUDE_CODE_TMPDIR: cfg.scratch } : {};
+}
+
 export const SRT_REQUIRED_KEYS = { network: ['allowedDomains', 'deniedDomains'], filesystem: ['denyRead', 'allowRead', 'allowWrite', 'denyWrite'] };
 export function srtSettings(cfg) {
   return {

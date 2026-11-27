@@ -1550,6 +1550,9 @@ export async function gate(root, slug, { sync = false } = {}) {
   const launch = cfg.runtime ? SB.launchCommand(cfg, { wt, settingsPath, prompt: '' }) : ['claude'];
   const env = { ...process.env, CI: '1', KIT_GATE: slug };
   for (const k of GATE_ENV_DROP) delete env[k];
+  // under srt a check's TMPDIR is the lane scratch, which exists and is writable inside the sandbox (#139)
+  fs.mkdirSync(cfg.scratch, { recursive: true });
+  Object.assign(env, SB.sandboxTmpEnv(cfg));
   const checks = [];
   // the lane's own changes since it left the base: protected files and the risk re-check come first (D4)
   const mergeBase = gitLine(wt, ['merge-base', src.commit, head]);
