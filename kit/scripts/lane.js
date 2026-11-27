@@ -9,6 +9,7 @@
 //   lane.js stage <slug> <stage> --repo R     the old name of advance, the same call
 //   lane.js advance <slug> build --by NAME    let a lane parked past the round limit (kit.json max_rounds) go on for one more round
 //   lane.js gate <slug> --repo R              run the base's recorded checks on the lane's HEAD, contained; verdict bound to the commit (exit 0 PASS, 1 FAIL)
+//   lane.js gate <slug> --sync --repo R       update the lane from the base's tip first (a conflict parks the lane), then gate it; the merge needs this
 //   lane.js launch <slug> --repo R [--exec]   host side: the command that starts the lane's headless session inside its sandbox (KIT-SPEC 10.9)
 //   lane.js resume <slug> --repo R            host side: next step from files alone, logged, plus the launch command (KIT-SPEC 10.11)
 //   lane.js stop --repo R --by N --reason T    kill switch: every lane refuses transitions and mutations (KIT-SPEC 10.13)
@@ -1448,6 +1449,39 @@ export function riskChanges(root, wt, slug, baseKit, mergeBase, head) {
   return out;
 }
 
+/**
+ * The base branch's tip: origin's when the repo has an origin (fetched first when `fetch`), else the local base.
+ * { ref, tip } or { why } when it cannot be read.
+ */
+export function baseTip(root, base, { fetch = false } = {}) {
+  const origin = gitLine(root, ['rev-parse', '--verify', '--quiet', `refs/remotes/origin/${base}^{commit}`]) || gitRaw(root, ['remote']).stdout.split(/\s+/).includes('origin');
+  if (origin && fetch) {
+    const f = gitRaw(root, ['fetch', '-q', 'origin', base]);
+    if (f.status !== 0) return { why: `git fetch origin ${base} failed: ${pyStrip(f.stderr) || `exit ${f.status}`}` };
+  }
+  const ref = origin ? `refs/remotes/origin/${base}` : `refs/heads/${base}`;
+  const tip = gitLine(root, ['rev-parse', '--verify', '--quiet', `${ref}^{commit}`]);
+  return tip ? { ref, tip } : { why: `no ${origin ? `origin/${base}` : base} to update from` };
+}
+
+/**
+ * Why the lane may not go on to its sign-off or merge: the gate must have PASSED `head` after the lane was updated from
+ * the base, i.e. `head` contains the base's tip (#56 S1.5: it runs again before merge after syncing). null when it did.
+ */
+export function syncProblem(root, slug, head, { fetch = false } = {}) {
+  const base = kget(asDict(K.loadKitJson(root)), 'default_branch', 'main');
+  const run = `kit lane gate ${slug} --sync (then kit lane publish ${slug} to push it)`;
+  const bt = baseTip(root, base, { fetch });
+  if (bt.why) return `the base cannot be read (${bt.why})`;
+  const g = laneGate(root, slug);
+  if (!head) return `the lane has no commit to merge`;
+  if (!g) return `the gate has not run on this lane: ${run}`;
+  if (g.commit !== head) return `the gate's verdict is for ${String(g.commit).slice(0, 7)}, not ${head.slice(0, 7)}: ${run}`;
+  if (g.verdict !== 'PASS') return `the gate FAILED on ${head.slice(0, 7)} (${(g.failed ?? []).join(', ')}): fix it, then ${run}`;
+  if (gitRaw(root, ['merge-base', '--is-ancestor', bt.tip, head]).status !== 0) return `${head.slice(0, 7)} does not contain ${base}'s tip ${bt.tip.slice(0, 7)}: update it from the base and gate it again: ${run}`;
+  return null;
+}
+
 /** Write fields into the lane's store record without a move (the gate's verdict). */
 function writeStoreFields(root, slug, fields) {
   const p = storePath(root, slug);
@@ -1465,7 +1499,7 @@ function writeStoreFields(root, slug, fields) {
  * failed round, once per commit, and the lane is parked when another round would pass the limit. Exit 0 PASS,
  * 1 FAIL, 2 refused.
  */
-export async function gate(root, slug) {
+export async function gate(root, slug, { sync = false } = {}) {
   if (isStopped(root)) return refuse(['kill switch set; kit lane resume-all --by <name> first']);
   const wt = pjoin(lanesDir(root), slug);
   if (!K.isFile(pjoin(wt, '.claude', 'lane.json'))) return refuse([`no lane for ${slug}; run kit lane start ${slug} first`]);
@@ -1474,6 +1508,29 @@ export async function gate(root, slug) {
   const dirty = gateDirty(root, wt, slug);
   if (dirty.length) return refuse([`the gate checks a commit, and the worktree has changes that are not committed; commit them first:`, ...dirty.slice(0, 20).map((p) => `  ${p}`)]);
   const base = kget(asDict(K.loadKitJson(root)), 'default_branch', 'main');
+  // --sync: update the lane from the base's tip first, and gate the result (#56 S1.5). A merge conflict is undone and
+  // parks the lane for a human: the gate never resolves one, and no agent is sent to guess
+  let synced = null;
+  if (sync) {
+    const bt = baseTip(root, base, { fetch: true });
+    if (bt.why) return refuse([`cannot update from the base: ${bt.why}`]);
+    const before = pyStrip(K.git(['rev-parse', 'HEAD'], wt));
+    // the merge commit is the repo's configured identity; with none set (a fresh machine, a CI runner), the kit's own,
+    // so the update never fails for want of a name
+    const ident = gitLine(wt, ['config', 'user.email']) ? [] : ['-c', 'user.name=agent-kit gate', '-c', 'user.email=agent-kit@localhost'];
+    const mr = gitRaw(wt, [...ident, 'merge', '--no-edit', '-m', `Merge ${base} (${bt.tip.slice(0, 7)}) into wt/${slug}: the gate's update from the base`, bt.tip]);
+    if (mr.status !== 0) {
+      const conflicts = gitRaw(wt, ['diff', '--name-only', '--diff-filter=U']).stdout.split('\n').filter(Boolean);
+      gitRaw(wt, ['merge', '--abort']);
+      if (!conflicts.length) return refuse([`updating from ${base} failed: ${pyStrip(mr.stderr) || pyStrip(mr.stdout) || `exit ${mr.status}`}`]);
+      const reason = `a merge conflict with ${base} at ${bt.tip.slice(0, 7)} in ${conflicts.join(', ')}; the merge was undone`;
+      recordMove(root, slug, wt, stage, 'parked', { fields: { parked: { reason, at: K.isoSeconds(), conflict: conflicts, base_tip: bt.tip } } });
+      roadmapSet(root, slug, 'escalated');
+      K.appendEvent(pjoin(wt, '.claude', 'session', 'events.jsonl'), { event: 'parked', result: 'fail', summary: `lane parked: ${reason}` });
+      return refuse([`lane ${slug} is parked: ${reason}. A human resolves it (in the worktree ${wt}), then ${unparkHint(slug)}`]);
+    }
+    synced = { base_tip: bt.tip, from: before, merged: pyStrip(K.git(['rev-parse', 'HEAD'], wt)) !== before };
+  }
   const src = baseKitJson(root, base);
   if (!src) return refuse([`no ${base} branch to read the recorded checks from (origin/${base} or ${base})`]);
   if (!src.kit) return refuse([`the recorded checks cannot be read: ${src.why}`]);
@@ -1542,7 +1599,7 @@ export async function gate(root, slug) {
   const prev = laneGate(root, slug);
   const record = {
     verdict, commit: head, at: now, base_ref: src.ref, base_commit: src.commit, runtime: cfg.runtime ?? null, state: cfg.state,
-    timeout_s: Math.round(timeoutMs / 1000), failed, report: reportPath,
+    timeout_s: Math.round(timeoutMs / 1000), failed, report: reportPath, synced,
     checks: checks.map(({ output, ...c }) => c),
   };
   writeStoreFields(root, slug, { gate: record });
@@ -1806,6 +1863,11 @@ export async function nextStep(root, slug, { reroute = true } = {}) {
   const ctx = { KS, kit, rows, row, g };
   let raw = isReproFirst(prof) ? await nextStepRepro(root, slug, ctx) : await nextStepFeature(root, slug, ctx);
   if (['test', 'build'].includes(raw.stage)) raw = inLanePlanning(root, slug) ?? raw;
+  // reviewed: before the sign-off and the merge, the gate runs again on the lane updated from the base (#56 S1.5)
+  if (raw.stage === 'wait-merge' && laneRefs(root, slug).tip) {
+    const why = syncProblem(root, slug, laneRefs(root, slug).tip);
+    if (why) raw = { slug, stage: 'gate', sync: true, reason: `reviewed; before the merge ${why}` };
+  }
   const signoff = raw.stage === 'wait-merge' && signoffRequired(fields) ? signoffProblem(root, slug, [laneRefs(root, slug).tip]) : undefined;
   const out = withProfile(raw, prof, fields, { signoff });
   if (rerouted) out[reroute ? 'rerouted' : 'reroute_pending'] = rerouted;
@@ -2211,7 +2273,7 @@ export async function main(argv = process.argv.slice(2)) {
     s.addArgument('slug'); s.addArgument('stage', { choices: Object.keys(MOVES) }); s.addArgument('--repo', { default: '.' }); s.addArgument('--by');
   }
   s = sub.addParser('gate');
-  s.addArgument('slug'); s.addArgument('--repo', { default: '.' });
+  s.addArgument('slug'); s.addArgument('--repo', { default: '.' }); s.addArgument('--sync', { action: 'store_true' });
   s = sub.addParser('ci');
   s.addArgument('slug', { nargs: '?' }); s.addArgument('--repo', { default: '.' }); s.addArgument('--pr'); s.addArgument('--wait', { action: 'store_true' }); s.addArgument('--timeout-min', { type: parseInt, default: 30 });
   s = sub.addParser('publish');
@@ -2283,7 +2345,7 @@ export async function main(argv = process.argv.slice(2)) {
   }
   if (a.cmd === 'launch') return launch(root, a.slug, { exec: !!a.exec, prompt: a.prompt ?? null });
   if (a.cmd === 'advance' || a.cmd === 'stage') return advance(root, a.slug, a.stage, { by: a.by ?? null });
-  if (a.cmd === 'gate') return gate(root, a.slug);
+  if (a.cmd === 'gate') return gate(root, a.slug, { sync: !!a.sync });
   if (a.cmd === 'finish') return finish(root, a.slug);
   if (a.cmd === 'signoff') return signoff(root, a.slug, a.by);
   if (a.cmd === 'next-step') {
@@ -2352,6 +2414,12 @@ export async function main(argv = process.argv.slice(2)) {
             const why = signoffProblem(root, m[1], [info.headRefOid, laneRefs(root, m[1]).tip]);
             if (why) return refuse([`${m[1]} needs a human security sign-off before the merge (high risk) and ${why}`]);
             opts.head = securitySignoff(root, m[1]).commit;
+          }
+          // the gate passed the PR's exact head after it was updated from the base's current tip (#56 S1.5)
+          if (a.cmd === 'merge') {
+            const why = syncProblem(root, m[1], info.headRefOid, { fetch: true });
+            if (why) return refuse([`${m[1]} cannot merge PR ${pr}: ${why}`]);
+            opts.head = info.headRefOid;
           }
         }
       }

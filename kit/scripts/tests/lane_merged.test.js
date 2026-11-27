@@ -8,7 +8,7 @@ import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import * as L from '../lane.js';
 import * as G from '../pr_gate.js';
-import { git, commitAll } from './fixtures.js';
+import { git, commitAll, gatePass } from './fixtures.js';
 import { runScript, setEnv, tmpPath } from './helpers.js';
 import { project } from './testdata.js';
 
@@ -205,7 +205,10 @@ test('lane.js merge records the merge it made, so the squash reads as merged bef
   const { root, wt } = laneWith(t, 1);
   // a normal-risk lane: a high-risk one is refused before any merge until a sign-off can be recorded (#58)
   for (const sp of [path.join(root, 'docs', 'specs', `${SLUG}.md`), path.join(wt, 'docs', 'specs', `${SLUG}.md`)]) write(sp, read(sp).replace('- Risk: high-risk', '- Risk: low'));
+  // updated from main, as kit lane gate --sync does, and gated: lane.js merge refuses a head without main's tip (Step 3)
+  git(['merge', '-q', '--no-edit', 'main'], wt);
   const head = git(['rev-parse', `wt/${SLUG}`], root).trim();
+  assert.equal(gatePass(root, SLUG), head, 'the gate passed the head it merges');
   const g = fakeGh(t, { pr: PR(head, { state: 'OPEN', mergeCommit: null }), merged: { state: 'MERGED', mergeCommit: { oid: 'e'.repeat(40) } }, checks: G.projectChecks(root).required });
   let r = runScript('lane.js', ['merge', SLUG, '--repo', root, '--pr', '9', '--by', 'Jonathan'], { env: g.env });
   assert.equal(r.returncode, 0, r.stderr + r.stdout);

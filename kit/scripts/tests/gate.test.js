@@ -9,6 +9,9 @@ import { runScript, setEnv } from './helpers.js';
 import { project } from './testdata.js';
 import { CI_COMMANDS } from '../bootstrap.js';
 import * as L from '../lane.js';
+import { spawnSync } from 'node:child_process';
+
+const spawnGit = (args, cwd) => spawnSync('git', args, { cwd }).status;
 
 const lane = (...args) => runScript('lane.js', args);
 const read = (...p) => fs.readFileSync(path.join(...p), 'utf8');
@@ -253,4 +256,52 @@ test('gate: a lane approved as high risk may touch high-risk paths', (t) => {
   write(path.join(wt, 'src', 'billing', 'charge.ts'), 'export const charge = 1;\n');
   commitAll(wt, 'lane: billing, in a high-risk lane');
   assert.equal(lane('gate', 'refund-route', '--repo', root).returncode, 0, read(root, '.claude', 'session', 'lanes', 'refund-route.gate.txt'));
+});
+
+// #56 S1.5: before the merge the gate runs again on the lane updated from the base; a conflict parks the lane
+
+test('gate --sync: updates the lane from the base\'s new tip, then gates the result; the merge needs exactly that', (t) => {
+  const { root, wt, store } = gateLane(t);
+  // the lane has a commit of its own, so the update is a real merge commit (not a fast-forward): it must work on a
+  // machine with no git identity configured, as on a CI runner
+  write(path.join(wt, 'src', 'api', 'refund.ts'), 'export const refund = 1;\n');
+  commitAll(wt, 'lane: D1');
+  assert.equal(lane('gate', 'refund-route', '--repo', root).returncode, 0);
+  const head0 = git(['rev-parse', 'HEAD'], wt).trim();
+  assert.equal(L.syncProblem(root, 'refund-route', head0), null, 'nothing new on the base yet');
+  // the base moves on (another lane merged)
+  write(path.join(root, 'src', 'other.ts'), 'export const other = 1;\n');
+  const tip = commitAll(root, 'another lane');
+  assert.match(L.syncProblem(root, 'refund-route', head0), new RegExp(`does not contain main's tip ${tip.slice(0, 7)}: update it from the base and gate it again: kit lane gate refund-route --sync`));
+  const r = lane('gate', 'refund-route', '--sync', '--repo', root);
+  assert.equal(r.returncode, 0, r.stdout + r.stderr);
+  const head1 = git(['rev-parse', 'HEAD'], wt).trim();
+  assert.notEqual(head1, head0);
+  assert.equal(spawnGit(['merge-base', '--is-ancestor', tip, head1], wt), 0, 'the lane now contains the base tip');
+  assert.deepEqual({ commit: store().gate.commit, base_tip: store().gate.synced.base_tip, merged: store().gate.synced.merged }, { commit: head1, base_tip: tip, merged: true });
+  assert.equal(L.syncProblem(root, 'refund-route', head1), null);
+  assert.ok(fs.existsSync(path.join(wt, 'src', 'other.ts')));
+  assert.equal(git(['rev-list', '--parents', '-n', '1', 'HEAD'], wt).trim().split(' ').length, 3, 'a merge commit, with both parents');
+  // protected files and risk are judged on the lane's own changes, not the base's: the base's new file is not the lane's
+  assert.ok(!store().gate.failed.length);
+});
+
+test('gate --sync: a merge conflict with the base is undone and parks the lane for a human; no verdict is written', (t) => {
+  const { root, wt, store } = gateLane(t);
+  write(path.join(wt, 'src', 'api', 'routes.ts'), '// the lane\'s line\n');
+  commitAll(wt, 'lane');
+  assert.equal(lane('gate', 'refund-route', '--repo', root).returncode, 0);
+  const head = git(['rev-parse', 'HEAD'], wt).trim();
+  write(path.join(root, 'src', 'api', 'routes.ts'), '// the base\'s line\n');
+  const tip = commitAll(root, 'base edits the same line');
+  const r = lane('gate', 'refund-route', '--sync', '--repo', root);
+  assert.equal(r.returncode, 2, r.stdout + r.stderr);
+  assert.match(r.stderr, new RegExp(`lane refund-route is parked: a merge conflict with main at ${tip.slice(0, 7)} in src/api/routes\\.ts; the merge was undone\\. A human resolves it`));
+  assert.equal(git(['rev-parse', 'HEAD'], wt).trim(), head, 'HEAD is where it was');
+  assert.equal(git(['status', '--porcelain', '--untracked-files=no'], wt).trim(), '', 'no half-merge left in the worktree');
+  assert.ok(!fs.existsSync(path.join(wt, '.git')) || !fs.existsSync(path.join(git(['rev-parse', '--git-dir'], wt).trim(), 'MERGE_HEAD')), 'no merge in progress');
+  assert.equal(store().stage, 'parked');
+  assert.deepEqual(store().parked.conflict, ['src/api/routes.ts']);
+  assert.equal(store().gate.commit, head, 'the last verdict is still the one for HEAD; the conflict wrote none');
+  assert.match(L.syncProblem(root, 'refund-route', head), /does not contain main's tip/);
 });
