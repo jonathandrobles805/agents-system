@@ -150,6 +150,17 @@ jobs:
           if [ -n "$FROM" ]; then RANGE="$FROM..$TO"; else RANGE="-1 $TO"; fi
           echo "secrets: scanning $RANGE ($(git rev-list --count ${FROM:+$FROM..}$TO) commit(s))"
           echo "RANGE=$RANGE" >> "$GITHUB_ENV"
+      - name: gitleaks config
+        # Every default rule (or the project's own .gitleaks.toml, extended), and one path allowed: the kit's
+        # .claude/kit-manifest.json, which holds only the checksums of the kit's files. A checksum next to a name like
+        # app_token.js reads as a generic API key (#133); lanes cannot change that file (the gate's protected files).
+        run: |
+          set -euo pipefail
+          CFG="${RUNNER_TEMP:-/tmp}/kit-gitleaks.toml"
+          if [ -f .gitleaks.toml ]; then EXTEND='path = ".gitleaks.toml"'; else EXTEND='useDefault = true'; fi
+          printf '%s\n' '[extend]' "$EXTEND" '' '[allowlist]' "description = \"agent-kit: the kit's manifest holds only file checksums (#133)\"" "paths = ['''^\\.claude/kit-manifest\\.json\$''']" > "$CFG"
+          cat "$CFG"
+          echo "GITLEAKS_KIT_CONFIG=$CFG" >> "$GITHUB_ENV"
       - name: gitleaks (commits in this change)
         run: |
           set -euo pipefail
@@ -157,7 +168,7 @@ jobs:
           curl -sSfL -o gitleaks.tgz "https://github.com/gitleaks/gitleaks/releases/download/v${V}/gitleaks_${V}_linux_x64.tar.gz"
           echo "{{gitleaks_sha256}}  gitleaks.tgz" | sha256sum -c -
           tar -xzf gitleaks.tgz gitleaks
-          ./gitleaks git --redact --no-banner --log-opts="$RANGE" .
+          ./gitleaks git --redact --no-banner --config "$GITLEAKS_KIT_CONFIG" --log-opts="$RANGE" .
 
   audit:
     runs-on: ubuntu-latest
