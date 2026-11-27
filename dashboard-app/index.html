@@ -1,0 +1,224 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>agent-kit · architecture canvas</title>
+<style>
+  :root{
+    --bg:#07090C;--panel:#0E1116;--panel2:#141920;--line:#262C35;--line2:#323943;--edge:#4A525E;
+    --text:#F2F4F7;--text2:#C5CAD1;--muted:#8B929C;--green:#3DDC84;--amber:#FFB020;--red:#FF5C5C;
+    --mono:'JetBrains Mono',ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+    --sans:'Space Grotesk',system-ui,-apple-system,'Segoe UI',Helvetica,Arial,sans-serif;
+    /* names the Worktrees screen was written against */
+    --card:var(--panel);--border:var(--line);--border2:var(--line2);--hint:var(--muted);
+    --agent-bg:var(--panel2);--agent-fg:var(--text2);--agent-bd:var(--edge);
+    --gate-bg:rgba(61,220,132,.08);--gate-fg:var(--green);--gate-bd:rgba(61,220,132,.45);
+    --you-bg:rgba(255,176,32,.08);--you-fg:var(--amber);--you-bd:rgba(255,176,32,.45);
+    --bad-bg:rgba(255,92,92,.08);--bad-fg:var(--red);--bad-bd:rgba(255,92,92,.45);
+    --ok-bg:rgba(61,220,132,.08);--ok-fg:var(--green);--ok-bd:rgba(61,220,132,.45);
+  }
+  *{box-sizing:border-box}
+  html,body{height:100%}
+  body{margin:0;background:var(--bg);color:var(--text);font:14px/1.5 var(--sans);overflow:hidden}
+  button{font:inherit;font-size:13px;padding:6px 12px;border-radius:8px;border:1px solid var(--line2);background:var(--panel);color:var(--text);cursor:pointer}
+  button:hover{background:var(--panel2);border-color:var(--edge)}
+  button:disabled{opacity:.5;cursor:default}
+  button:focus-visible,[tabindex]:focus-visible,select:focus-visible,input:focus-visible{outline:2px solid var(--text2);outline-offset:2px}
+  select,input{font:inherit;font-size:13px;color:var(--text);background:var(--panel);border:1px solid var(--line2);border-radius:8px;padding:5px 9px}
+  a{color:inherit}
+  code{font-family:var(--mono);font-size:12px}
+  .mono{font-family:var(--mono)}
+  .muted{color:var(--muted);font-size:12px}
+  .cap{font:500 11px/14px var(--mono);letter-spacing:.12em;color:var(--muted);text-transform:uppercase}
+  .empty{color:var(--muted);font-size:13px;padding:8px 0}
+
+  /* ---- top bar */
+  .top{height:48px;display:flex;align-items:center;gap:18px;padding:0 18px;border-bottom:1px solid var(--line);background:var(--bg)}
+  .brand{font:600 12px var(--mono);letter-spacing:.16em}
+  .tabs{display:flex;gap:4px}
+  .tab{background:none;border:0;border-radius:8px;padding:6px 12px;color:var(--muted)}
+  .tab[aria-selected=true]{color:var(--text);background:var(--panel2)}
+  .grow{flex:1}
+  .livepill{font:500 11px var(--mono);letter-spacing:.1em;color:var(--muted);display:flex;align-items:center;gap:7px}
+  .dot{width:8px;height:8px;border-radius:50%;background:var(--edge);display:inline-block}
+  .dot.on{background:var(--green)}
+  .dot.warn{background:var(--amber)}.dot.bad{background:var(--red)}
+
+  /* ---- canvas screen */
+  #arch{display:grid;grid-template-columns:232px minmax(0,1fr) 340px;height:calc(100% - 48px)}
+  .side{border-right:1px solid var(--line);padding:16px 14px;overflow:auto}
+  .side h3{margin:18px 0 8px}.side h3:first-child{margin-top:0}
+  .vi{display:flex;gap:10px;align-items:baseline;width:100%;text-align:left;background:none;border:1px solid transparent;border-radius:10px;padding:8px 10px;color:var(--text2)}
+  .vi .n{font:11px var(--mono);color:var(--muted)}
+  .vi[aria-current=true]{background:var(--panel);border-color:var(--line2);color:var(--text)}
+  .lg{display:flex;align-items:center;gap:9px;font-size:12px;color:var(--text2);padding:3px 2px}
+  .sw{width:16px;height:10px;border-radius:3px;border:2px solid var(--line2);flex:none}
+  .sw.run{border-color:var(--green)}.sw.next{border-color:var(--green);border-style:dashed}.sw.bad{border-color:var(--red)}
+  .sw.warn{border-color:var(--amber)}.sw.miss{border-color:var(--amber);border-style:dashed}
+  .proj{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:12px}
+  .proj b{font-weight:600}
+  .stagearea{display:flex;flex-direction:column;min-width:0;min-height:0}
+  .sh{padding:14px 20px 10px}
+  .sh h2{margin:0;font:600 22px/28px var(--sans)}
+  .sh p{margin:2px 0 0;color:var(--muted);font-size:12px}
+  .vp{flex:1;overflow:auto;padding:0 20px 28px}
+  .insp{border-left:1px solid var(--line);overflow:auto;padding:16px}
+
+  /* ---- svg nodes */
+  .node{cursor:pointer}
+  .node rect.box{fill:var(--panel);stroke:var(--line2);stroke-width:1}
+  .node.t-run rect.box{stroke:var(--green)}
+  .node.t-next rect.box{stroke:var(--green);stroke-dasharray:4 3}
+  .node.t-bad rect.box{stroke:var(--red)}
+  .node.t-warn rect.box{stroke:var(--amber)}
+  .node.t-miss rect.box{stroke:var(--amber);stroke-dasharray:4 3}
+  .node.sel rect.box{stroke:var(--text);stroke-width:2}
+  .node.dim{opacity:.28}
+  .node.rad rect.box{stroke:var(--amber)}
+  .node:hover rect.box{fill:var(--panel2)}
+  .node text{fill:var(--text);font:13px var(--sans);pointer-events:none}
+  .node text.k{fill:var(--muted);font:500 10px var(--mono);letter-spacing:.1em}
+  .node text.s{fill:var(--muted);font:11px var(--mono)}
+  .node text.b{font-weight:600;font-size:14px}
+  .node .tag{font:500 9px var(--mono);letter-spacing:.08em}
+  .band{fill:var(--muted);font:500 11px var(--mono);letter-spacing:.12em}
+  .edge{fill:none;stroke:var(--line2);stroke-width:1.2}
+  .edge.out{stroke:var(--text2);stroke-width:1.6}
+  .edge.in{stroke:var(--amber);stroke-width:1.8}
+  .edge.faint{opacity:.22}
+
+  /* ---- html cards used by the other views */
+  .cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:12px}
+  .ac{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:14px;cursor:pointer;min-width:0}
+  .ac:hover{border-color:var(--edge)}
+  .ac.sel{border-color:var(--text)}
+  .ac.t-run{border-color:var(--green)}.ac.t-next{border-color:var(--green);border-style:dashed}.ac.t-bad{border-color:var(--red)}.ac.t-warn{border-color:var(--amber)}
+  .ac h4{margin:2px 0 4px;font:600 17px var(--sans)}
+  .ac p{margin:4px 0;color:var(--text2);font-size:13px}
+  .chip{display:inline-block;font:11px var(--mono);padding:2px 8px;border:1px solid var(--line2);border-radius:999px;color:var(--text2);margin:2px 4px 2px 0;background:transparent;cursor:pointer}
+  .chip.static{cursor:default}
+  .chip.g{border-color:var(--green);color:var(--green)}.chip.a{border-color:var(--amber);color:var(--amber)}.chip.r{border-color:var(--red);color:var(--red)}
+  .hk{display:grid;grid-template-columns:auto 1fr;gap:2px 10px;font:11px var(--mono);color:var(--muted);margin-top:8px}
+  .hk b{color:var(--text2);font-weight:500}
+  .you{border-color:var(--amber);background:rgba(255,176,32,.05)}
+  .flow{display:flex;flex-wrap:wrap;gap:10px;align-items:stretch}
+  .stg{width:176px;background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:10px 12px;cursor:default;position:relative}
+  .stg.human{border-color:var(--amber)}
+  .stg.here{border-color:var(--green)}
+  .stg h5{margin:0 0 6px;font:600 12px var(--mono);letter-spacing:.1em;text-transform:uppercase}
+  .stg .evd{font:10px var(--mono);color:var(--muted);margin-top:6px}
+  .arrow{align-self:center;color:var(--edge);font-size:18px}
+  .tblk{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+  @media (max-width:1500px){#arch{grid-template-columns:200px minmax(0,1fr) 300px}}
+  .feed{font:12px var(--mono)}
+  .feed div{display:flex;gap:10px;padding:5px 0;border-bottom:1px solid var(--line)}
+  .feed .t{color:var(--muted);min-width:62px}.feed .k{min-width:104px}.feed .w{min-width:90px;color:var(--text2)}
+  .vio{border:1px solid var(--line);border-radius:10px;padding:8px 10px;margin-bottom:8px;font-size:12px;cursor:pointer}
+  .vio.error{border-color:var(--red)}.vio.warn{border-color:var(--amber)}
+  .vio b{font:500 10px var(--mono);letter-spacing:.1em}
+  .listbox{max-height:520px;overflow:auto;border:1px solid var(--line);border-radius:12px;background:var(--panel)}
+  .li{display:flex;justify-content:space-between;gap:8px;padding:7px 12px;border-bottom:1px solid var(--line);cursor:pointer;font-size:13px}
+  .li:hover{background:var(--panel2)}.li.sel{background:var(--panel2);box-shadow:inset 2px 0 var(--text)}
+  .li small{color:var(--muted);font:10px var(--mono)}
+  .depwrap{position:relative}
+  .depwrap .item{position:absolute;background:var(--panel);border:1px solid var(--line2);border-radius:10px;padding:6px 10px;font-size:12px;cursor:pointer;overflow:hidden}
+  .depwrap .item.in{border-color:var(--amber)}
+  .depwrap .core{position:absolute;background:var(--panel);border:1px solid var(--text);border-radius:14px;padding:12px 14px}
+
+  /* ---- inspector */
+  .insp h2{margin:2px 0 2px;font:600 22px/26px var(--sans);word-break:break-word}
+  .itabs{display:flex;gap:2px;margin:12px 0;border-bottom:1px solid var(--line)}
+  .itab{background:none;border:0;border-bottom:2px solid transparent;border-radius:0;padding:6px 10px;color:var(--muted)}
+  .itab[aria-selected=true]{color:var(--text);border-bottom-color:var(--text)}
+  .big{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin:10px 0}
+  .big div{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:8px 10px}
+  .big b{display:block;font:600 22px var(--sans)}
+  .big span{font:500 10px var(--mono);letter-spacing:.1em;color:var(--muted)}
+  .src{font:11px var(--mono);color:var(--muted);word-break:break-all}
+  .prov{font:500 9px var(--mono);letter-spacing:.1em;padding:1px 6px;border:1px solid var(--line2);border-radius:999px;color:var(--muted);vertical-align:middle;margin-left:6px}
+  .kv{display:grid;grid-template-columns:96px 1fr;gap:6px 10px;font-size:13px;margin:8px 0}
+  .kv>span:nth-child(odd){color:var(--muted);font-size:12px}
+  .hist div{padding:6px 0;border-bottom:1px solid var(--line);font-size:12px}
+  .hist b{font:11px var(--mono);color:var(--text2);margin-right:8px}
+  .btnrow{display:flex;gap:8px;margin-top:12px;flex-wrap:wrap}
+  .btnrow button[aria-pressed=true]{border-color:var(--amber);color:var(--amber)}
+
+  /* ---- worktrees screen (the lane view) */
+  #worktrees{height:calc(100% - 48px);overflow:auto}
+  #worktrees main{max-width:1100px;margin:0 auto;padding:20px 22px 60px}
+  .card{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:14px 18px;margin-bottom:14px}
+  .lbl{font-size:12px;color:var(--hint);margin-bottom:8px}
+  .pill{display:inline-block;font-size:12px;padding:2px 9px;border-radius:999px;border:1px solid;margin:2px 4px 2px 0;white-space:nowrap}
+  .agent{background:var(--agent-bg);color:var(--agent-fg);border-color:var(--agent-bd)}
+  .gate{background:var(--gate-bg);color:var(--gate-fg);border-color:var(--gate-bd)}
+  .you-p{background:var(--you-bg);color:var(--you-fg);border-color:var(--you-bd)}
+  .bad{background:var(--bad-bg);color:var(--bad-fg);border-color:var(--bad-bd)}
+  .ok{background:var(--ok-bg);color:var(--ok-fg);border-color:var(--ok-bd)}
+  .neutral{background:var(--bg);color:var(--text);border-color:var(--border)}
+  .row{display:flex;justify-content:space-between;align-items:center;gap:12px;padding:9px 0;border-bottom:1px solid var(--border);cursor:pointer}
+  .row:last-child{border-bottom:0}
+  .row:hover{background:var(--panel2)}
+  .row .name{font-weight:500}
+  .pipe{display:flex;gap:6px;align-items:flex-start}
+  .stage{flex:1;min-width:0;text-align:center;font-size:12px;padding:8px 4px;border-radius:8px;border:1px solid var(--border);background:var(--bg);min-height:62px}
+  .stage.gate{background:var(--gate-bg);border-color:var(--gate-bd);color:var(--gate-fg)}
+  .stage.you{background:var(--you-bg);border-color:var(--you-bd);color:var(--you-fg)}
+  .stage .mk{display:block;font-size:11px;padding:2px 7px;border-radius:999px;margin:6px auto 0;border:1px solid;cursor:pointer;max-width:100%;overflow:hidden;text-overflow:ellipsis}
+  .mk.sel{background:var(--text);color:var(--bg);border-color:var(--text)}
+  .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:10px;margin:12px 0}
+  .m{background:var(--bg);border-radius:8px;padding:10px 12px;border:1px solid var(--line)}
+  .m .n{font-size:20px;font-weight:500}.m .t{font-size:12px;color:var(--muted)}
+  .ev{font-family:var(--mono);font-size:12px;padding:4px 0;border-bottom:1px solid var(--border);display:flex;gap:10px}
+  .ev .t{color:var(--hint);min-width:64px}.ev .k{min-width:96px}
+  .kr{color:var(--red)}.kg{color:var(--green)}.kb{color:#85B7EB}
+  .crumbs{font-size:13px;color:var(--muted);margin-bottom:10px}
+  .crumbs a{cursor:pointer;text-decoration:underline}
+  table{width:100%;border-collapse:collapse;font-size:13px}
+  td,th{text-align:left;padding:6px 8px;border-bottom:1px solid var(--border);vertical-align:top}
+  th{font-weight:500;color:var(--muted);font-size:12px}
+  [hidden]{display:none!important}
+</style>
+</head>
+<body>
+<!-- The static shell: what the original paints before its script runs (register #5, 80a). React replaces it on its first render with the same markup. display:contents keeps #arch and #worktrees sizing against body (#76). -->
+<div id="root" style="display:contents">
+<header class="top">
+  <span class="brand">AGENT-KIT</span>
+  <nav class="tabs" role="tablist" aria-label="Screens">
+    <button class="tab" role="tab" id="tab-arch" data-tab="arch">Architecture Canvas</button>
+    <button class="tab" role="tab" id="tab-worktrees" data-tab="worktrees">Worktrees</button>
+  </nav>
+  <span class="grow"></span>
+  <select id="projectSel" aria-label="Project" hidden></select>
+  <span class="livepill" id="live"><span class="dot" id="livedot"></span><span id="livetext">STATIC</span></span>
+  <button id="refresh">Refresh</button>
+</header>
+
+<div id="arch" hidden>
+  <aside class="side" aria-label="Views">
+    <div class="cap" style="margin-bottom:8px">Views</div>
+    <div id="views"></div>
+    <h3 class="cap">Legend</h3>
+    <div class="lg"><span class="sw run"></span>Running: lane events in the last 2 min</div>
+    <div class="lg"><span class="sw next"></span>Next up: a lane's next stage</div>
+    <div class="lg"><span class="sw bad"></span>Violation or failing check</div>
+    <div class="lg"><span class="sw warn"></span>Warning or modified in git</div>
+    <div class="lg"><span class="sw miss"></span>Not installed in this project</div>
+    <h3 class="cap">Project</h3>
+    <div class="proj" id="projcard"></div>
+  </aside>
+  <section class="stagearea">
+    <div class="sh"><h2 id="vtitle"></h2><p id="vsub"></p></div>
+    <div class="vp" id="view"></div>
+  </section>
+  <aside class="insp" id="inspector" aria-label="Inspector"></aside>
+</div>
+
+<div id="worktrees" hidden><main id="main"><div class="empty">Loading status…</div></main></div>
+</div>
+<!-- The model is loaded at runtime, as the original does (register #4, #75): a classic script marked vite-ignore (Vite removes the attribute and leaves the script untouched). A failure gives null, which the app reads as "no model" (#64). -->
+<script vite-ignore>window.__kitModel = import('./model.js').catch(() => null);</script>
+<script type="module" src="/src/main.tsx"></script>
+</body>
+</html>

@@ -2,3 +2,9 @@ planted-faults/fixtures/
 node_modules/
 
 kit/eval/results/
+dashboard-app/node_modules/
+dashboard-app/parity/.data/
+dashboard-app/parity/results/
+dashboard-app/parity/.data-int/
+dashboard-app/parity/baseline/
+dashboard-app/dist/
