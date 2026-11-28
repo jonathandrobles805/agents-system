@@ -5,7 +5,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { test, expect } from '@playwright/test';
-import { serve } from './serve.js';
+import { serve, FIXTURE } from './serve.js';
 import { open } from './helpers.js';
 
 const KIT = path.resolve(path.dirname(new URL(import.meta.url).pathname), '..', '..', 'kit');
@@ -74,4 +74,68 @@ test('3f: cards are focusable; Enter opens the drawer for that card', async ({ p
   await expect(c).toBeFocused();
   await page.keyboard.press('Enter');
   await expect(page.locator('.drawer')).toHaveAttribute('data-lane', 'search-index');
+});
+
+// ---------------------------------------------------------------------------------------------------- 3g the drawer
+const openDrawer = async (page, slug) => { await card(page, slug).click(); await expect(page.locator('.drawer')).toHaveAttribute('data-lane', slug); };
+
+test('3g: the drawer header: slug, stage, round, cost, elapsed, PR link', async ({ page }) => {
+  await open(page, await url('rounds'), '#/board', { width: 1600 });
+  await openDrawer(page, 'webhooks');
+  const h = page.locator('.drawer .dhead');
+  await expect(h.locator('.dslug')).toHaveText('webhooks');
+  await expect(h.locator('.dstage')).toHaveText('parked');
+  await expect(h.locator('.dround')).toHaveText('round 3 of 3');
+  await expect(h.locator('.dcost')).toHaveText('cost hidden');
+  await expect(h.locator('.delapsed')).toHaveText(/^\d+\.\dh$/);
+});
+
+test('3g: files grouped Lane / Round N, a verdict dot each; Summary first, then the full file; no Summary is said', async ({ page }) => {
+  await open(page, await url('live2'), '#/board', { width: 1600 });
+  await openDrawer(page, 'audit-log');
+  await expect(page.locator('.drawer .dgroup-h')).toHaveText(['Lane', 'Round 1']);
+  const lane = page.locator('.drawer .dgroup[data-group="Lane"] .dfile');
+  await expect(lane).toHaveText([/docs\/specs\/audit-log\.md/, /docs\/specs\/audit-log\.progress\.md/]);
+  await expect(page.locator('.drawer .dgroup[data-group="Round 1"] .dfile')).toHaveText([/audit-log\.review\.md/]);
+  for (const f of await page.locator('.drawer .dfile').all()) await expect(f.locator('.vdot')).toHaveCount(1);
+  // the spec has a Summary: it is shown first, alone, until "Open full file"
+  await page.locator('.drawer .dfile', { hasText: 'docs/specs/audit-log.md' }).click();
+  const view = page.locator('.drawer .dview');
+  await expect(view.locator('h2').first()).toHaveText('Summary');
+  await expect(view).not.toContainText('Done-criteria');
+  await view.getByRole('button', { name: 'Open full file' }).click();
+  await expect(view).toContainText('Done-criteria');
+  // a progress file from before the Summary section: said so, and the whole file is shown
+  await page.locator('.drawer .dfile', { hasText: 'audit-log.progress.md' }).click();
+  await expect(view.locator('.dnosum')).toHaveText('This file has no ## Summary.');
+  await expect(view).toContainText('Done-criteria');
+});
+
+test('3g: Markdown is rendered without any raw HTML from the file', async ({ page }) => {
+  const prog = path.join(FIXTURE.worktrees.wtSearch, 'docs', 'specs', 'search-index.progress.md');
+  const before = fs.readFileSync(prog);
+  fs.writeFileSync(prog, '# Progress\n\n## Summary\n\n<img src=x onerror="window.__xss=1"> **bold** and `<script>window.__xss=2</script>`\n\n<b>raw</b>\n');
+  try {
+    await open(page, await url('rounds'), '#/board', { width: 1600 });
+    await openDrawer(page, 'search-index');
+    await page.locator('.drawer .dfile', { hasText: 'search-index.progress.md' }).click();
+    const view = page.locator('.drawer .dview');
+    await expect(view).toContainText('<img src=x onerror="window.__xss=1">');
+    await expect(view).toContainText('<b>raw</b>');
+    await expect(view.locator('strong')).toHaveText('bold');
+    await expect(view.locator('img, script, b')).toHaveCount(0);
+    expect(await page.evaluate(() => window.__xss)).toBeUndefined();
+  } finally {
+    fs.writeFileSync(prog, before);
+  }
+});
+
+test('3g: Escape and the scrim close the drawer', async ({ page }) => {
+  await open(page, await url('rounds'), '#/board', { width: 1600 });
+  await openDrawer(page, 'search-index');
+  await page.keyboard.press('Escape');
+  await expect(page.locator('.drawer')).toHaveCount(0);
+  await openDrawer(page, 'search-index');
+  await page.locator('.scrim').click({ position: { x: 20, y: 20 } });
+  await expect(page.locator('.drawer')).toHaveCount(0);
 });
