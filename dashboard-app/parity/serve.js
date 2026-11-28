@@ -8,6 +8,7 @@
 //            'live1'    server.js --repo node-api
 //            'livedup'  server.js --repo node-api --repo repos-dup/node-api (same project name twice, #63)
 //            'rounds'   server.js --repo repos-rounds/rounds-api (review rounds and a parked lane, #126)
+//            'board'    server.js --repo repos-board/board-api (the Board's cases, Step 10; build-fixtures.js)
 //            'pages'    a static server over index.html + status.json, no model.js (the Pages job, #7, #43, #64)
 //            'empty'    a static server over index.html alone (#36)
 import fs from 'node:fs';
@@ -76,7 +77,7 @@ export async function serve(target, scenario) {
     if (scenario === 'pages') fs.copyFileSync(path.join(DATA, 'pages', 'status.json'), path.join(dir, 'status.json'));
     return { ...(await staticServer(dir, log)), log };
   }
-  const repos = { live2: [FIXTURE.repos.nodeApi, FIXTURE.repos.pySvc], live1: [FIXTURE.repos.nodeApi], livedup: [FIXTURE.repos.nodeApi, FIXTURE.repos.dup], rounds: [FIXTURE.repos.rounds] }[scenario];
+  const repos = { live2: [FIXTURE.repos.nodeApi, FIXTURE.repos.pySvc], live1: [FIXTURE.repos.nodeApi], livedup: [FIXTURE.repos.nodeApi, FIXTURE.repos.dup], rounds: [FIXTURE.repos.rounds], board: [FIXTURE.repos.board] }[scenario];
   if (!repos) throw new Error(`unknown scenario ${scenario}`);
   const port = await freePort();
   const child = spawn(process.execPath, ['--import', path.join(HERE, 'server-clock.js'), path.join(kit, 'dashboard', 'server.js'), ...repos.flatMap((r) => ['--repo', r]), '--port', String(port), '--no-open'], {

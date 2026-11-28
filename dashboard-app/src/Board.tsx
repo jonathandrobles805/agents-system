@@ -53,7 +53,7 @@ export function running(feed: KitEvent[], slug: string): { id: string; type: str
 }
 
 /**
- * The review reports of a round, one chip each. Today a lane has at most one report, for its current round
+ * The review reports of a round, one bchip each. Today a lane has at most one report, for its current round
  * (/api/status rounds_detail); reports added later reach the board through this one function.
  */
 export function reviewReports(r: { review: { verdict: string | null } | null }): { name: string; verdict: string | null }[] {
@@ -77,7 +77,7 @@ function Card({ l, run, onOpen }: { l: Lane; run: { id: string; type: string }[]
   const cost = costText(l);
   const key = (e: KeyboardEvent) => { if (e.key === 'Enter') { e.preventDefault(); onOpen(); } };
   return (
-    <div className="bcard" data-lane={l.slug} tabIndex={0} role="button" aria-label={`${l.slug}: open its files`} onClick={onOpen} onKeyDown={key}>
+    <div className="bcard" data-lane={l.slug} tabIndex={0} role="button" onClick={onOpen} onKeyDown={key}>
       <div className="bline">
         {run.length ? <Fact src="lane" cls="brun"><span className="bpulse" aria-hidden="true"></span>{run.map((r) => `${r.type} ${r.id.slice(0, 6)}`).join(', ')}</Fact> : null}
         <Fact src="host" cls="bslug">{l.slug}</Fact>
@@ -88,15 +88,17 @@ function Card({ l, run, onOpen }: { l: Lane; run: { id: string; type: string }[]
       {(l.rounds_detail ?? []).map((r) => (
         <div className="bround" key={r.round}>
           <span className="bfact" data-src="host">{`Round ${r.round}`}</span>
-          {r.gates.length ? r.gates.map((g, i) => <Fact src="host" cls={`chip ${tone(g.verdict)}`} key={`g${i}`} title={`gate ${g.verdict ?? '—'} on ${(g.commit ?? '').slice(0, 7)}`}>{`gate ${g.verdict ?? '—'}`}</Fact>) : <Fact src="host" cls="chip neutral">no gate</Fact>}
-          {reviewReports(r).map((v) => <Fact src="host" cls={`chip ${tone(v.verdict)}`} key={v.name}>{`${v.name} ${v.verdict ?? '—'}`}</Fact>)}
+          {r.gates.length ? r.gates.map((g, i) => <Fact src="host" cls={`bchip ${tone(g.verdict)}`} key={`g${i}`} title={`gate ${g.verdict ?? '—'} on ${(g.commit ?? '').slice(0, 7)}`}>{`gate ${g.verdict ?? '—'}`}</Fact>) : <Fact src="host" cls="bchip neutral">no gate</Fact>}
+          {/* the latest verdict is for an older commit than the lane's HEAD (lane.js gateState) */}
+          {l.gate?.state === 'stale' && r.round === l.rounds_detail!.length ? <Fact src="host" cls="bchip you-p" title={`the gate's verdict is for ${(l.gate.commit ?? '').slice(0, 7)}, not the lane's HEAD`}>gate stale</Fact> : null}
+          {reviewReports(r).map((v) => <Fact src="host" cls={`bchip ${tone(v.verdict)}`} key={v.name}>{`${v.name} ${v.verdict ?? '—'}`}</Fact>)}
         </div>
       ))}
       <div className="bline bmeta">
         {l.risk ? <Fact src="host" cls="brisk">{l.risk}</Fact> : null}
         {cost ? <Fact src="host" cls="bcost">{cost}</Fact> : null}
         {l.elapsed_hours == null ? null : <Fact src="host" cls="belapsed">{`${l.elapsed_hours.toFixed(1)}h`}</Fact>}
-        {l.ci ? <Fact src="host" cls={`bci chip ${tone(l.ci.state)}`}>{`CI ${l.ci.state}`}</Fact> : null}
+        {l.ci ? <Fact src="host" cls={`bci bchip ${tone(l.ci.state)}`}>{`CI ${l.ci.state}`}</Fact> : null}
       </div>
     </div>
   );

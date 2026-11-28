@@ -241,6 +241,47 @@ The +2 are React's own listeners on the newly mounted `#q` input and `#kindSel` 
 - `npm run architecture:check`: 0 errors and 1 warning on both (`permission_probe.js` unreferenced). The manifest did not change.
 - App: `tsc` clean, `eslint --max-warnings 0` clean.
 
+### Board tab (hardening plan Step 10), 2026-11-28
+The page gains a third tab, **Board**, and its drawer. The reference is now `main`'s React page at dfe4680 (`PARITY_KIT_COMMIT=dfe4680`): since #115 the original is no longer the commit before `dashboard-app/` was added. The baseline was recaptured from it (836 files).
+
+**Harness.**
+- Playwright ignores the `.data*` folders: since #115 the kit checkouts in them contain `dashboard-app/parity`, and their spec files ran too.
+- `serve.js` has a `work` target (this checkout's own server and built page) and two scenarios, `rounds` and `board`. The Board needs routes and status fields that the fixed kit commit does not have, so its tests run on the checkout's own server, not on the parity targets.
+- `build-fixtures.js` adds `board-api`, built with the kit's own scripts. Its lanes cover:
+  - an agent running (hook events with `agent_id`, a start and no stop);
+  - a gate PASS;
+  - a stale gate (a commit after the PASS);
+  - a FAIL round then a PASS round (`lane.js gate` on a committed FAIL file, then without it);
+  - a parked lane;
+  - a lane that needs the owner (an unapproved spec);
+  - cost hidden;
+  - lanes with no events.
+- Built with `PARITY_KIT_COMMIT=HEAD node parity/build-fixtures.js parity/.data-board`.
+
+**Board tests.**
+- `parity/board.spec.js` (9) covers columns, agents and models, the banner, cards, the header, keyboard, and the drawer (grouping, Summary first, no raw HTML, Escape and the scrim).
+- `parity/board-cases.spec.js` (6) covers each fixture case, axe, and screenshots at 1600 and 900 px (`parity/screens/`).
+- axe:
+  - The Board shows only the page's own `page-has-heading-one` (every screen has it; `a11y-original.json`).
+  - The drawer shows none.
+  - Two violations axe found were fixed: a card's `aria-label` did not contain its visible text (label-content-name-mismatch ×6), and `role="dialog"` was on an `<aside>` (aria-allowed-role).
+
+**Parity of the existing views (`npm run parity:all`, React build against the dfe4680 baseline).**
+- Captures: 40 tests. Interactions: 25/25 pass.
+
+| Kind | Differing | Cause |
+|---|---|---|
+| dom | 170/170 | the new tab button (`#tab-board`), and the drawer's second `<style>` element in `<head>` |
+| text | 170/170 | the button's word "Board" |
+| png | 170/170 | the top bar (y < 48) in 169 files; `insp-history@375` below it too |
+| styles | 30/155 | the rects of the top-bar items right of the tabs (`#projectSel`, `.livepill`, `.dot`, `#refresh`), moved by the button |
+| log | 1/170 | `focus-node@1440`, a baseline flake (below) |
+
+- **`insp-history@375`:** at 375 px the top bar is wider than the window (known limit #81), so the button changes how far the page is scrolled sideways to show the inspector. Its layout, text and DOM are otherwise identical.
+- **`focus-node@1440`, a flake in the baseline, not a change:** the baseline was captured over 19 minutes, and during this state the browser logged `ERR_NETWORK_IO_SUSPENDED` and showed RECONNECTING. The React capture shows LIVE. The same state's `.livepill` width is the 31st style difference above.
+- **A regression the first run caught:** the Board's chip class was named `.chip`, the same as the Agents view's, which changed those chips' height (19 → 15 px) and width. It is now `.bchip`. No other class the Board adds exists in the page.
+- **check-build:** all 5 PASS. Lines 1-181 are identical to the reference at dfe4680: the Board's CSS is a second `<style>` after that block.
+
 ### Still unverified
 - **Lighthouse:** only axe has run.
 - **Browsers:** Safari and Firefox not run (Chromium only).

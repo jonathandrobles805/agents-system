@@ -196,6 +196,55 @@ failRound(rounds, 'webhooks');
 failRound(rounds, 'webhooks');
 if (!/review → build refused: the lane is parked/.test(advance(rounds, 'webhooks', 'build', 2).stderr)) throw new Error('webhooks did not park');
 
+// board-api: the Board's cases (hardening plan Step 10; scenario 'board', served by this checkout's own kit), all through
+// the kit's scripts: an agent running (hook events with agent_id, a start and no stop), a gate PASS, a stale gate (a
+// commit after the PASS), a FAIL round then a PASS round (lane.js gate on a committed FAIL file, then without it), a
+// parked lane, a lane that needs the owner (an unapproved spec), cost hidden (telemetry.show_cost is off), and lanes with
+// no events. Its checks are `test ! -e FAIL`, run with no sandbox runtime and the owner's waiver for the high-risk
+// fixture spec, as kit/scripts/tests/gate.test.js runs them.
+const board = path.join(OUT, 'repos-board', 'board-api');
+{
+  execFileSync(process.execPath, [path.join(REPO, 'planted-faults', 'make_fixtures.js'), path.join(OUT, 'repos-board')], { stdio: 'ignore' });
+  fs.renameSync(path.join(OUT, 'repos-board', 'node-api'), board);
+  fs.rmSync(path.join(OUT, 'repos-board', 'python-service'), { recursive: true, force: true });
+  const runtime = process.env.KIT_SANDBOX_RUNTIME;
+  process.env.KIT_SANDBOX_RUNTIME = 'none';
+  const checks = Object.fromEntries(Object.keys(CI_GATE_OFF).map((n) => [n, 'test ! -e FAIL']));
+  const slugs = [['Running agent', 'running'], ['Gate passed', 'gated'], ['Stale gate', 'stale'], ['Two rounds', 'rounds'], ['Parked lane', 'parked'], ['Billing', 'billing']];
+  c = setup(board, slugs, { wip: 6, commands: checks });
+  const kj = path.join(board, '.claude', 'kit.json');
+  const kd = JSON.parse(fs.readFileSync(kj, 'utf8'));
+  kd.sandbox = { ...(kd.sandbox ?? {}), high_risk_waiver: { by: 'parity fixture', reason: 'the fixture runs its gate checks without a sandbox runtime' } };
+  fs.writeFileSync(kj, JSON.stringify(kd, null, 2) + '\n');
+  c = commitAll(board, 'kit.json: the waiver');
+  for (const [feature, slug] of slugs) writeSpec(board, slug, feature, c, { approved: slug !== 'billing' });
+  c = commitAll(board, 'specs');
+  for (const [, slug] of slugs) if (slug !== 'billing') approveSpec(board, slug, { commit: c });
+  const wt = Object.fromEntries(slugs.filter(([, sl]) => sl !== 'billing').map(([, sl]) => [sl, startLane(board, sl)]));
+  // goal files, as /zi-start writes them (see GOAL above): without one, next-step answers 'start' for every lane
+  for (const [feature, slug] of slugs) write(board, `docs/goals/${slug}.md`, GOAL.replaceAll('refund-route', slug).replaceAll('Refund route', feature));
+  // an agent running: the event-log hook fed a subagent's start, then one of its tool calls; no stop
+  const sub = { agent_id: 'a1b2c3d4e5f60718', agent_type: 'implementer' };
+  hook('hook_event_log.js', { hook_event_name: 'SubagentStart', cwd: wt.running, ...sub });
+  hook('hook_event_log.js', { hook_event_name: 'PostToolUse', tool_name: 'Read', tool_input: { file_path: path.join(wt.running, 'src/domain/payment.ts') }, tool_response: { content: 'export' }, cwd: wt.running, ...sub });
+  gate(board, 'gated');
+  gate(board, 'stale');
+  fs.writeFileSync(path.join(wt.stale, 'NOTES.md'), 'a commit after the gate\n');
+  commitAll(wt.stale, 'after the gate');
+  fs.writeFileSync(path.join(wt.rounds, 'FAIL'), 'the checks fail while this file exists\n');
+  commitAll(wt.rounds, 'a failing change');
+  const failed = run('lane.js', ['gate', 'rounds', '--repo', board], { ok: false });
+  if (failed.status !== 1) throw new Error(`rounds: the first gate should FAIL: ${failed.status}\n${failed.stdout}`);
+  fs.rmSync(path.join(wt.rounds, 'FAIL'));
+  commitAll(wt.rounds, 'fixed');
+  gate(board, 'rounds');
+  toReview(board, wt.parked, 'parked');
+  failRound(board, 'parked');
+  failRound(board, 'parked');
+  if (!/review → build refused: the lane is parked/.test(advance(board, 'parked', 'build', 2).stderr)) throw new Error('parked did not park');
+  if (runtime === undefined) delete process.env.KIT_SANDBOX_RUNTIME; else process.env.KIT_SANDBOX_RUNTIME = runtime;
+}
+
 // a second checkout of node-api for the duplicate-name scenario (register #63)
 const dup = path.join(OUT, 'repos-dup', 'node-api');
 fs.mkdirSync(path.dirname(dup), { recursive: true });
@@ -219,6 +268,6 @@ if (drift) throw new Error(`kit/ differs between this checkout and ${kitCommit.s
 // a clean checkout of the kit at that commit for the original build; the React build gets its own (serve.js)
 execFileSync('git', ['worktree', 'add', '-q', '--detach', path.join(OUT, 'kit-original'), kitCommit], { cwd: REPO });
 const heads = Object.fromEntries([nodeApi, pySvc, dup, rounds, wtRefund, wtExport, wtAudit, wtSearch, wtHooks].map((r) => [r, git(['rev-parse', 'HEAD'], r).trim()]));
-const record = { kit_commit: kitCommit, built_at: new Date().toISOString(), guard_edit_exit: blocked.status, repos: { nodeApi, pySvc, dup, rounds }, worktrees: { wtRefund, wtExport, wtAudit, wtSearch, wtHooks }, heads };
+const record = { kit_commit: kitCommit, built_at: new Date().toISOString(), guard_edit_exit: blocked.status, repos: { nodeApi, pySvc, dup, rounds, board }, worktrees: { wtRefund, wtExport, wtAudit, wtSearch, wtHooks }, heads };
 fs.writeFileSync(path.join(OUT, 'fixture.json'), JSON.stringify(record, null, 2) + '\n');
 process.stdout.write(JSON.stringify(record, null, 2) + '\n');

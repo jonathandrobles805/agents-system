@@ -54,10 +54,10 @@ export function Drawer({ s, l, stage }: { s: Snap; l: Lane; stage: string | null
   return (
     <>
       <div className="scrim" onClick={() => boardOpen(null)}></div>
-      <aside className="drawer" data-lane={l.slug} role="dialog" aria-modal="true" aria-label={`${l.slug} files`}>
+      <div className="drawer" data-lane={l.slug} role="dialog" aria-modal="true" aria-label={`${l.slug} files`}>
         <div className="dhead">
           <b className="dslug">{l.slug}</b>
-          <span className="dstage chip neutral">{stage ?? 'unknown stage'}</span>
+          <span className="dstage bchip neutral">{stage ?? 'unknown stage'}</span>
           {l.rounds ? <span className="dround">{`round ${l.rounds.round} of ${l.rounds.limit}`}</span> : null}
           {cost ? <span className="dcost">{cost}</span> : null}
           {l.elapsed_hours == null ? null : <span className="delapsed">{`${l.elapsed_hours.toFixed(1)}h`}</span>}
@@ -80,7 +80,7 @@ export function Drawer({ s, l, stage }: { s: Snap; l: Lane; stage: string | null
           </nav>
           <div className="dpane">{open ? (open.text === null ? <div className="muted">Reading…</div> : <FileView key={open.path} text={open.text} />) : <div className="muted">Pick a file.</div>}</div>
         </div>
-      </aside>
+      </div>
     </>
   );
 }
