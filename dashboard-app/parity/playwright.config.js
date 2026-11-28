@@ -6,6 +6,9 @@ const TARGET = process.env.PARITY_TARGET ?? 'original';
 export default defineConfig({
   testDir: '.',
   testMatch: /.*\.spec\.js/,
+  // the fixture folders hold checkouts of the kit (serve.js); since the dashboard source is in the kit (#115) they
+  // contain dashboard-app/parity too, whose spec files are not this run's
+  testIgnore: /\/\.data[^/]*\//,
   // one worker: some interaction tests append to the fixture's event logs (and restore them); captures must not see that
   workers: 1,
   fullyParallel: false,
