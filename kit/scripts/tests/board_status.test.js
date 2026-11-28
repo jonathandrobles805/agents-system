@@ -2,12 +2,16 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { git, commitAll, gatePass } from './fixtures.js';
 import { runScript, setEnv } from './helpers.js';
 import { project, review } from './testdata.js';
 import { CI_COMMANDS } from '../bootstrap.js';
+import * as CI from '../lane_ci.js';
+import * as KS from '../kit_status.js';
 
+process.env.KIT_STATUS_NO_GH = '1'; // no test here reads GitHub unless it says so (3c)
 const ENV = { ...process.env, KIT_STATUS_NO_GH: '1' };
 const SLUG = 'refund-route';
 
@@ -117,4 +121,92 @@ test('3b: an old store record without gate_history still reads: its rounds have 
   assert.equal(readStore(root).gate_history, undefined);
   assert.deepEqual(roundsOf(root), [{ round: 1, gates: [] }]);
   assert.equal(laneOf(root).gate.state, 'pass');
+});
+
+// ---------------------------------------------------------------------------------------------------- 3c
+// 3c (G5): the CI state of a lane's PR, from the kit's own GitHub reading (pr_gate.js), never on the request path:
+// ciState answers from a cache at once; with refresh on (the dashboard server) a stale entry starts one background
+// read, cached per PR head for 30 s; KIT_STATUS_NO_GH and any error give 'unknown'.
+const CHECKS = ['tests', 'format', 'integration', 'typecheck', 'lint', 'boundaries', 'kit-checks', 'secrets', 'audit', 'mutation-gate'];
+const PR_URL = 'https://github.com/o/proj/pull/4';
+
+/** A bootstrapped project (its workflow names the required checks) with a started lane whose ROADMAP row has a PR. */
+function prLane(t) {
+  const { root } = started(t);
+  runScript('bootstrap.js', ['--repo', root]);
+  const rm = path.join(root, 'ROADMAP.md');
+  const text = fs.readFileSync(rm, 'utf8');
+  const row = text.split('\n').find((l) => l.includes(`| ${SLUG} |`));
+  fs.writeFileSync(rm, text.replace(row, row.replace(/\| [^|]* \|$/, `| ${PR_URL} |`)));
+  return root;
+}
+
+/** A fake gh on PATH: `pr view` gives the head, check-runs gives `runs`; `fail` makes every call exit 1. Logs calls. */
+function fakeGh(t, { runs = [], fail = false } = {}) {
+  const dir = fs.mkdtempSync(path.join(fs.realpathSync(os.tmpdir()), 'fake-gh-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const log = path.join(dir, 'calls.log');
+  fs.writeFileSync(path.join(dir, 'gh'), `#!/usr/bin/env node
+const fs = require('fs');
+const j = process.argv.slice(2).join(' ');
+fs.appendFileSync(${JSON.stringify(log)}, j + '\\n');
+if (${fail}) { process.stderr.write('gh: HTTP 502'); process.exit(1); }
+if (j.startsWith('pr view')) { process.stdout.write(JSON.stringify({ number: 4, url: ${JSON.stringify(PR_URL)}, state: 'OPEN', isDraft: false, headRefOid: '${'a'.repeat(40)}', headRefName: 'wt/${SLUG}', baseRefName: 'main', title: 't' })); process.exit(0); }
+if (j.includes('/check-runs')) { process.stdout.write(${JSON.stringify(runs.map((r) => JSON.stringify(r)).join('\n'))} + '\\n'); process.exit(0); }
+process.exit(9);
+`, { mode: 0o755 });
+  setEnv(t, 'PATH', `${dir}${path.delimiter}${process.env.PATH}`);
+  return { calls: () => (fs.existsSync(log) ? fs.readFileSync(log, 'utf8').split('\n').filter(Boolean) : []) };
+}
+const runsAll = (conclusion, status = 'completed') => CHECKS.map((name, i) => ({ id: 100 + i, name, status, conclusion: status === 'completed' ? conclusion : null }));
+
+/** Turn the server's refresh on and wait for the next answer to land. */
+async function refreshed(root, t) {
+  let done;
+  const landed = new Promise((r) => { done = r; });
+  CI.enableRefresh(done);
+  t.after(() => CI.disableRefresh());
+  const t0 = Date.now();
+  const first = CI.ciState(root, PR_URL);
+  assert.ok(Date.now() - t0 < 200, 'ciState answers at once, without waiting on GitHub');
+  assert.equal(first.state, 'unknown', 'nothing cached yet');
+  await landed;
+  return CI.ciState(root, PR_URL).state;
+}
+
+test('3c: KIT_STATUS_NO_GH: a lane with a PR has ci unknown; a lane without one has no ci; gh is never called', (t) => {
+  const g = fakeGh(t, { runs: runsAll('success') });
+  const root = prLane(t);
+  const s = status(root);
+  assert.deepEqual(s.lanes.find((l) => l.slug === SLUG).ci, { state: 'unknown' });
+  assert.equal(s.lanes.find((l) => l.slug === 'other').ci, null);
+  assert.deepEqual(g.calls(), []);
+});
+
+test('3c: a stubbed GitHub reply: pass, fail, pending; the answer is cached per PR head for 30 s', async (t) => {
+  delete process.env.KIT_STATUS_NO_GH;
+  t.after(() => { process.env.KIT_STATUS_NO_GH = '1'; });
+  const root = prLane(t);
+  let g = fakeGh(t, { runs: runsAll('success') });
+  assert.equal(await refreshed(root, t), 'pass');
+  const n = g.calls().length;
+  assert.equal(CI.ciState(root, PR_URL).state, 'pass');
+  assert.equal(CI.ciState(root, PR_URL).head, 'a'.repeat(40));
+  assert.equal(g.calls().length, n, 'a second read within 30 s does not call gh');
+  // the lane as /api/status sends it, from the same cache
+  assert.deepEqual(KS.projectStatus(root).lanes.find((l) => l.slug === SLUG).ci, { state: 'pass' });
+  CI.disableRefresh();
+  g = fakeGh(t, { runs: runsAll('failure') });
+  assert.equal(await refreshed(root, t), 'fail');
+  CI.disableRefresh();
+  g = fakeGh(t, { runs: runsAll(null, 'in_progress') });
+  assert.equal(await refreshed(root, t), 'pending');
+});
+
+test('3c: any error reading GitHub gives unknown', async (t) => {
+  delete process.env.KIT_STATUS_NO_GH;
+  t.after(() => { process.env.KIT_STATUS_NO_GH = '1'; });
+  const root = prLane(t);
+  fakeGh(t, { fail: true });
+  assert.equal(await refreshed(root, t), 'unknown');
 });

@@ -25,6 +25,7 @@ import { fileURLToPath } from 'node:url';
 import { ArgumentParser } from '../scripts/args.js';
 import * as K from '../scripts/kitlib.js';
 import * as KS from '../scripts/kit_status.js';
+import * as CI from '../scripts/lane_ci.js';
 import * as L from '../scripts/lane.js';
 import { buildManifest } from '../scripts/arch_manifest.js';
 import { fileHistory, gitInfo, projectOverlay } from '../scripts/arch_live.js';
@@ -585,6 +586,11 @@ export function makeHandler(state) {
  */
 export function serve(repos, port, openBrowser = false, interval = 1.0) {
   const state = new State(repos);
+  // CI on each lane's PR is read in the background (lane_ci.js); a changed answer is pushed like any status change
+  CI.enableRefresh(() => {
+    state.recompute();
+    state.broadcast({ type: 'status', data: state.status });
+  });
   state.recompute();
   state.fingerprint = fingerprint(watchedFiles(repos));
   const stopWatcher = startWatcher(state, interval);

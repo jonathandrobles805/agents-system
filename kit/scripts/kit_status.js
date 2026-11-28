@@ -21,6 +21,7 @@ import { spawnSync } from 'node:child_process';
 import { ArgumentParser } from './args.js';
 import * as K from './kitlib.js';
 import * as L from './lane.js';
+import * as CI from './lane_ci.js';
 import * as M from './metrics.js';
 import * as V from './validate_docs.js';
 
@@ -224,6 +225,8 @@ export function laneState(root, row, kit) {
     last_check: lastCheck ? { kind: kget(lastCheck, 'event', null), result: kget(lastCheck, 'result', null), summary: kget(lastCheck, 'summary', null), ts: kget(lastCheck, 'ts', null) } : null,
     pr: !['—', '-', ''].includes(row.pr) ? row.pr : null,
     gate, rounds_detail: roundsDetail,
+    // CI on the lane's PR, from a cache that is never read on this path (lane_ci.js); null without a PR
+    ci: !['—', '-', ''].includes(row.pr) ? { state: CI.ciState(root, row.pr).state } : null,
   };
 }
 
