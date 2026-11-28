@@ -322,10 +322,13 @@ Steps 1–9 of the skills work are done on branch `commands-to-skills`: 23 `zi-`
 
 ### Step 10. Dashboard (0016 step 8, D.2–D.3)
 
-- [ ] A Runs view: a card per lane with the round, the gate verdict and commit, a chip per reviewer, CI state, time and cost (or a stated "no telemetry").
-- [ ] A drawer that opens each file at its `## Summary`; add `## Summary` to the progress, review, gate and escalation templates, and make `validate_docs` require it.
-- [ ] A live strip: add `agent_id` to `hook_event_log`.
+- [x] A Runs view: a card per lane with the round, the gate verdict and commit, a chip per reviewer, CI state, time and cost (or a stated "no telemetry"). Code in PR (feat/dashboard-board): the Board tab. Columns by stage group with each stage's agents and models from `kit/workflows/*.json` and `kit/agents/*.md`, and a banner for any stage no column holds. One card per lane: the agent running (from its events, marked as reported by the lane), "your call", the PR, one row per round with its gate verdicts, each chip's commit in its tooltip (`gate_history`, new and additive in the store, kept by `lane.js gate`) and one chip per review report, risk, cost or "cost hidden"/"no telemetry", elapsed time and CI on the PR (`lane_ci.js`, read in the background, never on the request path). `/api/status` adds `gate`, `rounds_detail` and `ci`. The chip per reviewer shows today's single report; Step 9's reports reach it through one function (`reviewReports`).
+- [ ] A drawer that opens each file at its `## Summary`; add `## Summary` to the progress, review, gate and escalation templates, and make `validate_docs` require it. Progress, same PR: the drawer (files from a read-only allowlist, `/api/lane-files`, Summary first, Markdown with no raw HTML); `## Summary` in the progress and review templates and in the progress file `lane.js start` writes; `validate_docs` requires it in files dated from 2026-11-27, with older files exempt. **Not done:** there are no gate or escalation templates (the gate record is in the lane store, the escalation is a section of progress.md), so none was added; the owner decides what that half means.
+- [x] A live strip: add `agent_id` to `hook_event_log`. Code in PR #129 (every event line carries `agent_id` and `agent_type` when Claude Code sends them).
 - [ ] Read events from the work root, and the lane list from the store. Remove the old Worktrees view once Runs shows the same facts.
+    - [x] Events from the work root: PR #128 (the live feed reads both event files of a lane).
+    - [ ] The lane list from the store.
+    - [ ] Remove the old Worktrees view once Runs shows the same facts. Not yet: the Board does not show commits behind base, criteria green, blocked edits, test runs, the last check, the current step, the live event list, Open Claude, the Needs you list or the Health card.
 
 ### Step 11. Two field runs to re-prove the system (0016 Consequences)
 
