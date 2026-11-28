@@ -11,6 +11,8 @@
  *   GET  /api/events/<slug>?project=NAME   the lane's events.jsonl as JSON (last 500)
  *   GET  /api/architecture      the kit's component map (scripts/arch_manifest.js), git state, and one overlay per served project
  *   GET  /api/history?id=ID     the last commits that touched a component of the map
+ *   GET  /api/lane-files/<slug>?project=NAME             the lane's own files that exist: path, size, verdict
+ *   GET  /api/lane-file/<slug>?project=NAME&path=REL     one of them, read-only; any other path is refused (403)
  *   GET  /api/stream            Server-Sent Events: {"type":"status"} on any change, {"type":"architecture"} when the kit's files change, {"type":"event","lane":slug} per new event line
  *   POST /api/open/<slug>?project=NAME     open a terminal running `claude` in the lane worktree (localhost only)
  *
@@ -48,6 +50,8 @@ export const DOC = [
   '  GET  /api/events/<slug>?project=NAME   the lane\'s events.jsonl as JSON (last 500)',
   '  GET  /api/architecture      the kit\'s component map (scripts/arch_manifest.js), git state, and one overlay per served project',
   '  GET  /api/history?id=ID     the last commits that touched a component of the map',
+  '  GET  /api/lane-files/<slug>?project=NAME             the lane\'s own files that exist: path, size, verdict',
+  '  GET  /api/lane-file/<slug>?project=NAME&path=REL     one of them, read-only; any other path is refused (403)',
   '  GET  /api/stream            Server-Sent Events: {"type":"status"} on any change, {"type":"architecture"} when the kit\'s files change, {"type":"event","lane":slug} per new event line',
   '  POST /api/open/<slug>?project=NAME     open a terminal running `claude` in the lane worktree (localhost only)',
   '',
@@ -469,6 +473,41 @@ function isLocal(req) {
   return ['127.0.0.1', '::1'].includes(req.socket.remoteAddress);
 }
 
+/**
+ * The lane's own files the board's drawer may read (hardening plan Step 10), relative to `base` (the lane's worktree,
+ * else the project root), from the kit's path functions: the goal, the spec, the research files its spec names, and
+ * kitlib laneArtifacts (progress, review, events, checks; the decisions folder is not a lane's own). Nothing else.
+ */
+export function laneFileAllowlist(root, slug, base) {
+  const work = K.findLane(base)?.work ?? K.workRoot(root);
+  const spec = `${work}/${slug}.md`;
+  const research = String(L.specHeader(path.join(base, spec)).get('research') ?? '').split(',').map((s) => s.trim())
+    .filter((s) => /^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(s) && s.toLowerCase() !== 'none').map((s) => `docs/research/${s}.md`);
+  return [...new Set([`docs/goals/${slug}.md`, spec, ...research, ...K.laneArtifacts(work, slug, root).filter((p) => !p.includes('*'))])];
+}
+
+const OUTSIDE = Symbol('outside');
+
+/**
+ * The text of base/rel, read-only; null when there is no such file; OUTSIDE when its real path is not exactly
+ * base/rel (a symlink anywhere on the way, to outside the worktree or to another file in it).
+ */
+function readLaneFile(base, rel) {
+  const want = path.join(base, rel);
+  let real;
+  try {
+    real = fs.realpathSync(want);
+  } catch {
+    return null;
+  }
+  if (real !== path.join(fs.realpathSync(base), rel)) return OUTSIDE;
+  try {
+    return fs.statSync(real).isFile() ? fs.readFileSync(real, 'utf8') : null;
+  } catch {
+    return null;
+  }
+}
+
 async function doGet(state, req, res, u, q) {
   if (u.path === '/model.js') {
     const body = fs.readFileSync(MODEL);
@@ -495,6 +534,30 @@ async function doGet(state, req, res, u, q) {
     const root = lane && lane.worktree ? lane.worktree : proj.root;
     const [events] = tailEvents(path.join(root, 'docs', 'specs', `${slug}.events.jsonl`), 0);
     return sendJson(res, 200, events.slice(-500));
+  }
+  if (u.path.startsWith('/api/lane-files/') || u.path.startsWith('/api/lane-file/')) {
+    // a page on another site must not read a lane's files through the user's browser (step 0: the same rule as POST)
+    if (!originAllowed(req)) return sendJson(res, 403, { error: 'cross-site request refused: Origin is not this server' });
+    const slug = lastSegment(u.path);
+    const proj = state.project(firstParam(q, 'project'));
+    const lane = (proj?.lanes ?? []).find((l) => l.slug === slug);
+    if (!lane) return sendJson(res, 404, { error: 'lane not found' });
+    const base = lane.worktree || proj.root;
+    const allowed = laneFileAllowlist(proj.root, slug, base);
+    if (u.path.startsWith('/api/lane-files/')) {
+      const files = [];
+      for (const rel of allowed) {
+        const text = readLaneFile(base, rel);
+        if (typeof text === 'string') files.push({ path: rel, size: Buffer.byteLength(text, 'utf8'), verdict: KS.reviewVerdict(text) });
+      }
+      return sendJson(res, 200, files);
+    }
+    const rel = firstParam(q, 'path') ?? '';
+    if (!allowed.includes(rel)) return sendJson(res, 403, { error: 'not one of the lane\'s files' });
+    const text = readLaneFile(base, rel);
+    if (text === OUTSIDE) return sendJson(res, 403, { error: 'not one of the lane\'s files' });
+    if (text === null) return sendJson(res, 404, { error: 'no such file' });
+    return sendJson(res, 200, { path: rel, size: Buffer.byteLength(text, 'utf8'), text });
   }
   if (u.path === '/api/architecture') {
     return sendJson(res, 200, await architecture(state));

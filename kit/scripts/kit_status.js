@@ -144,6 +144,12 @@ export function progressInfo(prog) {
   return info;
 }
 
+/** A report's verdict, PASS or FAIL, from its "## Verdict" section; null without one. */
+export function reviewVerdict(text) {
+  const m = new RegExp(`(?<![^\\n])## Verdict${S}*\\n+${S}*(PASS|FAIL)`, 'u').exec(text);
+  return m ? m[1] : null;
+}
+
 export function reviewInfo(root, rep, laneHead) {
   const info = { exists: K.isFile(rep), valid: null, verdict: null, head_matches: null, fails: 0 };
   if (!K.isFile(rep)) return info;
@@ -151,8 +157,7 @@ export function reviewInfo(root, rep, laneHead) {
   v.run(rep, 'review');
   info.valid = v.v.length === 0;
   const text = readText(rep);
-  const m = new RegExp(`(?<![^\\n])## Verdict${S}*\\n+${S}*(PASS|FAIL)`, 'u').exec(text);
-  info.verdict = m ? m[1] : null;
+  info.verdict = reviewVerdict(text);
   info.fails = (text.match(new RegExp(`(?<![^\\n])\\|${S}*R\\p{Nd}+${S}*\\|[^|]*\\|${S}*FAIL${S}*\\|`, 'gu')) ?? []).length;
   const h = new RegExp(`(?<![^\\n])- Head:${S}*([0-9a-f]{7,40})`, 'u').exec(text);
   if (h && laneHead) info.head_matches = K.reviewHeadOk(root, h[1]);
