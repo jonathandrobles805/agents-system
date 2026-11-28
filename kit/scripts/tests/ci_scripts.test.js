@@ -170,7 +170,8 @@ test('review report on a pull_request run uses the PR head, not the synthetic me
     F.git(['merge', '-q', '--no-ff', '-m', 'synthetic merge', laneTip], root);
   };
   merge();
-  const env = (extra) => ({ ...process.env, GITHUB_HEAD_REF: 'wt/refund-route', PR_HEAD_SHA: '', ...extra });
+  // GITHUB_BASE_REF is cleared unless a case sets it: the kit's own CI runs on pull_request and sets it (#146)
+  const env = (extra) => ({ ...process.env, GITHUB_HEAD_REF: 'wt/refund-route', PR_HEAD_SHA: '', GITHUB_BASE_REF: '', ...extra });
   const run = (extra) => runScript('ci_review_report.js', ['--repo', root], { env: env(extra) });
   // Without the PR head the check compares against the merge commit and can never pass: the bug.
   let r = run({});
@@ -190,6 +191,12 @@ test('review report on a pull_request run uses the PR head, not the synthetic me
   F.git(['merge', '-q', '--no-ff', '-m', 'synthetic merge 2', sneaky], root);
   r = run({ PR_HEAD_SHA: sneaky });
   assert.ok(r.returncode === 1 && r.stderr.includes('the PR head is'), r.stderr);
+  // with the PR's base known (#146): the review covers a head whose lane change is the reviewed one, so the first
+  // synthetic merge (main merged with the reviewed tip) is covered, and the sneaky change still is not
+  r = run({ PR_HEAD_SHA: sneaky, GITHUB_BASE_REF: 'main' });
+  assert.ok(r.returncode === 1 && r.stderr.includes('the PR head is'), r.stderr);
+  r = run({ PR_HEAD_SHA: laneTip, GITHUB_BASE_REF: 'main' });
+  assert.equal(r.returncode, 0, r.stderr);
   // The generated workflow passes the PR head to the step.
   const wf = read(root, '.github', 'workflows', 'kit.yml');
   assert.match(wf, /- name: review-report\n(?:\s+#.*\n)?\s+env:\n\s+PR_HEAD_SHA: \$\{\{ github\.event\.pull_request\.head\.sha \}\}\n\s+run: node "\$KIT_DIR\/scripts\/ci_review_report\.js"/);
