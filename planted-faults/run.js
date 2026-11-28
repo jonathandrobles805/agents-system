@@ -18,6 +18,7 @@ import { fileURLToPath } from 'node:url';
 import { ArgumentParser } from '../kit/scripts/args.js';
 import * as K from '../kit/scripts/kitlib.js';
 import * as G from '../kit/scripts/pr_gate.js';
+import * as L from '../kit/scripts/lane.js';
 import * as F from '../kit/scripts/tests/fixtures.js';
 import { GOOD_RESEARCH, review as REVIEW, spec as SPEC } from '../kit/scripts/tests/testdata.js';
 
@@ -929,6 +930,7 @@ process.stderr.write('fake gh 61: past the sign-off'); process.exit(9);
     const forged61 = merge61(h61);
     // the human signs off; the merge goes on; then a later commit on the lane makes the sign-off stale
     const so61 = run('lane.js', ['signoff', 'refund-route', '--repo', r61, '--by', 'Jonathan Robles']);
+    F.gatePass(r61, 'refund-route'); // the gate passed that head too (Step 3); this fault is about the sign-off
     const signed61 = merge61(h61);
     writeP(path.join(wt61, 'src', 'api', 'routes.ts'), '// refund route, changed after the sign-off\n');
     const h61b = F.commitAll(wt61, 'after the sign-off');
@@ -1015,6 +1017,7 @@ process.stderr.write('fake gh 61: past the sign-off'); process.exit(9);
     run('lane.js', ['advance', 'refund-route', 'build', '--repo', r62]);
     const loops62 = [];
     for (let i = 0; i < 3; i++) {
+      F.gatePass(r62, 'refund-route'); // the gate passed each round's code (Step 3); this fault is about the review FAILs
       run('lane.js', ['stage', 'refund-route', 'review', '--repo', r62]);
       loops62.push(run('lane.js', ['stage', 'refund-route', 'build', '--repo', r62]));
     }
@@ -1059,6 +1062,143 @@ process.stderr.write('fake gh 61: past the sign-off'); process.exit(9);
     const main63 = hook('hook_guard_bash.js', { session_id: 'pf', cwd: root, hook_event_name: 'PreToolUse', tool_name: 'Bash', tool_input: { command: 'kit lane advance refund-route build' } });
     const caught63 = laneOk63 && outsideOk63 && agent63.returncode === 2 && main63.returncode === 0;
     record(63, 'a lane session may approve advance, start or a merge, or a session may merge or approve another way than kit lane merge', "the lane's per-run --settings (kit/hooks/settings.lane.json) deny the stage moves, gate, start and merges; the project's rules name each kit command, ask on kit lane merge and deny gh pr merge, approving reviews and their gh api forms (floor); guard-bash refuses those kit commands to a subagent (hardening plan Step 2)", caught63, `lane: ${laneMoves63.map((c) => `${c.split(' ').slice(0, 3).join(' ')} -> ${inLane63(c)}`).join(', ')} (--settings ${flag63 >= 0 ? 'passed' : 'missing'}); outside: ${Object.entries(outside63).map(([k, v]) => `${k} ${v}`).join(', ')}; subagent advance -> exit ${agent63.returncode}, main session -> exit ${main63.returncode}`);
+    // 64 the gate (hardening plan Step 3; 0016 E.1 Add 2; #56 S1.2, S1.4): a reviewer starts on a lane whose recorded
+    //    checks fail, are missing or "none" with no reason, or hang, or on a gate verdict for an older commit -> lane.js
+    //    gate re-runs the base's committed kit.json checks on the lane's HEAD, contained, stdin closed, with a time limit,
+    //    and advance build → review needs its PASS for that exact HEAD
+    const r64 = path.join(tmp, 'node-api-64');
+    F.nodeApi(r64);
+    run('bootstrap.js', ['--repo', r64]);
+    write(path.join(r64, 'ROADMAP.md'), read(path.join(r64, 'ROADMAP.md')).replaceAll('| TODO(bootstrap: ROADMAP.md — feature) | TODO(bootstrap: ROADMAP.md — slug) | M1 | queued | — | — | — |', '| Refund route | refund-route | M1 | queued | — | — | — |'));
+    const kj64 = path.join(r64, '.claude', 'kit.json');
+    const ci64 = ['test', 'coverage', 'format', 'integration', 'typecheck', 'lint', 'boundaries', 'audit'];
+    const cmds64 = (over) => {
+      const c = { ...JSON.parse(read(kj64)).commands };
+      delete c.lint_all;
+      for (const n of ci64) c[n] = 'true';
+      for (const [k, v] of Object.entries(over)) if (v === undefined) delete c[k]; else c[k] = v;
+      return c;
+    };
+    // the base records a hanging test, a failing lint, no typecheck and an audit turned off with no reason
+    write(kj64, K.jsonDumps({ ...JSON.parse(read(kj64)), local_only: true, gate_timeout_min: 0.02, commands: cmds64({ test: 'sleep 30', lint: 'exit 1', typecheck: undefined, audit: 'none' }) }));
+    const c64 = F.commitAll(r64, 'bootstrap');
+    write(path.join(r64, 'docs', 'specs', 'refund-route.md'), SPEC({ commit: c64.slice(0, 7) }));
+    F.commitAll(r64, 'spec');
+    F.approveSpec(r64, 'refund-route');
+    const wt64 = JSON.parse(run('lane.js', ['start', 'refund-route', '--repo', r64]).stdout || '{}').worktree;
+    run('lane.js', ['advance', 'refund-route', 'test', '--repo', r64]);
+    write(path.join(wt64, '.claude', 'session', 'refund-route.log'), '=== 2026-11-11T10:00:00 test: npx vitest run -> exit 1\nnot ok 1 - exposes refund\n\n=== 2026-11-11T10:05:00 test: npx vitest run -> exit 0\nok 1 - exposes refund\n\n');
+    const prog64 = path.join(wt64, 'docs', 'specs', 'refund-route.progress.md');
+    write(prog64, read(prog64).replaceAll('| — | — |', '| refund-route.log#1 | refund-route.log#4 |'));
+    run('lane.js', ['advance', 'refund-route', 'build', '--repo', r64]);
+    // every criterion is green in the lane's log, so before the gate this went straight to a reviewer
+    const noGate64 = run('lane.js', ['advance', 'refund-route', 'review', '--repo', r64]);
+    const t64 = Date.now();
+    const fail64 = run('lane.js', ['gate', 'refund-route', '--repo', r64]);
+    const secs64 = (Date.now() - t64) / 1000;
+    const store64 = path.join(r64, '.claude', 'session', 'lanes', 'refund-route.json');
+    const rec64 = () => (fs.existsSync(store64) ? JSON.parse(read(store64)) : {});
+    const failed64 = [...(rec64().gate?.failed ?? [])].sort().join(',');
+    const hung64 = (rec64().gate?.checks ?? []).find((c) => c.name === 'test')?.timed_out === true;
+    const onFail64 = run('lane.js', ['advance', 'refund-route', 'review', '--repo', r64]);
+    // the owner fixes the base's checks; the lane's HEAD passes; then a later lane commit makes that verdict stale
+    write(kj64, K.jsonDumps({ ...JSON.parse(read(kj64)), commands: cmds64({}) }));
+    F.commitAll(r64, 'kit.json: every check recorded');
+    const pass64 = run('lane.js', ['gate', 'refund-route', '--repo', r64]);
+    write(path.join(wt64, 'src', 'later.ts'), 'export const later = 1;\n');
+    F.commitAll(wt64, 'a commit after the gate');
+    const stale64 = run('lane.js', ['advance', 'refund-route', 'review', '--repo', r64]);
+    run('lane.js', ['gate', 'refund-route', '--repo', r64]);
+    const ok64 = run('lane.js', ['advance', 'refund-route', 'review', '--repo', r64]);
+    const caught64 = noGate64.returncode === 2 && /the gate has not run/.test(noGate64.stderr) && fail64.returncode === 1 && /^GATE: FAIL/.test(fail64.stdout) &&
+      failed64 === 'audit,lint,test,typecheck' && hung64 && secs64 < 25 && onFail64.returncode === 2 && /the gate FAILED/.test(onFail64.stderr) &&
+      pass64.returncode === 0 && stale64.returncode === 2 && /\(stale\)/.test(stale64.stderr) && ok64.returncode === 0;
+    record(64, 'a reviewer starts on a lane whose recorded checks fail, are missing or "none" with no reason, or hang, or on a gate verdict for an older commit', "lane.js gate re-runs the base's committed kit.json checks on the lane's HEAD, contained, stdin closed, with a time limit; advance build → review needs its PASS for that exact HEAD (hardening plan Step 3)", caught64, `no gate: review -> exit ${noGate64.returncode}; gate -> exit ${fail64.returncode} failed [${failed64}] test hung-and-stopped ${hung64} in ${secs64.toFixed(1)}s; review on FAIL -> exit ${onFail64.returncode}; fixed: gate -> exit ${pass64.returncode}; stale review -> exit ${stale64.returncode}; after a new gate -> exit ${ok64.returncode}`);
+    // 65 the gate's protected files and risk re-check (hardening plan Step 3, D4; #56 S1.3; 0016 E.1 Add 2 item 3):
+    //    a lane changes a package.json script or kit.json so the base's commands run what it wants, or a lane approved
+    //    at normal risk changes a billing file its spec never named -> the gate fails on the protected file (and runs
+    //    no check on it), and the risk re-check stops the lane for the owner
+    const r65 = path.join(tmp, 'node-api-65');
+    F.nodeApi(r65);
+    run('bootstrap.js', ['--repo', r65]);
+    write(path.join(r65, 'ROADMAP.md'), read(path.join(r65, 'ROADMAP.md')).replaceAll('| TODO(bootstrap: ROADMAP.md — feature) | TODO(bootstrap: ROADMAP.md — slug) | M1 | queued | — | — | — |', '| Refund route | refund-route | M1 | queued | — | — | — |'));
+    const kj65 = path.join(r65, '.claude', 'kit.json');
+    const cmds65 = { ...JSON.parse(read(kj65)).commands };
+    delete cmds65.lint_all;
+    for (const n of ['test', 'coverage', 'format', 'integration', 'typecheck', 'lint', 'boundaries', 'audit']) cmds65[n] = 'true';
+    write(kj65, K.jsonDumps({ ...JSON.parse(read(kj65)), local_only: true, commands: cmds65 }));
+    const c65 = F.commitAll(r65, 'bootstrap');
+    // the owner approved this spec at normal risk: it names no high-risk path
+    write(path.join(r65, 'docs', 'specs', 'refund-route.md'), SPEC({ commit: c65.slice(0, 7) }).replace('- Risk: high-risk', '- Risk: normal').replace('- Risks: payments', '- Risks: none')
+      .replace('`src/domain/payment.ts` — the service [verified: src/domain/payment.ts:1-3]', '`src/api/routes.ts` — the routes [verified: src/api/routes.ts:1-3]'));
+    F.approveSpec(r65, 'refund-route', { commit: F.commitAll(r65, 'spec') });
+    const wt65 = JSON.parse(run('lane.js', ['start', 'refund-route', '--repo', r65]).stdout || '{}').worktree;
+    const store65 = path.join(r65, '.claude', 'session', 'lanes', 'refund-route.json');
+    const gate65 = () => {
+      const r = run('lane.js', ['gate', 'refund-route', '--repo', r65]);
+      return { code: r.returncode, failed: fs.existsSync(store65) ? (JSON.parse(read(store65)).gate?.failed ?? []) : [] };
+    };
+    const pj65 = path.join(wt65, 'package.json');
+    const pkg65 = read(pj65);
+    write(pj65, K.jsonDumps({ ...JSON.parse(pkg65), scripts: { ...(JSON.parse(pkg65).scripts ?? {}), test: 'true' } }, { indent: 2 }));
+    F.commitAll(wt65, 'lane: the test script');
+    const script65 = gate65();
+    write(pj65, pkg65);
+    const lkj65 = path.join(wt65, '.claude', 'kit.json');
+    write(lkj65, read(lkj65).replace('"test": "true"', '"test": "echo skipped"'));
+    F.commitAll(wt65, 'lane: kit.json');
+    const kit65 = gate65();
+    write(lkj65, K.jsonDumps({ ...JSON.parse(read(lkj65)), commands: cmds65 }));
+    F.git(['checkout', c65, '--', '.claude/kit.json'], wt65);
+    F.commitAll(wt65, 'lane: put them back');
+    const clean65 = gate65();
+    fs.mkdirSync(path.join(wt65, 'src', 'billing'), { recursive: true });
+    write(path.join(wt65, 'src', 'billing', 'charge.ts'), 'export const charge = 1;\n');
+    F.commitAll(wt65, 'lane: a billing change');
+    const risk65 = gate65();
+    const caught65 = script65.code === 1 && script65.failed.includes('protected-files') && kit65.code === 1 && kit65.failed.includes('protected-files') &&
+      clean65.code === 0 && risk65.code === 1 && risk65.failed.join(',') === 'risk';
+    record(65, 'a lane changes a package.json script or kit.json so the checks run what it wants, or a lane approved at normal risk changes a high-risk path', "lane.js gate fails on a protected file (the spec after approval, .claude/, CI config, package.json scripts, test config) and runs no check on it; its risk re-check matches high-risk paths against the lane's own diff and stops a lane not approved as high risk (hardening plan Step 3, D4)", caught65, `script -> exit ${script65.code} [${script65.failed}]; kit.json -> exit ${kit65.code} [${kit65.failed}]; reverted -> exit ${clean65.code}; billing in a normal-risk lane -> exit ${risk65.code} [${risk65.failed}]`);
+    // 66 the gate before the merge (hardening plan Step 3; #56 S1.5): a lane merges code the gate never checked
+    //    against the base's current tip, or a merge conflict with the base is resolved by guesswork -> the merge needs a
+    //    gate PASS for the PR head after kit lane gate --sync updated it from the base; a conflict is undone and parks
+    //    the lane for a human
+    const r66 = path.join(tmp, 'node-api-66');
+    F.nodeApi(r66);
+    run('bootstrap.js', ['--repo', r66]);
+    write(path.join(r66, 'ROADMAP.md'), read(path.join(r66, 'ROADMAP.md')).replaceAll('| TODO(bootstrap: ROADMAP.md — feature) | TODO(bootstrap: ROADMAP.md — slug) | M1 | queued | — | — | — |', '| Refund route | refund-route | M1 | queued | — | — | — |'));
+    const kj66 = path.join(r66, '.claude', 'kit.json');
+    const cmds66 = { ...JSON.parse(read(kj66)).commands };
+    delete cmds66.lint_all;
+    for (const n of ['test', 'coverage', 'format', 'integration', 'typecheck', 'lint', 'boundaries', 'audit']) cmds66[n] = 'true';
+    write(kj66, K.jsonDumps({ ...JSON.parse(read(kj66)), local_only: true, commands: cmds66 }));
+    const c66 = F.commitAll(r66, 'bootstrap');
+    write(path.join(r66, 'docs', 'specs', 'refund-route.md'), SPEC({ commit: c66.slice(0, 7) }));
+    F.commitAll(r66, 'spec');
+    F.approveSpec(r66, 'refund-route');
+    const wt66 = JSON.parse(run('lane.js', ['start', 'refund-route', '--repo', r66]).stdout || '{}').worktree;
+    write(path.join(wt66, 'src', 'api', 'routes.ts'), '// the lane\'s refund route\n');
+    F.commitAll(wt66, 'lane: D1');
+    const pass66 = run('lane.js', ['gate', 'refund-route', '--repo', r66]);
+    // another lane merges first: a new file on the base (no conflict)
+    write(path.join(r66, 'src', 'other.ts'), 'export const other = 1;\n');
+    const tip66 = F.commitAll(r66, 'another lane');
+    // the merge's own check (lane.js merge calls it before reading CI); absent before this fault's fix
+    const syncProblem66 = typeof L.syncProblem === 'function' ? L.syncProblem : () => null;
+    const stale66 = syncProblem66(r66, 'refund-route', F.git(['rev-parse', 'HEAD'], wt66).trim()) ?? '';
+    const sync66 = run('lane.js', ['gate', 'refund-route', '--sync', '--repo', r66]);
+    const head66 = F.git(['rev-parse', 'HEAD'], wt66).trim();
+    const has66 = spawnSync('git', ['merge-base', '--is-ancestor', tip66, head66], { cwd: wt66 }).status === 0;
+    const ok66 = syncProblem66(r66, 'refund-route', head66);
+    // then a lane edits the same line the lane did: a conflict
+    write(path.join(r66, 'src', 'api', 'routes.ts'), '// the base\'s line\n');
+    F.commitAll(r66, 'a conflicting change');
+    const conflict66 = run('lane.js', ['gate', 'refund-route', '--sync', '--repo', r66]);
+    const st66 = JSON.parse(read(path.join(r66, '.claude', 'session', 'lanes', 'refund-route.json')));
+    const clean66 = F.git(['status', '--porcelain', '--untracked-files=no'], wt66).trim() === '' && F.git(['rev-parse', 'HEAD'], wt66).trim() === head66;
+    const caught66 = pass66.returncode === 0 && /does not contain main's tip/.test(stale66) && sync66.returncode === 0 && has66 && ok66 === null &&
+      conflict66.returncode === 2 && /is parked: a merge conflict with main/.test(conflict66.stderr) && st66.stage === 'parked' && (st66.parked?.conflict ?? []).includes('src/api/routes.ts') && clean66;
+    record(66, "a lane merges code the gate never checked against the base's current tip, or a merge conflict with the base is resolved by guesswork", "the merge needs a gate PASS for the PR head after kit lane gate --sync updated it from the base's tip; a conflict is undone and parks the lane for a human (hardening plan Step 3, #56 S1.5)", caught66, `gated -> exit ${pass66.returncode}; base moved: ${stale66 ? 'merge refused (head lacks the tip)' : 'merge allowed'}; --sync -> exit ${sync66.returncode}, contains the tip ${has66}; conflict -> exit ${conflict66.returncode}, stage ${st66.stage}, conflict [${st66.parked?.conflict ?? ''}], worktree clean ${clean66}`);
   } finally {
     if (a.keep) process.stderr.write(`fixtures kept at ${tmp}\n`);
     else fs.rmSync(tmp, { recursive: true, force: true });

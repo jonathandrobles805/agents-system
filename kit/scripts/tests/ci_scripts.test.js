@@ -259,6 +259,35 @@ test('secrets change range resolves from the checkout, never from a commit it do
   assert.match(stepScript(read(root, '.github', 'workflows', 'kit.yml'), 'gitleaks (commits in this change)'), /--log-opts="\$RANGE"/);
 });
 
+test("secrets: gitleaks keeps every default rule (or the project's own config) and allows only the kit's manifest of checksums (#133)", (t) => {
+  const root = laneRepo(t);
+  const wf = read(root, '.github', 'workflows', 'kit.yml');
+  const script = stepScript(wf, 'gitleaks config');
+  const run = () => {
+    const tmp = tmpPath(t);
+    const envFile = path.join(tmp, 'github_env');
+    fs.writeFileSync(envFile, '');
+    const r = spawnSync('bash', ['-c', script], { cwd: root, encoding: 'utf8', env: { ...process.env, RUNNER_TEMP: tmp, GITHUB_ENV: envFile } });
+    assert.equal(r.status, 0, r.stderr);
+    const cfg = /^GITLEAKS_KIT_CONFIG=(.*)$/m.exec(fs.readFileSync(envFile, 'utf8'))[1];
+    return fs.readFileSync(cfg, 'utf8');
+  };
+  let toml = run();
+  assert.match(toml, /^\[extend\]\nuseDefault = true\n/, toml);
+  const paths = [...toml.matchAll(/'''(.*?)'''/g)].map((m) => m[1]);
+  assert.deepEqual(paths, ['^\\.claude/kit-manifest\\.json$'], 'exactly one path is allowed');
+  const re = new RegExp(paths[0]);
+  assert.ok(re.test('.claude/kit-manifest.json'));
+  for (const other of ['.claude/kit.json', '.claude/settings.json', 'x.claude/kit-manifest.json', '.claude/kit-manifest.json.bak', 'src/kit-manifest.json', '.env']) assert.ok(!re.test(other), other);
+  // a project with its own gitleaks config: that config is extended (its rules and allowlists kept), not replaced
+  write(root, '.gitleaks.toml', '[extend]\nuseDefault = true\n');
+  toml = run();
+  assert.match(toml, /^\[extend\]\npath = "\.gitleaks\.toml"\n/, toml);
+  assert.ok(!toml.includes('useDefault'), 'gitleaks refuses extend.path and extend.useDefault together');
+  // the scan uses it
+  assert.match(stepScript(wf, 'gitleaks (commits in this change)'), /--config "\$GITLEAKS_KIT_CONFIG" --log-opts="\$RANGE"/);
+});
+
 test('pr size warning', (t) => {
   const root = laneRepo(t);
   for (let i = 0; i < 30; i++) write(root, `src/f${i}.ts`, 'export const x = 1;\n');

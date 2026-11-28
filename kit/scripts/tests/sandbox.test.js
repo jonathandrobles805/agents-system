@@ -7,7 +7,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import * as K from '../kitlib.js';
-import { ALLOW_MARKER, SRT_REQUIRED_KEYS, credentialScan, detectRuntime, launchCommand, probe, sandboxConfig, specNetwork, srtSettings } from '../sandbox.js';
+import { ALLOW_MARKER, SRT_REQUIRED_KEYS, credentialScan, detectRuntime, launchCommand, probe, sandboxConfig, sandboxTmpEnv, specNetwork, srtSettings } from '../sandbox.js';
 import * as F from './fixtures.js';
 import { runScript, tmpPath } from './helpers.js';
 import { project } from './testdata.js';
@@ -82,6 +82,16 @@ test('sandboxConfig: floor domains plus the spec Network section, deny paths fro
   const d = sandboxConfig({ root, wt: root, slug: 'refund-route', env: envWith('none') });
   assert.equal(d.runtime, null);
   assert.equal(d.state, 'degraded');
+});
+
+test('sandboxTmpEnv: under srt a command\'s temp dir is the lane scratch, which the sandbox lets it write (#139)', (t) => {
+  const root = approvedRepo(t);
+  const cfg = sandboxConfig({ root, wt: root, slug: 'refund-route', env: envWith('srt') });
+  assert.equal(cfg.scratch, path.join(os.tmpdir(), 'kit-lane-refund-route'));
+  assert.equal(cfg.allowWrite[1], cfg.scratch, 'the scratch is writable inside the sandbox');
+  assert.deepEqual(sandboxTmpEnv(cfg), { CLAUDE_CODE_TMPDIR: cfg.scratch });
+  assert.deepEqual(sandboxTmpEnv(sandboxConfig({ root, wt: root, slug: 'refund-route', env: envWith('none') })), {}, 'no runtime: the host TMPDIR is writable');
+  assert.deepEqual(sandboxTmpEnv(sandboxConfig({ root, wt: root, slug: 'refund-route', env: envWith('container') })), {}, 'the container mounts the scratch itself');
 });
 
 test('launchCommand per runtime', () => {

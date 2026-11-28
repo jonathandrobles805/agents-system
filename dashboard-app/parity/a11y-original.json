@@ -1,0 +1,31 @@
+{
+  "arch-system": {
+    "label-content-name-mismatch": 42,
+    "landmark-one-main": 1,
+    "page-has-heading-one": 1,
+    "region": 1
+  },
+  "arch-system-sel": {
+    "label-content-name-mismatch": 42,
+    "landmark-one-main": 1,
+    "page-has-heading-one": 1,
+    "region": 1
+  },
+  "arch-agents": {
+    "heading-order": 1,
+    "landmark-one-main": 1,
+    "page-has-heading-one": 1,
+    "region": 3
+  },
+  "arch-deps-sel": {
+    "landmark-one-main": 1,
+    "page-has-heading-one": 1,
+    "region": 5
+  },
+  "wt-lane": {
+    "page-has-heading-one": 1
+  },
+  "pages-wt": {
+    "page-has-heading-one": 1
+  }
+}

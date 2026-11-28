@@ -24,7 +24,7 @@ import * as K from '../kitlib.js';
 import * as L from '../lane.js';
 import * as KS from '../kit_status.js';
 import * as V from '../validate_docs.js';
-import { commitAll } from './fixtures.js';
+import { commitAll, gatePass } from './fixtures.js';
 import { runScript, setEnv, tmpPath, SCRIPTS } from './helpers.js';
 import { project, spec, write } from './testdata.js';
 
@@ -670,6 +670,9 @@ test('paths.work: a lane under a configured work root runs to green [Step 1 land
   const st = KS.laneState(root, L.roadmapRows(root).find((r) => r.slug === 'refund-route'), K.loadKitJson(root));
   assert.equal(st.progress.criteria, 1);
   assert.equal(st.progress.green, 1, 'laneState reads the configured root');
+  // all green under the configured root: the gate is next (Step 3), then the reviewer
+  assert.equal(nextStepOf(root).stage, 'gate');
+  gatePass(root, 'refund-route');
   const ns = nextStepOf(root);
   assert.equal(ns.stage, 'review', `next-step walks on: ${JSON.stringify(ns)}`);
 });
@@ -793,7 +796,7 @@ test('README counts 19 planted faults; the suite runs 54 [inverts at Step 7]', (
   assert.match(read(REPO, 'README.md'), /the 19 faults from the spec/, 'DEFECT: the count is written by hand');
   const run = read(REPO, 'planted-faults', 'run.js');
   const ids = new Set([...run.matchAll(/\brecord\((\d+),/g)].map((m) => Number(m[1])));
-  assert.equal(ids.size, 63, 'the suite defines 63 (S0 added #46; #68 added #47, #48; 0016 E.11 added #49; 0016 E.7 added #50; hardening plan D3 added #51; #57-#59 added #52; #106 added #53; the shell scope fix added #54; hardening plan Step 2 added #55 and, for the spec approval (D1), #57; #107 added #56; #67/#82 added #58; dashboard step 0 added #59 and #60; the security sign-off (#58) added #61; rounds in the store added #62; the Step 2 narrowing (#63) added #63)');
+  assert.equal(ids.size, 66, 'the suite defines 66 (S0 added #46; #68 added #47, #48; 0016 E.11 added #49; 0016 E.7 added #50; hardening plan D3 added #51; #57-#59 added #52; #106 added #53; the shell scope fix added #54; hardening plan Step 2 added #55 and, for the spec approval (D1), #57; #107 added #56; #67/#82 added #58; dashboard step 0 added #59 and #60; the security sign-off (#58) added #61; rounds in the store added #62; the Step 2 narrowing (#63) added #63; the gate (Step 3) added #64, its protected files and risk re-check #65, its update from the base before the merge #66)');
 });
 
 test('the generated audit names a commit that is not HEAD [inverts at Step 7]', () => {

@@ -1,0 +1,36 @@
+{
+  "name": "agent-kit-dashboard-app",
+  "private": true,
+  "type": "module",
+  "description": "Source of kit/dashboard/index.html (decision 0019) and its parity harness. Dev-only; the kit never installs this.",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc && vite build",
+    "typecheck": "tsc",
+    "lint": "eslint --max-warnings 0 .",
+    "fixtures": "node parity/build-fixtures.js",
+    "parity:baseline": "PARITY_TARGET=original playwright test --config parity/playwright.config.js",
+    "parity:react": "PARITY_TARGET=react playwright test --config parity/playwright.config.js",
+    "check": "node parity/check-build.js",
+    "parity:all": "parity/run-react.sh"
+  },
+  "devDependencies": {
+    "@axe-core/playwright": "^4.14.0",
+    "@playwright/test": "^1.65.1",
+    "@types/node": "^26.6.6",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "@vitejs/plugin-react": "^5.2.0",
+    "eslint": "^9.39.5",
+    "eslint-plugin-react-hooks": "^7.1.1",
+    "globals": "^17.14.0",
+    "pixelmatch": "^7.2.0",
+    "pngjs": "^7.0.0",
+    "react": "^19.3.1",
+    "react-dom": "^19.3.1",
+    "typescript": "^5.9.3",
+    "typescript-eslint": "^8.74.0",
+    "vite": "^7.3.8",
+    "vite-plugin-singlefile": "^2.3.4"
+  }
+}
