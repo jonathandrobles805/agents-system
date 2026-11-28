@@ -323,6 +323,7 @@ Steps 1–9 of the skills work are done on branch `commands-to-skills`: 23 `zi-`
 
 - [ ] A Runs view: a card per lane with the round, the gate verdict and commit, a chip per reviewer, CI state, time and cost (or a stated "no telemetry").
 - [ ] A drawer that opens each file at its `## Summary`; add `## Summary` to the progress, review, gate and escalation templates, and make `validate_docs` require it.
+- [ ] (owner, 2026-11-25) AI coding choices: progress.md gets `## Choices` (one line each, `chose X over Y: <reason>`, ≤120 characters, ≤5 per lane, more escalates); implementer, tester and debugger commits add a `why:` line (≤72 characters); the drawer shows `## Choices`. See `docs/skill-format/decisions.md` S7.
 - [ ] A live strip: add `agent_id` to `hook_event_log`.
 - [ ] Read events from the work root, and the lane list from the store. Remove the old Worktrees view once Runs shows the same facts.
 
