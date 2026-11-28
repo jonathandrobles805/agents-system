@@ -6,5 +6,6 @@ dashboard-app/node_modules/
 dashboard-app/parity/.data/
 dashboard-app/parity/results/
 dashboard-app/parity/.data-int/
+dashboard-app/parity/.data-board/
 dashboard-app/parity/baseline/
 dashboard-app/dist/
