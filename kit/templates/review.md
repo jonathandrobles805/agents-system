@@ -6,6 +6,10 @@
 - Reviewer: {{agent name and model}}
 - Date: {{timestamp}}
 
+## Summary
+
+{{two or three lines: the verdict and why, for a reader who opens nothing else; the board's drawer shows this first}}
+
 ## Scope
 
 - Files in diff: {{n}}; files in spec allow-list: {{n}}; outside allow-list: {{list or none}}

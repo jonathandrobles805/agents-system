@@ -828,6 +828,8 @@ export function start(root, slug, base) {
   writeText(
     prog,
     `# Progress: ${slug}\n\n- Spec: \`${work}/${slug}.md\`\n- Worktree: \`${wt}\`\n- Branch: \`${branch}\`\n- Started: ${now}\n- Last update: ${now}\n\n` +
+      // the drawer opens a progress file at its Summary (hardening plan Step 10); validate_docs requires it from 2026-11-27
+      `## Summary\n\n${reproFirst ? 'Reproducing the reported failure; no criterion yet.' : 'Started from the approved spec; no criterion is green yet.'}\n\n` +
       '## Done-criteria\n\n| # | Criterion | Test | Red run | Green run |\n|---|---|---|---|---|\n' + rows.join('\n') +
       (reproFirst ? "\n\n## Reproduction\n\n<!-- debugger: the steps, what happens, what should happen, the failing command and its output; end with exactly one cause: line. The criteria table above is filled by lane.js scope once the spec is approved. -->\n" : '') +
       (reproFirst ? '\n## Current step\n\nreproducing' : "\n\n## Current step\n\nreading the spec's files") +

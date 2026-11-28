@@ -25,6 +25,14 @@ export const REQUIRED = {
   review: ["scope", "checklist", "adversarial tests added", "fail list", "verdict"],
 };
 export const RESEARCH_HEADER = ["question", "slug", "date", "commit"];
+/**
+ * `## Summary` is required in progress files and review reports created from this date on (hardening plan Step 10:
+ * the board's drawer opens each file at its Summary). The stated exception: a file whose own header dates it earlier
+ * (`- Started:` in a progress file, `- Date:` in a review) was written before the section existed and needs none, so
+ * no old lane fails. A file without that date is treated as new.
+ */
+export const SUMMARY_FROM = "2026-11-27";
+const SUMMARY_DATE_FIELD = { progress: "started", review: "date" };
 export const SPEC_HEADER = ["slug", "date", "commit", "risk", "status"];
 /** A lesson's `Enforced by`: one or more of ENFORCERS (parseEnforcedBy), or `text-only` alone. */
 export const ENFORCERS = ["ci", "hook", "lint", "test"];
@@ -298,7 +306,8 @@ export function detectType(p, work = 'docs/specs') {
   }
   if (s.includes(`/${work}/`) || s.startsWith(`${work}/`)) {
     if (name.endsWith(".review.md")) return "review";
-    if (name.endsWith(".progress.md") || name.endsWith(".log") || name.endsWith(".jsonl")) return null;
+    if (name.endsWith(".progress.md")) return "progress";
+    if (name.endsWith(".log") || name.endsWith(".jsonl")) return null;
     return "spec";
   }
   return null;
@@ -334,6 +343,20 @@ export class Validator {
     for (const s of REQUIRED[kind]) {
       if (!sections.has(s)) this.add(p, 1, "missing-section", `required section '## ${pyTitle(s)}' not found`);
     }
+  }
+
+  /** `## Summary`, unless the file's own header dates it before SUMMARY_FROM (the stated exception). */
+  checkSummary(p, lines, kind, sections) {
+    if (sections.has("summary")) return;
+    const date = /^\d{4}-\d{2}-\d{2}/.exec(pyStrip(K.headerFields(lines).get(SUMMARY_DATE_FIELD[kind])?.[1] ?? ""));
+    if (date && date[0] < SUMMARY_FROM) return;
+    this.add(p, 1, "missing-summary", `required section '## Summary' not found (needed in files dated from ${SUMMARY_FROM}; older files are exempt)`);
+  }
+
+  /** A progress file: its Summary only. Nothing else in it is validated, as before. */
+  progress(p, lines) {
+    const clean = K.stripHtmlComments(lines);
+    this.checkSummary(p, clean, "progress", K.parseSections(clean));
   }
 
   checkHeader(p, lines, names) {
@@ -643,6 +666,7 @@ export class Validator {
     this.checkPlaceholders(p, clean, "review");
     const sections = K.parseSections(clean);
     this.checkRequired(p, "review", sections);
+    this.checkSummary(p, clean, "review", sections);
     const cl = sections.get("checklist");
     const fails = [];
     if (cl) {

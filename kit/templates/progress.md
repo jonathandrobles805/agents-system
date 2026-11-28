@@ -6,6 +6,10 @@
 - Started: {{timestamp}}
 - Last update: {{timestamp}}
 
+## Summary
+
+{{two or three lines: where the lane stands and what it means; the board's drawer shows this first}}
+
 ## Done-criteria
 
 | # | Criterion | Test | Red run | Green run |
