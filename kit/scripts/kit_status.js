@@ -211,6 +211,7 @@ export function laneState(root, row, kit) {
   const needsYou = ['waiting-approval', 'ready-to-merge', 'escalated'].includes(pos);
   const lastCheck = lastEvent(pjoin(docsRoot, work, `${slug}.events.jsonl`), new Set(['test', 'typecheck', 'lint']));
   const gate = laneGateInfo(root, slug, hasWt ? wt : null);
+  const roundsDetail = rounds ? roundsDetailOf(rec, rounds, rev) : null;
   return {
     feature: row.feature, slug, milestone: row.milestone, roadmap_status: row.status, position: pos, needs_you: needsYou,
     risk: specHdr.get('risk') ?? null, spec: K.isFile(spec) ? relativeTo(root, spec) : null, approved,
@@ -222,8 +223,23 @@ export function laneState(root, row, kit) {
     progress: prog, review: rev, events: ev,
     last_check: lastCheck ? { kind: kget(lastCheck, 'event', null), result: kget(lastCheck, 'result', null), summary: kget(lastCheck, 'summary', null), ts: kget(lastCheck, 'ts', null) } : null,
     pr: !['—', '-', ''].includes(row.pr) ? row.pr : null,
-    gate,
+    gate, rounds_detail: roundsDetail,
   };
+}
+
+/**
+ * One entry per round, 1 to the current one (hardening plan Step 10, Runs view): the gate verdicts lane.js gate kept
+ * for that round (store gate_history), and for the current round only, the review verdict the lane already has. A
+ * record from before gate_history has rounds with no gates.
+ */
+export function roundsDetailOf(rec, rounds, rev) {
+  const history = Array.isArray(rec?.gate_history) ? rec.gate_history.filter((h) => h && typeof h === 'object') : [];
+  const last = Math.max(rounds.round, ...history.map((h) => (Number.isInteger(h.round) ? h.round : 0)));
+  return Array.from({ length: last }, (_, i) => ({
+    round: i + 1,
+    gates: history.filter((h) => h.round === i + 1).map((h) => ({ verdict: h.verdict ?? null, commit: h.commit ?? null, at: h.at ?? null })),
+    review: i + 1 === last && rev.exists ? { verdict: rev.verdict ?? null, head_matches: rev.head_matches ?? null } : null,
+  }));
 }
 
 /**

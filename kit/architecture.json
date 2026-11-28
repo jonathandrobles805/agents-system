@@ -443,6 +443,7 @@
     {"file": "kit/scripts/tests/args_and_hooks.test.js", "from": "test:args_and_hooks", "kind": "tests", "to": "hook:notify"},
     {"file": "kit/scripts/tests/args_and_hooks.test.js", "from": "test:args_and_hooks", "kind": "tests", "to": "hook:session_context"},
     {"file": "kit/scripts/tests/args_and_hooks.test.js", "from": "test:args_and_hooks", "kind": "tests", "to": "script:args"},
+    {"file": "kit/scripts/tests/board_status.test.js", "from": "test:board_status", "kind": "tests", "to": "script:bootstrap"},
     {"file": "kit/scripts/tests/board_status.test.js", "from": "test:board_status", "kind": "tests", "to": "script:kit_status"},
     {"file": "kit/scripts/tests/board_status.test.js", "from": "test:board_status", "kind": "tests", "to": "script:lane"},
     {"file": "kit/scripts/tests/bootstrap_adopt.test.js", "from": "test:bootstrap_adopt", "kind": "tests", "to": "script:bootstrap"},

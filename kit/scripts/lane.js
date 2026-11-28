@@ -1605,7 +1605,12 @@ export async function gate(root, slug, { sync = false } = {}) {
     timeout_s: Math.round(timeoutMs / 1000), failed, report: reportPath, synced,
     checks: checks.map(({ output, ...c }) => c),
   };
-  writeStoreFields(root, slug, { gate: record });
+  // every verdict, with the round it ran in (hardening plan Step 10, Runs view): gate stays the latest, as before;
+  // gate_history is additive, and a record without it reads as an empty history
+  const before = readStore(root, slug) ?? {};
+  const history = Array.isArray(before.gate_history) ? before.gate_history : [];
+  const entry = { round: laneRounds(root, before).round, verdict, commit: head, at: now };
+  writeStoreFields(root, slug, { gate: record, gate_history: [...history, entry] });
   K.appendEvent(pjoin(wt, '.claude', 'session', 'events.jsonl'), { event: 'gate', result: verdict === 'PASS' ? 'ok' : 'fail', summary: `gate ${verdict} on ${head.slice(0, 7)}${failed.length ? `: ${failed.join(', ')}` : ''}` });
   const cut = report.indexOf('\n--- ');
   process.stdout.write(`${(cut >= 0 ? report.slice(0, cut) : report).trimEnd()}\nreport: ${reportPath}\n`);
