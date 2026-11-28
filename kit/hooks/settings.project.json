@@ -33,6 +33,7 @@
       "Bash(kit lane merge *)",
       "Bash(kit lane resume-all *)",
       "Bash(kit lane signoff *)",
+      "Bash(kit lane resolve *)",
       "Bash(kit bootstrap *)"
     ],
     "deny": [

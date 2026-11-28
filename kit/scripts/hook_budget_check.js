@@ -28,10 +28,34 @@ export function raiseHint(lane, stage) {
 
 export function ensureEscalation(progress, reason, needs = 'a human to raise the budget in lane.json budget_override, or split the feature') {
   const text = K.isFile(progress) ? fs.readFileSync(progress, 'utf8').replace(/\r\n?/g, '\n') : '# Progress\n\n## Escalation\n';
-  if (/^- Attempts:/m.test(text) && text.toLowerCase().includes('budget')) return;
+  // one budget escalation at a time; a resolved one (kept under Resolved as `- was: Failure: …`) does not count (#148)
+  if (/^- Failure: budget exceeded/m.test(text)) return;
   const block = `\n## Escalation\n\n- Attempts: n/a of 3\n- Failure: ${reason}\n- Tried: see events log\n- Needs: a human to ${needs}\n`;
   fs.mkdirSync(path.dirname(progress), { recursive: true });
   fs.writeFileSync(progress, text.trimEnd() + '\n' + block);
+}
+
+/** The longest gap between two tool calls that counts as work (#142). */
+export const IDLE_CAP_H = 0.5;
+
+/**
+ * Add the time since the last call (at most IDLE_CAP_H) to the stage's working hours, kept in `file`, and return
+ * them. The first call counts from the stage's start, capped the same way. A file that cannot be read starts at 0.
+ */
+export function activeHours(file, started, now = Date.now()) {
+  let st = null;
+  try {
+    st = JSON.parse(fs.readFileSync(file, 'utf8'));
+  } catch {
+    st = null;
+  }
+  const startMs = Date.parse(String(started ?? '')) || now;
+  const last = Number.isFinite(st?.last) ? st.last : startMs;
+  const gap = Math.max(0, Math.min((now - last) / 3.6e6, IDLE_CAP_H));
+  const hours = (Number.isFinite(st?.hours) ? st.hours : 0) + gap;
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  fs.writeFileSync(file, JSON.stringify({ hours, last: now }));
+  return hours;
 }
 
 export function main() {
@@ -67,10 +91,13 @@ export function main() {
   fs.mkdirSync(path.dirname(counter), { recursive: true });
   const n = (K.isFile(counter) ? parseInt(fs.readFileSync(counter, 'utf8'), 10) || 0 : 0) + 1;
   fs.writeFileSync(counter, String(n));
-  const hours = inStore ? clock.stage_hours ?? 0 : K.hoursSince(started);
+  // #142: a stage's hours are working time, not wall-clock time since it started: the sum of the gaps between the
+  // lane's consecutive tool calls, each gap capped at IDLE_CAP_H. kit-test's slugify lane was stopped at "13.3h > 4h"
+  // after an overnight wait on a human; its work had ended at 00:08.
+  const hours = activeHours(path.join(lane.root, K.SESSION_DIR, `budget.${key}.active`), started);
   const over = [];
   if (n > Math.trunc(Number(budget.tool_calls ?? 1e9))) over.push(`${n} tool calls > budget ${budget.tool_calls}`);
-  if (hours > Number(budget.hours ?? 1e9)) over.push(`${hours.toFixed(1)}h elapsed > budget ${budget.hours}h`);
+  if (hours > Number(budget.hours ?? 1e9)) over.push(`${hours.toFixed(1)}h of work (idle gaps over ${IDLE_CAP_H * 60} min not counted) > budget ${budget.hours}h`);
   if (!over.length) return 0;
   const reason = `budget exceeded for stage '${stage}': ` + over.join('; ');
   const hint = raiseHint(lane, stage);

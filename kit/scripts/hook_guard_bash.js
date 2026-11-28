@@ -66,7 +66,6 @@ export const LANE_RULES = [
   rule(`${B}tee${E}(?:${S}+-[a-z]+)*${S}+['"]?${TEST_PATH}`, SHELL_TEST_WRITE),
   rule(`${B}sed${S}+-i[^|;&\n]*${S}['"]?${TEST_PATH}`, SHELL_TEST_WRITE),
   rule(`${B}git${S}+worktree${S}+(remove|prune)${E}`, 'removing worktrees from inside a lane'),
-  rule(`${B}git${S}+branch${S}+-D${E}`, 'deleting branches from inside a lane'),
   rule(`${B}git${S}+(checkout|switch)${S}+(?!-b${E})(?!--${S})[A-Za-z0-9._/-]+${S}*$`, 'switching branches inside a lane; each lane stays on its branch'),
 ];
 export const RM_RF = new RegExp(`${B}rm${S}+(-[a-zA-Z]*r[a-zA-Z]*f[a-zA-Z]*|-[a-zA-Z]*f[a-zA-Z]*r[a-zA-Z]*)${S}+([^\\n]+)`, 'gu');
@@ -248,7 +247,7 @@ export function withoutHeredocBodies(line) {
 // what may stand before the program in a simple command: assignments, the wrappers Claude Code strips (and env/exec),
 // their options and the plain values those options take
 const BEFORE_PROGRAM = /^(!|\{|if|then|else|elif|do|while|until|[A-Za-z_][A-Za-z0-9_]*=.*|timeout|time|nice|nohup|stdbuf|command|builtin|noglob|xargs|env|exec|-.*|[0-9.]+[smhd]?|[A-Z]+)$/;
-const DECISIONS = [['bootstrap'], ['lane', 'merge'], ['lane', 'resume-all'], ['lane', 'signoff']];
+const DECISIONS = [['bootstrap'], ['lane', 'merge'], ['lane', 'resume-all'], ['lane', 'signoff'], ['lane', 'resolve']];
 
 /**
  * Why a line runs a kit command in a form Claude Code's ask rules (`Bash(kit lane merge *)`, …) might not match, or
@@ -273,6 +272,9 @@ export function kitDecisionDisguised(line, depth = 0) {
     if (script === undefined || (script.raw === script.value && /^(-h|--help)$/.test(script.value))) continue;
     if (script.raw === script.value && /^[a-z0-9_-]+$/.test(script.value) && script.value.includes('-')) return `kit script names use _ not - (${script.value}); run \`kit ${script.value.replace(/-/g, '_')} …\``;
     if (!plainWord(script, /^[a-z0-9_]+$/)) return `a kit script name written in a computed or quoted form (${script.raw}); write it plainly as \`kit <script> …\``;
+    // `kit lane --help` / `-h` asks for the usage, not a subcommand (#144: the tester was refused it and read kit
+    // internals instead); `kit lane check --help` already passes, since the subcommand word is plain
+    if (script.value === 'lane' && sub !== undefined && plainWord(sub, /^(-h|--help)$/)) continue;
     if (script.value === 'lane' && sub !== undefined && !plainWord(sub, /^[a-z][a-z0-9-]*$/)) return `a kit lane subcommand written in a computed or quoted form (${sub.raw}); write it plainly as \`kit lane <subcommand> …\``;
     const decision = DECISIONS.find((d) => d.every((x, i) => words[k + 1 + i]?.value === x));
     if (decision) {
@@ -339,6 +341,35 @@ const WHITESPACE = new RegExp(`${S}+`, 'u');
 const inside = (p, root) => p === root || p.startsWith(root.endsWith('/') ? root : root + '/');
 
 /** The reason when an `rm -rf` in `cmd` targets something that must not be deleted, else null. */
+/**
+ * Why a branch deletion must not run, or null (#145). Refused: any `git branch -d/-D/--delete` run inside a lane's
+ * worktree; deleting an open lane's `wt/<slug>`; and a forced delete (`-D`) of a branch whose changes are not all on
+ * the base (kit.branchOnBase; a squash-merged branch is not an ancestor, so git's own -d check cannot say). In the
+ * main checkout a merged branch may be deleted while a lane is open elsewhere, and the words `git branch -D` inside
+ * another command's quoted argument (an issue body, a commit message) are not a command.
+ */
+export function branchDeleteProblem(cmd, root, cwd, lane) {
+  for (const words of shellCommands(withoutHeredocBodies(cmd))) {
+    const v = words.map((w) => w.value);
+    const g = v.findIndex((w, i) => w === 'git' && v.slice(0, i).every((x) => BEFORE_PROGRAM.test(x)));
+    if (g < 0 || v[g + 1] !== 'branch') continue;
+    const args = v.slice(g + 2);
+    const del = args.find((a) => /^(-d|-D|--delete)$/.test(a) || /^-[a-zA-Z]*[dD][a-zA-Z]*$/.test(a));
+    if (!del) continue;
+    const force = args.some((a) => a === '-D' || a === '--force' || /^-[a-zA-Z]*D[a-zA-Z]*$/.test(a) || (/^-[a-zA-Z]*f[a-zA-Z]*$/.test(a)));
+    const rel = lane ? path.relative(K.realResolve(lane.root), K.realResolve(cwd)) : '..';
+    if (lane && !(rel === '..' || rel.startsWith('..' + path.sep) || path.isAbsolute(rel))) return 'deleting branches from inside a lane';
+    const targets = args.filter((a) => !a.startsWith('-'));
+    const open = new Set(K.activeLanes(root).map((l) => `wt/${l.slug}`));
+    const base = K.resolvableBase(root, K.loadKitJson(root)?.default_branch || 'main');
+    for (const t of targets) {
+      if (open.has(t)) return `deleting ${t}, the branch of an open lane; kit lane finish removes it when the lane is done`;
+      if (force && !(base && K.branchOnBase(root, t, base))) return `force-deleting ${t}, whose changes are not all on ${base ?? 'the base'}; merge it first, or delete it by hand if it is really unwanted`;
+    }
+  }
+  return null;
+}
+
 export function rmTargetsOk(cmd, root, cwd) {
   for (const m of cmd.matchAll(RM_RF)) {
     for (let tok of m[2].split(WHITESPACE)) {
@@ -430,6 +461,8 @@ export function main() {
     if (own) return deny(`${own} from a lane agent; only the orchestrator (the main session, outside the lane) moves, gates, starts or merges a lane`);
   }
   if (lane) for (const [re, why] of LANE_RULES) if (re.test(cmd)) return deny(why);
+  const branchDel = branchDeleteProblem(cmd, root, cwd, lane);
+  if (branchDel) return deny(branchDel);
   const bad = rmTargetsOk(cmd, root, cwd);
   if (bad) return deny(bad);
   // A lane fetches only what its own spec declares. Outside a lane this rule has nothing to evaluate against -- the

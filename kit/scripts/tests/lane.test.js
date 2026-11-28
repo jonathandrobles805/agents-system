@@ -385,7 +385,7 @@ test('wall time is the store\'s: started and each move\'s time; the budget hook 
   const seven = K.isoSeconds(new Date(Date.now() - 7 * 3.6e6));
   const rec = storeOf(root);
   assert.ok(typeof rec.started === 'string' && rec.started === rec.moves[0].at, 'the lane\'s start is recorded');
-  write(sp, JSON.stringify({ ...rec, started: seven, moves: rec.moves.map((m) => ({ ...m, at: seven })), budget: { hours: 1, tool_calls: 800 } }, null, 2));
+  write(sp, JSON.stringify({ ...rec, started: seven, moves: rec.moves.map((m) => ({ ...m, at: seven })), budget: { hours: 0.25, tool_calls: 800 } }, null, 2));
   const l = laneStatus(root);
   assert.ok(l.elapsed_hours > 6.9 && l.elapsed_hours < 7.1 && l.started === seven, JSON.stringify({ e: l.elapsed_hours, s: l.started }));
   assert.ok(JSON.parse(lane('next-step', 'refund-route', '--repo', root).stdout).elapsed_hours > 6.9);
@@ -393,7 +393,9 @@ test('wall time is the store\'s: started and each move\'s time; the budget hook 
   const lf = path.join(wt, '.claude', 'lane.json');
   write(lf, JSON.stringify({ ...JSON.parse(read(lf)), started: K.isoSeconds(), budget: { hours: 100, tool_calls: 100000 } }, null, 2));
   const h = runScript('hook_budget_check.js', [], { stdin: JSON.stringify({ hook_event_name: 'PostToolUse', session_id: 's', cwd: wt, tool_name: 'Read', tool_input: { file_path: 'x' } }) });
-  assert.match(h.stdout, /budget exceeded for stage 'review': 7\.0h elapsed > budget 1h/, JSON.stringify(h));
+  // working time counts each gap from the store's stage start, capped at 30 min (#142): 0.5h, over the store's 0.25h;
+  // from the lane's reset lane.json start it would be 0h
+  assert.match(h.stdout, /budget exceeded for stage 'review': 0\.5h of work \(idle gaps over 30 min not counted\) > budget 0\.25h/, JSON.stringify(h));
   // re-entering the stage it is at does not restart its clock (#53)
   gatePass(root, 'refund-route');
   assert.equal(lane('advance', 'refund-route', 'review', '--repo', root).returncode, 0);

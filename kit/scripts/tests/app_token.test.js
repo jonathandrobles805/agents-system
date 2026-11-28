@@ -207,3 +207,27 @@ test('publish refuses: a branch outside wt/* and spec/*, a dirty worktree, no Ap
   } finally { process.stderr.write = e; }
   assert.throws(() => git(['rev-parse', '--verify', 'wt/refund-route'], bare), 'nothing was pushed');
 });
+
+test('publish commits the lane\'s events log, which the kit\'s own hooks keep dirty, and still refuses any other dirty file (#143)', async (t) => {
+  const { root, wt, bare } = laneProject(t);
+  fakeGh(t);
+  const token = async () => ({ ok: true, token: 'ghs_secret', expires_at: null, installation_id: 7, reason: '' });
+  const deps = { token, pushTarget: () => bare };
+  const events = path.join(wt, 'docs', 'specs', 'refund-route.events.jsonl');
+  const errs = [];
+  const e = process.stderr.write.bind(process.stderr);
+  process.stderr.write = (s) => { errs.push(String(s)); return true; };
+  try {
+    // another file dirty as well: refused, nothing committed
+    fs.appendFileSync(events, '{"event":"tool","result":"ok"}\n');
+    fs.writeFileSync(path.join(wt, 'scratch.txt'), 'x');
+    assert.equal(await publish(root, { slug: 'refund-route', title: 't', body: 'b' }, deps), 2);
+    assert.match(errs.at(-1), /uncommitted changes/);
+    fs.rmSync(path.join(wt, 'scratch.txt'));
+    // only the events log dirty: publish commits it and goes on
+    assert.equal(await publish(root, { slug: 'refund-route', title: 't', body: 'b' }, deps), 0, errs.join(''));
+  } finally { process.stderr.write = e; }
+  assert.equal(git(['status', '--porcelain'], wt).trim(), '');
+  assert.equal(git(['log', '-1', '--format=%s'], wt).trim(), 'chore(refund-route): events log');
+  assert.equal(git(['rev-parse', 'wt/refund-route'], bare).trim(), git(['rev-parse', 'HEAD'], wt).trim(), 'the commit was pushed');
+});

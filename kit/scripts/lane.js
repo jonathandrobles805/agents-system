@@ -8,6 +8,7 @@
 //   lane.js advance <slug> <stage> --repo R   move the lane's stage in the store, if the table allows the move and its files justify it
 //   lane.js stage <slug> <stage> --repo R     the old name of advance, the same call
 //   lane.js advance <slug> build --by NAME    let a lane parked past the round limit (kit.json max_rounds) go on for one more round
+//   lane.js resolve <slug> --by NAME --note T the owner clears the lane's escalation: progress.md's Escalation moves to Resolved (#148)
 //   lane.js gate <slug> --repo R              run the base's recorded checks on the lane's HEAD, contained; verdict bound to the commit (exit 0 PASS, 1 FAIL)
 //   lane.js gate <slug> --sync --repo R       update the lane from the base's tip first (a conflict parks the lane), then gate it; the merge needs this
 //   lane.js launch <slug> --repo R [--exec]   host side: the command that starts the lane's headless session inside its sandbox (KIT-SPEC 10.9)
@@ -593,6 +594,57 @@ export function signoff(root, slug, by) {
   writeText(tmp, K.jsonDumps(rec, { indent: 2 }) + '\n');
   fs.renameSync(tmp, p);
   process.stdout.write(`lane ${slug}: security sign-off by ${name} recorded for ${branch} at ${tip.slice(0, 7)}; a later commit on the lane needs a new sign-off\n`);
+  return 0;
+}
+
+/**
+ * lane.js resolve: the owner clears a lane's escalation (#148). The filled Escalation section(s) of the lane's
+ * progress.md move into a Resolved section, with the owner's name, the date and their note, and the Escalation
+ * section is reset to its template, so kit_status no longer reads the lane as escalated. Behind an ask rule, as
+ * signoff is; lanes are denied it. It moves no stage and raises no budget: do that first, then resolve.
+ */
+export function resolveEscalation(root, slug, by, note) {
+  const name = String(by ?? '').trim();
+  if (!name) return refuse(['--by <name> is required: the human who decided how the lane goes on']);
+  const text = String(note ?? '').trim();
+  if (!text) return refuse(['--note "<what you decided>" is required: it is kept with the escalation it resolves']);
+  const wt = pjoin(lanesDir(root), slug);
+  const lane = K.isFile(pjoin(wt, '.claude', 'lane.json')) ? K.findLane(wt) : null;
+  if (!lane) return refuse([`no lane for ${slug}`]);
+  const prog = lane.progressPath;
+  if (!K.isFile(prog)) return refuse([`${K.relTo(wt, prog)} does not exist; nothing to resolve`]);
+  const lines = readText(prog).replace(/\r\n?/g, '\n').split('\n');
+  const kept = [];
+  const filled = [];
+  for (let i = 0; i < lines.length; i++) {
+    if (/^## Escalation\s*$/i.test(lines[i])) {
+      let j = i + 1;
+      while (j < lines.length && !/^## /.test(lines[j])) j++;
+      const body = lines.slice(i + 1, j).filter((l) => /^- (Attempts|Failure|Tried|Needs):/.test(l) && !l.includes('{{'));
+      filled.push(...body);
+      i = j - 1;
+      continue;
+    }
+    kept.push(lines[i]);
+  }
+  if (!filled.length) return refuse([`${slug} has no filled escalation in ${K.relTo(wt, prog)}; nothing to resolve`]);
+  const template = ['## Escalation', '', '<!-- Written only when stopping early. Required fields. -->', '', '- Attempts: {{n}} of 3',
+    '- Failure: {{what fails, with test name or hook message}}', '- Tried: {{what each attempt changed}}', '- Needs: {{the decision or information required to continue}}', ''];
+  const entry = [`- ${K.isoSeconds().slice(0, 10)}, resolved by ${name}: ${text}`, ...filled.map((l) => `  - was: ${l.slice(2)}`)];
+  let out = kept.join('\n').trimEnd().split('\n');
+  const r = out.findIndex((l) => /^## Resolved\s*$/i.test(l));
+  if (r >= 0) {
+    let j = r + 1;
+    while (j < out.length && !/^## /.test(out[j])) j++;
+    while (j > r + 1 && out[j - 1].trim() === '') j--;
+    out.splice(j, 0, ...entry);
+    out = [...out, '', ...template];
+  } else {
+    out = [...out, '', ...template, '## Resolved', '', ...entry];
+  }
+  writeText(prog, out.join('\n').trimEnd() + '\n');
+  K.appendEvent(lane.eventLogPath, { event: 'escalation_resolved', tool: 'lane', result: 'ok', summary: `resolved by ${name}: ${text}`.slice(0, 200) });
+  process.stdout.write(`lane ${slug}: escalation resolved by ${name}; moved to Resolved in ${K.relTo(wt, prog)}, Escalation reset to its template\n`);
   return 0;
 }
 
@@ -1664,6 +1716,72 @@ export async function gate(root, slug, { sync = false } = {}) {
   return 1;
 }
 
+/**
+ * A finished lane's helper branches (goal/<slug>, goal/<slug>-done, spec/<slug>, evidence/<slug>, retro/<slug>, and
+ * their remote copies) are deleted when everything they changed is on the base (kit.branchOnBase: a squash merge is
+ * no ancestor). Any it keeps is listed with the reason. Left behind they held the next lane back until someone deleted
+ * them by hand (#138). Returns the lines to print.
+ */
+export function cleanHelperBranches(root, slug) {
+  const out = [];
+  const esc = slug.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const mine = new RegExp(`^(?:goal|spec|evidence|retro)/${esc}(?:-[A-Za-z0-9._-]+)?$`);
+  const base = K.loadKitJson(root)?.default_branch || 'main';
+  const hasOrigin = (() => {
+    try {
+      K.git(['remote', 'get-url', 'origin'], root);
+      return true;
+    } catch {
+      return false;
+    }
+  })();
+  if (hasOrigin) {
+    try {
+      K.git(['fetch', '-q', '--prune', 'origin'], root);
+    } catch {
+      out.push('could not fetch origin; remote helper branches not checked');
+    }
+  }
+  const baseRef = K.resolvableBase(root, base);
+  if (!baseRef) return [`no ${base} to compare with; helper branches kept`];
+  const list = (args) => {
+    try {
+      return K.git(args, root).split('\n').map((x) => x.trim()).filter(Boolean);
+    } catch {
+      return [];
+    }
+  };
+  for (const b of list(['for-each-ref', '--format=%(refname:short)', 'refs/heads/']).filter((b) => mine.test(b))) {
+    if (!K.branchOnBase(root, b, baseRef)) {
+      out.push(`kept branch ${b}: it has changes that are not on ${baseRef}`);
+      continue;
+    }
+    try {
+      K.git(['branch', '-D', b], root);
+      out.push(`deleted branch ${b} (its changes are on ${baseRef})`);
+    } catch (e) {
+      out.push(`kept branch ${b}: ${String(e.stderr ?? e.message).trim().split('\n')[0]}`);
+    }
+  }
+  if (hasOrigin) {
+    for (const r of list(['for-each-ref', '--format=%(refname:short)', 'refs/remotes/origin/'])) {
+      const b = r.replace(/^origin\//, '');
+      if (!mine.test(b)) continue;
+      if (!K.branchOnBase(root, r, baseRef)) {
+        out.push(`kept remote branch ${b}: it has changes that are not on ${baseRef}`);
+        continue;
+      }
+      try {
+        K.git(['push', '-q', 'origin', '--delete', b], root);
+        out.push(`deleted remote branch ${b} (its changes are on ${baseRef})`);
+      } catch (e) {
+        out.push(`kept remote branch ${b}: the push to delete it was refused (${String(e.stderr ?? e.message).trim().split('\n')[0]}); delete it on GitHub`);
+      }
+    }
+  }
+  return out;
+}
+
 export function finish(root, slug) {
   const wt = pjoin(lanesDir(root), slug);
   const msgs = [];
@@ -1682,6 +1800,7 @@ export function finish(root, slug) {
   } catch (e) {
     if (!isCalledProcessError(e)) throw e;
   }
+  msgs.push(...cleanHelperBranches(root, slug));
   const kj = pjoin(root, '.claude', 'kit.json');
   if (K.isFile(kj)) {
     const data = asDict(JSON.parse(readText(kj)));
@@ -2245,6 +2364,23 @@ export async function publish(root, { slug, branch, title, bodyFile, body, base 
   }
   try { remote = pyStrip(K.git(['remote', 'get-url', 'origin'], cwd)); } catch { remote = ''; }
   if (head !== branch) return refuse([`${cwd} has '${head}' checked out, not '${branch}'`]);
+  // the kit's own PostToolUse hooks append to the lane's events log after every tool call, so a separate publish
+  // call always found it dirty (#143). Publish commits that one file itself; anything else dirty still refuses.
+  if (dirty && branch.startsWith('wt/')) {
+    const events = `${K.workRoot(root)}/${slug}.events.jsonl`;
+    const paths = dirty.split('\n').filter(Boolean).map((l) => l.slice(3).replace(/^"|"$/g, '').split(' -> ').pop());
+    if (paths.length && paths.every((p) => p === events)) {
+      const ident = gitLine(cwd, ['config', 'user.email']) ? [] : ['-c', 'user.name=agent-kit publish', '-c', 'user.email=agent-kit@localhost'];
+      const cr = gitRaw(cwd, [...ident, 'commit', '-q', '-m', `chore(${slug}): events log`, '--', events]);
+      if (cr.status !== 0) {
+        const ar = gitRaw(cwd, ['add', '--', events]);
+        const cr2 = ar.status === 0 ? gitRaw(cwd, [...ident, 'commit', '-q', '-m', `chore(${slug}): events log`, '--', events]) : ar;
+        if (cr2.status !== 0) return refuse([`could not commit the lane's events log: ${pyStrip(cr2.stderr)}`]);
+      }
+      dirty = '';
+      process.stdout.write(`committed ${events} (the kit's hooks write it after every call)\n`);
+    }
+  }
   if (dirty) return refuse([`${cwd} has uncommitted changes; commit them first`]);
   const m = GITHUB_REMOTE_RE.exec(remote);
   if (!m) return refuse([`origin is not GitHub: ${remote || '(none)'}`]);
@@ -2322,6 +2458,8 @@ export async function main(argv = process.argv.slice(2)) {
   s.addArgument('slug', { nargs: '?' }); s.addArgument('--repo', { default: '.' }); s.addArgument('--pr'); s.addArgument('--by'); s.addArgument('--timeout-min', { type: parseInt, default: 30 });
   s = sub.addParser('signoff');
   s.addArgument('slug'); s.addArgument('--repo', { default: '.' }); s.addArgument('--by');
+  s = sub.addParser('resolve');
+  s.addArgument('slug'); s.addArgument('--repo', { default: '.' }); s.addArgument('--by'); s.addArgument('--note');
   s = sub.addParser('merged');
   s.addArgument('slug'); s.addArgument('--repo', { default: '.' }); s.addArgument('--pr');
   s = sub.addParser('resume');
@@ -2388,6 +2526,7 @@ export async function main(argv = process.argv.slice(2)) {
   if (a.cmd === 'gate') return gate(root, a.slug, { sync: !!a.sync });
   if (a.cmd === 'finish') return finish(root, a.slug);
   if (a.cmd === 'signoff') return signoff(root, a.slug, a.by);
+  if (a.cmd === 'resolve') return resolveEscalation(root, a.slug, a.by, a.note);
   if (a.cmd === 'next-step') {
     process.stdout.write(K.jsonDumps(await nextStep(root, a.slug)) + '\n');
     return 0;

@@ -54,7 +54,11 @@ kit bootstrap --repo . --protect --json
 ```
 Report the result, including `read_back` (the protection GitHub holds after the call) and `agent_rulesets` (the two rulesets that keep the agents' GitHub App to `wt/*` and `spec/*` branches, with the owner as the only bypass). Tell the human that merging from the GitHub page will now ask them to bypass the update rule; `kit lane merge` is unaffected. If `ok` is false because the read-back differs, show the differences and stop; do not merge anything until protection matches. If `gh` is missing or the remote is not GitHub, say so and list the required checks the human should configure by hand: tests, typecheck, lint, boundaries, kit-checks, secrets, audit.
 
-## Step 6: commit
-Create a branch `kit/bootstrap` (or `kit/upgrade-<version>`), commit the generated files with the message `agent-kit <version>: bootstrap project layer`, push, and open a PR. The human merges it; that merge is when the hooks and CI take effect for everyone.
+## Step 6: the human commits it
+The generated files include `.claude/` (kit configuration) and CI, which belong to the human: the bash guard refuses `git add .claude/...` from you, on purpose, so do not try (#137). Say this up front, then give the human one command to run themselves, by typing it after `!` in this prompt. Fill in the version and the exact paths from the result's `written` list:
+```
+! git switch -c kit/upgrade-<version> && git add <every path in written> && git commit -m "agent-kit <version>: bootstrap project layer" && git push -u origin kit/upgrade-<version> && gh pr create --fill
+```
+For a first bootstrap the branch is `kit/bootstrap`. The human merges the PR; that merge is when the hooks and CI take effect for everyone.
 
 Do not start any lane from this command.
