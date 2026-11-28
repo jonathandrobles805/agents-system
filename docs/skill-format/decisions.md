@@ -72,3 +72,14 @@ Each entry: what, why, who decided, what was rejected. Never edit an old entry; 
   characters on one line. Short lines keep the content and stay under Anthropic's 500-line limit
   (zi-run: about 120–150 lines).
 - Rejected: moving stage text into the script (instructions hidden in code); a separate reference.md (not needed at this size).
+
+## S9. zi-work first, then one part at a time (replaces S6's order)
+
+- Date: 2026-11-27 · Decided by: the owner
+- What: the rewrite starts with `zi-work`, the entry point, and follows the path a user takes:
+  zi-work, the work types, zi-start, zi-run, its stage skills, then the stand-alone skills. Each skill
+  is split into its parts; each part is shown as it is, what is wrong (with the source), and the fix,
+  and is changed only after the owner approves it. One commit per part; tests and planted faults pass
+  on each.
+- Why: the owner wants to follow the user's path and review every part, not a whole skill at once.
+- Rejected: zi-run first (S6); rewriting a whole skill in one change.
