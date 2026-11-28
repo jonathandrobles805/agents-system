@@ -210,6 +210,7 @@ export function laneState(root, row, kit) {
   else pos = 'queued';
   const needsYou = ['waiting-approval', 'ready-to-merge', 'escalated'].includes(pos);
   const lastCheck = lastEvent(pjoin(docsRoot, work, `${slug}.events.jsonl`), new Set(['test', 'typecheck', 'lint']));
+  const gate = laneGateInfo(root, slug, hasWt ? wt : null);
   return {
     feature: row.feature, slug, milestone: row.milestone, roadmap_status: row.status, position: pos, needs_you: needsYou,
     risk: specHdr.get('risk') ?? null, spec: K.isFile(spec) ? relativeTo(root, spec) : null, approved,
@@ -221,7 +222,19 @@ export function laneState(root, row, kit) {
     progress: prog, review: rev, events: ev,
     last_check: lastCheck ? { kind: kget(lastCheck, 'event', null), result: kget(lastCheck, 'result', null), summary: kget(lastCheck, 'summary', null), ts: kget(lastCheck, 'ts', null) } : null,
     pr: !['—', '-', ''].includes(row.pr) ? row.pr : null,
+    gate,
   };
+}
+
+/**
+ * The gate's verdict for the lane (hardening plan Step 10, Runs view): lane.js gateState on the lane's HEAD, the same
+ * answer advance and next-step act on. A lane without a worktree has no HEAD, so a recorded verdict is for another
+ * commit (stale), as gateState would say.
+ */
+export function laneGateInfo(root, slug, wt) {
+  const s = wt ? L.gateState(root, slug, wt) : (() => { const g = L.laneGate(root, slug); return g ? { state: 'stale', gate: g } : { state: 'none' }; })();
+  const g = s.gate ?? {};
+  return { state: s.state, verdict: g.verdict ?? null, commit: g.commit ?? null, at: g.at ?? null };
 }
 
 export function textOnlyDebt(root) {
