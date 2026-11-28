@@ -1094,36 +1094,82 @@ export function laneOwnedFiles(work, slug, root, base) {
   }
 }
 
-/** Files a review commit may touch without making the review stale: the lane's own artifacts under `work`, and tests. */
+/**
+ * Files a commit after the review may touch without making the review stale: the lane's own bookkeeping under
+ * `work` (the review report, progress, log, events, the committed check log). Never tests or code: a review PASS
+ * covers exactly what merges (#146 O2). Test files used to be on this list, so a commit after the review that
+ * changed a test file kept the PASS (kit-test lane slugify: the reviewer's own test, committed after its Head).
+ */
 export function reviewOnlyFile(work) {
   const w = work.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  return new RegExp(`^${w}/[^/]+\\.(review\\.md|progress\\.md|log|events\\.jsonl)$|(^|/)(tests?|__tests__|spec)/|\\.(test|spec)\\.[a-z]+$|(^|/)test_[^/]+\\.py$|_test\\.(go|py|rb|rs)$`);
+  return new RegExp(`^${w}/[^/]+\\.(review\\.md|progress\\.md|log|events\\.jsonl|checks\\.txt)$`);
 }
 
 /**
- * A review names the commit it reviewed. It is current if that is the branch head, or the head's parent and
- * the head commit only touched the review report, lane-owned docs (progress, log, events written by hooks
- * during review) and test files. `head` defaults to HEAD; CI on a pull request passes the PR's head commit,
- * because there HEAD is GitHub's synthetic merge commit, which no review can name (issue #69).
+ * The lane's own change at `commit`, as a patch id: the diff from where it meets `base` to `commit`, without the
+ * lane's bookkeeping. Equal ids mean the lane changes the same lines in the same way, whatever base it sits on.
+ * '' for no change; null when git cannot answer.
  */
-export function reviewHeadOk(root, reviewedSha, head = 'HEAD') {
+export function lanePatchId(root, commit, base) {
+  try {
+    const mb = git(['merge-base', commit, base], root).trim();
+    const own = reviewOnlyFile(workRoot(root));
+    const files = git(['diff', '--name-only', mb, commit], root).split('\n').filter((f) => f && !own.test(f));
+    if (!files.length) return '';
+    const diff = git(['diff', '--no-color', '--no-ext-diff', mb, commit, '--', ...files], root);
+    return execFileSync('git', ['patch-id', '--stable'], { cwd: root, input: diff, encoding: 'utf8' }).trim().split(/\s+/)[0] ?? '';
+  } catch {
+    return null;
+  }
+}
+
+/** A ref for the base that this checkout can resolve: `origin/<base>` when fetched, else the local branch, else null. */
+export function resolvableBase(root, base) {
+  if (!base) return null;
+  for (const ref of [base.startsWith('origin/') ? base : `origin/${base}`, base]) {
+    try {
+      git(['rev-parse', '--verify', `${ref}^{commit}`], root);
+      return ref;
+    } catch {
+      // try the next form
+    }
+  }
+  return null;
+}
+
+/**
+ * A review names the commit it reviewed. It covers `head` (#146 O2) when:
+ *   - `head` is that commit;
+ *   - `head`'s parent is that commit and `head` only touched the lane's bookkeeping (the report, progress, log,
+ *     events: what the review itself writes), never a test or code file; or
+ *   - with `base` given, the lane's own change (lanePatchId) at `head` is the one at the reviewed commit: an
+ *     update from the base that merged cleanly and left the lane's change alone (the gate's --sync, #56 S1.5).
+ * `head` defaults to HEAD; CI on a pull request passes the PR's head commit, because there HEAD is GitHub's
+ * synthetic merge commit, which no review can name (issue #69).
+ */
+export function reviewHeadOk(root, reviewedSha, head = 'HEAD', base = null) {
   let headSha;
+  let reviewed;
   try {
     headSha = git(['rev-parse', '--verify', `${head}^{commit}`], root).trim();
+    reviewed = git(['rev-parse', '--verify', `${reviewedSha}^{commit}`], root).trim();
   } catch {
     return false;
   }
-  if (headSha.startsWith(reviewedSha)) return true;
-  let parent;
-  let changed;
+  if (headSha === reviewed) return true;
+  const own = reviewOnlyFile(workRoot(root));
   try {
-    parent = git(['rev-parse', `${headSha}~1`], root).trim();
-    changed = git(['diff', '--name-only', `${headSha}~1`, headSha], root).split(/\s+/).filter(Boolean);
+    const parent = git(['rev-parse', `${headSha}~1`], root).trim();
+    const changed = git(['diff', '--name-only', `${headSha}~1`, headSha], root).split(/\s+/).filter(Boolean);
+    if (parent === reviewed && changed.every((f) => own.test(f))) return true;
   } catch {
-    return false;
+    // a root commit has no parent; fall through to the base comparison
   }
-  const reviewOnly = reviewOnlyFile(workRoot(root));
-  return parent.startsWith(reviewedSha) && changed.every((f) => reviewOnly.test(f));
+  const ref = resolvableBase(root, base);
+  if (!ref) return false;
+  const a = lanePatchId(root, reviewed, ref);
+  const b = lanePatchId(root, headSha, ref);
+  return a !== null && b !== null && a !== '' && a === b;
 }
 
 /** A settings.json hook entry belongs to the kit when one of its commands runs a script from the installed kit (any version). */

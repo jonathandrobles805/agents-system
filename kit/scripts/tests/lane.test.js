@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 import { spawnSync } from 'node:child_process';
-import { git, commitAll, nodeApi, approveSpec, gatePass } from './fixtures.js';
+import { git, commitAll, nodeApi, approveSpec, gatePass, reviewPass } from './fixtures.js';
 import { runScript, setEnv, tmpPath } from './helpers.js';
 import { project, spec, review } from './testdata.js';
 import * as P from '../permission_probe.js';
@@ -739,7 +739,8 @@ process.stderr.write('fake gh: past the sign-off'); process.exit(9);
   // nothing to sign off before the lane has commits; a name is required
   refused(signoff('--by', 'Jonathan'), /wt\/refund-route has no commits of its own, so there is nothing to sign off/);
   write(path.join(wt, 'src', 'api', 'routes.ts'), '// built\n');
-  const head1 = commitAll(wt, 'D1');
+  commitAll(wt, 'D1');
+  const head1 = reviewPass(root, 'refund-route'); // reviewed, as /zi-review leaves it (#146)
   refused(signoff(), /--by <name> is required: the human who reviewed the lane and signs it off/);
   refused(signoff('--by', '  '), /--by <name> is required/);
   refused(lane('signoff', 'other', '--repo', root, '--by', 'Jonathan'), /no lane for other/);
@@ -767,7 +768,8 @@ process.stderr.write('fake gh: past the sign-off'); process.exit(9);
   refused(merge('f'.repeat(40)), new RegExp(`and the recorded one is stale: Jonathan Robles signed off ${head1.slice(0, 7)} at .*, and the lane is now at fffffff; review the commits since, push them if the PR lacks them, then run kit lane signoff refund-route --by <your name> again`));
   // a new local commit on the lane, even one the PR does not have yet: refused as stale
   write(path.join(wt, 'src', 'api', 'routes.ts'), '// built, then changed\n');
-  const head2 = commitAll(wt, 'D2');
+  commitAll(wt, 'D2');
+  const head2 = reviewPass(root, 'refund-route');
   refused(merge(head1), new RegExp(`the recorded one is stale: .* the lane is now at ${head2.slice(0, 7)}`));
   // signed off again at the new HEAD: accepted
   assert.equal(signoff('--by', 'Jonathan Robles').returncode, 0);

@@ -207,6 +207,12 @@ function gatedPr(t, root) {
   F.git(['init', '-q', '--bare', bare], root);
   F.git(['remote', 'set-url', 'origin', bare], root);
   F.git(['push', '-q', 'origin', 'HEAD:main'], root);
+  // the review PASS for the reviewed commit, committed on its own (only bookkeeping after the reviewed head, #146 O2)
+  const reviewed = F.git(['rev-parse', 'HEAD'], root).trim();
+  fs.mkdirSync(path.join(root, 'docs', 'specs'), { recursive: true });
+  fs.writeFileSync(path.join(root, 'docs', 'specs', 'footer.review.md'), `# Review: footer\n\n- Head: ${reviewed}\n\n## Verdict\n\nPASS\n`);
+  F.git(['add', 'docs/specs/footer.review.md'], root);
+  F.git(['commit', '-q', '-m', 'review: footer'], root);
   const head = F.git(['rev-parse', 'HEAD'], root).trim();
   const store = path.join(root, '.claude', 'session', 'lanes', 'footer.json');
   fs.mkdirSync(path.dirname(store), { recursive: true });
@@ -475,4 +481,21 @@ test('bootstrap --protect: a read-back that differs from what the kit set fails 
     assert.match(bp.reason, /protection read back from GitHub differs/);
     assert.match(bp.reason, re);
   }
+});
+
+test('lane.js merge refuses a lane PR whose head changed a test after the review PASS, before reading CI (#146 O2)', (t) => {
+  const root = project(t);
+  const pr0 = gatedPr(t, root);
+  fs.mkdirSync(path.join(root, 'tests'), { recursive: true });
+  fs.writeFileSync(path.join(root, 'tests', 'footer.test.js'), 'test("added after the review", () => {});\n');
+  F.git(['add', 'tests/footer.test.js'], root);
+  F.git(['commit', '-q', '-m', 'test after review'], root);
+  const head = F.git(['rev-parse', 'HEAD'], root).trim();
+  const store = path.join(root, '.claude', 'session', 'lanes', 'footer.json');
+  fs.writeFileSync(store, JSON.stringify({ version: 1, slug: 'footer', gate: { verdict: 'PASS', commit: head, failed: [], checks: [] } }, null, 2));
+  const { env, calls } = fakeGh(t, { pr: { ...pr0, headRefOid: head }, polls: [all()] });
+  const r = lane(root, env, 'merge', 'footer', '--by', 'Jonathan');
+  assert.equal(r.returncode, 2, r.stderr + r.stdout);
+  assert.match(r.stderr + r.stdout, /changed tests or code after it; run \/zi-review again/);
+  assert.ok(!calls().some((c) => c.args[0] === 'pr' && c.args[1] === 'merge'), 'no merge');
 });

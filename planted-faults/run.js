@@ -910,7 +910,10 @@ process.stderr.write('fake gh 57: unexpected ' + a.join(' ')); process.exit(9);
     F.approveSpec(r61, 'refund-route');
     const wt61 = JSON.parse(run('lane.js', ['start', 'refund-route', '--repo', r61]).stdout || '{}').worktree ?? path.join(tmp, 'node-api-61-lanes', 'refund-route');
     writeP(path.join(wt61, 'src', 'api', 'routes.ts'), '// refund route\n');
-    const h61 = F.commitAll(wt61, 'refund route');
+    const code61 = F.commitAll(wt61, 'refund route');
+    // the reviewer's PASS for that code, committed on its own (the merge also needs a review covering the head, #146)
+    writeP(path.join(wt61, 'docs', 'specs', 'refund-route.review.md'), `# Review: refund-route\n\n- Head: ${code61}\n\n## Verdict\n\nPASS\n`);
+    const h61 = F.commitAll(wt61, 'review: refund-route');
     // a fake gh: PR 5 is wt/refund-route at the head in head.txt; any other call means the sign-off check let it through
     const gh61 = path.join(tmp, 'gh-61');
     writeP(path.join(gh61, 'gh'), `#!/usr/bin/env node
@@ -1199,6 +1202,46 @@ process.stderr.write('fake gh 61: past the sign-off'); process.exit(9);
     const caught66 = pass66.returncode === 0 && /does not contain main's tip/.test(stale66) && sync66.returncode === 0 && has66 && ok66 === null &&
       conflict66.returncode === 2 && /is parked: a merge conflict with main/.test(conflict66.stderr) && st66.stage === 'parked' && (st66.parked?.conflict ?? []).includes('src/api/routes.ts') && clean66;
     record(66, "a lane merges code the gate never checked against the base's current tip, or a merge conflict with the base is resolved by guesswork", "the merge needs a gate PASS for the PR head after kit lane gate --sync updated it from the base's tip; a conflict is undone and parks the lane for a human (hardening plan Step 3, #56 S1.5)", caught66, `gated -> exit ${pass66.returncode}; base moved: ${stale66 ? 'merge refused (head lacks the tip)' : 'merge allowed'}; --sync -> exit ${sync66.returncode}, contains the tip ${has66}; conflict -> exit ${conflict66.returncode}, stage ${st66.stage}, conflict [${st66.parked?.conflict ?? ''}], worktree clean ${clean66}`);
+
+    // 67 the review covers what merges (#146 O2): a test file changed after the review PASS (the kit-test reviewer's
+    //    own test, committed after its Head) kept the PASS -> only the lane's bookkeeping may follow the reviewed
+    //    commit; a test or code change makes it stale, and lane.js merge refuses a PR head the review does not cover
+    const r67 = path.join(tmp, 'review-67');
+    fs.mkdirSync(r67, { recursive: true });
+    const g67 = (...x) => F.git(x, r67).trim();
+    g67('init', '-q', '-b', 'main');
+    const c67 = (file, text) => {
+      fs.mkdirSync(path.dirname(path.join(r67, file)), { recursive: true });
+      write(path.join(r67, file), text);
+      g67('add', file);
+      g67('-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-q', '-m', file);
+      return g67('rev-parse', 'HEAD');
+    };
+    c67('README.md', 'base\n');
+    g67('checkout', '-q', '-b', 'wt/refund');
+    const reviewed67 = c67('src/refund.ts', 'export const refund = 1;\n');
+    const report67 = c67('docs/specs/refund.review.md', `- Head: ${reviewed67}\n\n## Verdict\n\nPASS\n`);
+    const test67 = c67('tests/refund.test.ts', 'test("added after the review", () => {});\n');
+    const reportOk67 = K.reviewHeadOk(r67, reviewed67, report67, 'main');
+    const testOk67 = K.reviewHeadOk(r67, reviewed67, test67, 'main');
+    const mergeWhy67 = typeof L.reviewProblem === 'function' ? L.reviewProblem(r67, 'refund', test67) : null;
+    const caught67 = reportOk67 && !testOk67 && /changed tests or code after it/.test(mergeWhy67 ?? '');
+    record(67, 'a test file changes after the review PASS and the PASS still counts, so what merges is not what was reviewed', "only the lane's bookkeeping (report, progress, log, events) may follow the reviewed commit; kit lane merge refuses a PR head the review does not cover (#146 O2)", caught67, `report-only commit covered ${reportOk67}; test commit after the review covered ${testOk67}; merge: ${mergeWhy67 ?? 'allowed'}`);
+
+    // 68 a lane agent writes a test file through the shell (#146 O1: the kit-test reviewer's `cat >> app.test.mjs`),
+    //    so guard-edit's read-before-edit and scope checks never see it -> guard-bash refuses a shell write to a test
+    //    file inside a lane; the Edit and Write tools remain
+    const shell68 = hook('hook_guard_bash.js', { hook_event_name: 'PreToolUse', tool_name: 'Bash', cwd: wt66, tool_input: { command: 'cat >> tests/refund.test.ts <<EOF\ntest("x", () => {})\nEOF' } });
+    const run68 = hook('hook_guard_bash.js', { hook_event_name: 'PreToolUse', tool_name: 'Bash', cwd: wt66, tool_input: { command: 'npm test > /tmp/out.txt 2>&1' } });
+    const caught68 = shell68.returncode === 2 && /use the Edit or Write tool/.test(shell68.stderr) && run68.returncode === 0;
+    record(68, 'a lane agent appends to a test file with a shell redirect, skipping the edit checks', 'guard-bash refuses a shell write (>, >>, tee, sed -i) to a test file inside a lane; running tests and logging output stay allowed (#146 O1)', caught68, `cat >> tests/… -> exit ${shell68.returncode}; npm test > /tmp/… -> exit ${run68.returncode}`);
+
+    // 69 the gate's report is overwritten by the next run (#147 O4), so the first FAIL's output is lost and the retro
+    //    cannot quote it -> every run keeps its own numbered report, and the verdict names it
+    const reports69 = fs.readdirSync(path.join(r66, '.claude', 'session', 'lanes')).filter((f) => /^refund-route\.gate\.\d+\.txt$/.test(f));
+    const named69 = String(st66.gate?.report ?? '');
+    const caught69 = reports69.length >= 2 && reports69.some((f) => named69.endsWith(f));
+    record(69, "the gate's report is overwritten by its next run, so a FAIL's output is lost before anyone reads it", 'every gate run keeps its own report (<slug>.gate.<n>.txt) and the verdict in the lane store names it (#147 O4)', caught69, `${reports69.length} numbered report(s) kept [${reports69.join(', ')}]; the verdict names ${path.basename(named69) || 'none'}`);
   } finally {
     if (a.keep) process.stderr.write(`fixtures kept at ${tmp}\n`);
     else fs.rmSync(tmp, { recursive: true, force: true });

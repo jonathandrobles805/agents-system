@@ -286,6 +286,24 @@ test('guard bash lane rules', (t) => {
   assert.equal(r.returncode, 0);
 });
 
+test('guard bash: in a lane a test file changes only through Edit/Write, never a shell write (#146 O1)', (t) => {
+  const repo = makeRepo(t);
+  makeLane(repo);
+  const bad = ['cat >> app.test.mjs <<EOF\ntest("x", () => {})\nEOF', 'echo x > tests/a.js', 'printf a | tee -a src/x.spec.ts',
+    'sed -i s/a/b/ app.test.mjs', 'cat > "tests/new.test.js"', 'echo 1 >> pkg/x_test.go', 'echo > test_x.py'];
+  for (const c of bad) {
+    const r = run('hook_guard_bash.js', pre(repo, 'Bash', { command: c }));
+    assert.ok(r.returncode === 2 && r.stderr.includes('use the Edit or Write tool'), `${c}: ${r.stderr}`);
+  }
+  // running, reading and logging tests is not writing them
+  const ok = ['npm test > /tmp/out.txt 2>&1', 'node --test tests/a.test.js 2>&1 | tail -5', 'cat app.test.mjs', 'echo hi > notes.txt',
+    'git diff -- tests/ > /tmp/d.txt', 'cp app.test.mjs /tmp/backup'];
+  for (const c of ok) {
+    const r = run('hook_guard_bash.js', pre(repo, 'Bash', { command: c }));
+    assert.equal(r.returncode, 0, `${c}: ${r.stderr}`);
+  }
+});
+
 test('guard bash blocks commit with staged secret', (t) => {
   const repo = makeRepo(t);
   write(repo, 'config.ts', "export const key = 'sk_live_abcdefghijklmnop1234';\n"); // kit:allow-secret
