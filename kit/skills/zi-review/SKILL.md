@@ -12,7 +12,7 @@ Review feature: `$slug`
 Worktree: `node -p 'require("./.claude/kit.json").lanes["$slug"].worktree'`. Record `HEAD=$(git -C <worktree> rev-parse HEAD)`. Read the spec's `Risk:` header.
 
 ## Step 2: reviewer
-Spawn the `reviewer` agent with working directory = the worktree and exactly this input: "Review lane `$slug` at commit <HEAD>. Spec: docs/specs/$slug.md. Diff: `git diff <default branch>...HEAD`. Log: `.claude/session/$slug.log` while the worktree exists, or the committed copy `<work>/$slug.checks.txt` after it is gone. Events: docs/specs/$slug.events.jsonl. Progress: docs/specs/$slug.progress.md. Also read ARCHITECTURE.md, DESIGN.md, LESSONS.md. Write docs/specs/$slug.review.md with `- Head: <HEAD>`."
+Spawn the `reviewer` agent with working directory = the worktree and exactly this input: "Review lane `$slug` at commit <HEAD>. Spec: docs/specs/$slug.md. Diff: `git diff <default branch>...HEAD`. Log: `.claude/session/$slug.log` while the worktree exists, or the committed copy `<work>/$slug.checks.txt` after it is gone. Events: docs/specs/$slug.events.jsonl. Progress: docs/specs/$slug.progress.md. Also read ARCHITECTURE.md, DESIGN.md, LESSONS.md. Commit your adversarial test first, on its own; then write docs/specs/$slug.review.md with `- Head:` the commit that holds it (`git rev-parse HEAD`)."
 
 Give it nothing else: no summary of what was built, no excerpt of the implementer's output.
 
@@ -25,6 +25,6 @@ kit validate_docs docs/specs/$slug.review.md --repo <worktree>
 ```
 A report that fails validation goes back to the reviewer with the violations.
 
-Commit the review file (and the adversarial test) in the worktree and push. Then:
+The reviewer committed its adversarial test itself, before its report, so the report's `- Head:` covers it. Commit only the review file in the worktree (`git add docs/specs/$slug.review.md`; nothing else: a test or code change after the Head makes the PASS stale and `kit lane merge` refuses it) and push. Then:
 - Verdict FAIL: post the `## Fail list` section as a PR comment (`gh pr comment`), `kit lane roadmap-set $slug building`, `kit lane advance $slug build`, and spawn the `implementer` with only the fail list as input: "Fix exactly these items in lane `$slug`: <fail list>. Then stop." When it stops, run `kit lane gate $slug` (a FAIL goes back to the implementer with its report, as in `/zi-run`'s `gate` row), then `kit lane advance $slug review`, then `/zi-review $slug` again: no reviewer starts without a gate PASS for the lane's HEAD. `advance` counts the round in the lane store; when the move would start a round past the limit (`max_rounds` in `.claude/kit.json`, default 3) it parks the lane, sets ROADMAP to `escalated` and refuses: do not spawn the implementer; tell the human its reason and stop. Only they let it go on (`kit lane advance $slug build --by <name>`).
 - Verdict PASS: `kit lane roadmap-set $slug ready-to-merge`. Tell the human the PR is ready and what CI shows, from `kit lane ci $slug` (not `gh pr checks`). This command never merges; a merge is `kit lane merge`, on the human's word.

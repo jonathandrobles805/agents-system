@@ -127,6 +127,16 @@ test("gate: the checks come from the base's committed kit.json, not the main che
   assert.match(store().gate.base_ref, /refs\/heads\/main$/);
 });
 
+test('gate: every run keeps its own report, and the verdict names it (#147 O4)', (t) => {
+  const { root, store } = gateLane(t, { test: 'echo first-failure-output; exit 1' });
+  assert.equal(lane('gate', 'refund-route', '--repo', root).returncode, 1);
+  assert.equal(lane('gate', 'refund-route', '--repo', root).returncode, 1);
+  const dir = path.join(root, '.claude', 'session', 'lanes');
+  for (const n of [1, 2]) assert.match(read(dir, `refund-route.gate.${n}.txt`), /GATE: FAIL[\s\S]*first-failure-output/);
+  assert.equal(store().gate.report, path.join(dir, 'refund-route.gate.2.txt'));
+  assert.equal(read(dir, 'refund-route.gate.txt'), read(dir, 'refund-route.gate.2.txt'));
+});
+
 test('gate: a check gets no GitHub token or API key', (t) => {
   setEnv(t, 'GH_TOKEN', 'ghp_x');
   setEnv(t, 'ANTHROPIC_API_KEY', 'sk-x');

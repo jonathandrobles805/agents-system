@@ -33,7 +33,9 @@ export function main(argv) {
   }
   const m = HEAD_LINE.exec(text);
   if (!m) return C.fail("review-report: no '- Head: <sha>' line; the report must name the commit it reviewed");
-  if (!K.reviewHeadOk(root, m[1], head)) {
+  // the PR's base (pull_request runs set GITHUB_BASE_REF): an update from it that left the lane's change alone keeps the review
+  const base = (process.env.GITHUB_BASE_REF || '').trim() || null;
+  if (!K.reviewHeadOk(root, m[1], head, base)) {
     const what = prHead ? 'the PR head' : 'HEAD';
     return C.fail(`review-report: report reviewed ${m[1]} but ${what} is ${head.slice(0, 12)}; code changed after review. Run /zi-review again.`);
   }

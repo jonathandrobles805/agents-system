@@ -54,7 +54,17 @@ export const RULES = [
   rule(`${B}(printenv|env)${S}*$`, 'dumping the environment (may contain secrets)'),
   rule(`${B}echo${S}+\\$\\{?[A-Z_]*(KEY|TOKEN|SECRET|PASSWORD)`, 'echoing a secret variable'),
 ];
+// A test file named as a shell write's target: `x.test.ts`, `x.spec.js`, `x_test.go`, `test_x.py`, or a path under
+// tests/, test/ or __tests__/ (#146 O1).
+const PATH_CH = `[^${WS}|;&'"]`;
+const TEST_PATH = `(?:${PATH_CH}*(?:\\.(?:test|spec)\\.[a-z]+|_test\\.(?:go|py|rb|rs))|(?:${PATH_CH}*/)?(?:test_${PATH_CH}+\\.py|(?:tests?|__tests__)/${PATH_CH}+))`;
+const SHELL_TEST_WRITE = 'writing a test file through the shell; use the Edit or Write tool, where the read, scope and test-weakening checks run';
 export const LANE_RULES = [
+  // in a lane a test file changes only through Edit/Write (#146 O1): the kit-test reviewer appended its test with
+  // `cat >> app.test.mjs`, so guard-edit's read-before-edit and scope checks never saw it
+  rule(`(?<![0-9&])>>?${S}*['"]?${TEST_PATH}`, SHELL_TEST_WRITE),
+  rule(`${B}tee${E}(?:${S}+-[a-z]+)*${S}+['"]?${TEST_PATH}`, SHELL_TEST_WRITE),
+  rule(`${B}sed${S}+-i[^|;&\n]*${S}['"]?${TEST_PATH}`, SHELL_TEST_WRITE),
   rule(`${B}git${S}+worktree${S}+(remove|prune)${E}`, 'removing worktrees from inside a lane'),
   rule(`${B}git${S}+branch${S}+-D${E}`, 'deleting branches from inside a lane'),
   rule(`${B}git${S}+(checkout|switch)${S}+(?!-b${E})(?!--${S})[A-Za-z0-9._/-]+${S}*$`, 'switching branches inside a lane; each lane stays on its branch'),

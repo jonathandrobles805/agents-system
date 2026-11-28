@@ -143,7 +143,7 @@ export function progressInfo(prog) {
   return info;
 }
 
-export function reviewInfo(root, rep, laneHead) {
+export function reviewInfo(root, rep, laneHead, base = null) {
   const info = { exists: K.isFile(rep), valid: null, verdict: null, head_matches: null, fails: 0 };
   if (!K.isFile(rep)) return info;
   const v = new V.Validator(root, null, K.loadKitJson(root));
@@ -154,7 +154,7 @@ export function reviewInfo(root, rep, laneHead) {
   info.verdict = m ? m[1] : null;
   info.fails = (text.match(new RegExp(`(?<![^\\n])\\|${S}*R\\p{Nd}+${S}*\\|[^|]*\\|${S}*FAIL${S}*\\|`, 'gu')) ?? []).length;
   const h = new RegExp(`(?<![^\\n])- Head:${S}*([0-9a-f]{7,40})`, 'u').exec(text);
-  if (h && laneHead) info.head_matches = K.reviewHeadOk(root, h[1]);
+  if (h && laneHead) info.head_matches = K.reviewHeadOk(root, h[1], 'HEAD', base);
   return info;
 }
 
@@ -179,7 +179,7 @@ export function laneState(root, row, kit) {
   const work = hasWt ? (K.findLane(wt)?.work ?? K.workRoot(root)) : K.workRoot(root);
   const prog = progressInfo(pjoin(docsRoot, work, `${slug}.progress.md`));
   const head = hasWt ? gitOr(['rev-parse', 'HEAD'], wt) : null;
-  const rev = reviewInfo(docsRoot, pjoin(docsRoot, work, `${slug}.review.md`), head);
+  const rev = reviewInfo(docsRoot, pjoin(docsRoot, work, `${slug}.review.md`), head, kget(kit, 'default_branch', 'main'));
   const ev = eventsSummary(pjoin(docsRoot, work, `${slug}.events.jsonl`));
   const specHdr = K.isFile(spec) ? L.specHeader(spec) : new Map();
   // approved: the owner merged the spec/<slug> PR with kit lane merge, which recorded it (an approval line does not count)

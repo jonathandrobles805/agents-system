@@ -47,6 +47,21 @@ export function gatePass(root, slug) {
   return commit;
 }
 
+/**
+ * The reviewer's PASS for the lane's HEAD, committed on its own, as /zi-review leaves it (#146): `lane.js merge`
+ * needs a review covering the PR head. Returns the new HEAD (the review commit).
+ */
+export function reviewPass(root, slug) {
+  const wt = path.join(lanesDir(root), slug);
+  const reviewed = git(['rev-parse', 'HEAD'], wt).trim();
+  const rel = path.join('docs', 'specs', `${slug}.review.md`);
+  fs.mkdirSync(path.dirname(path.join(wt, rel)), { recursive: true });
+  fs.writeFileSync(path.join(wt, rel), `# Review: ${slug}\n\n- Head: ${reviewed}\n\n## Verdict\n\nPASS\n`);
+  git(['add', rel], wt);
+  git(['-c', 'user.name=kit-test', '-c', 'user.email=kit-test@example.com', 'commit', '-q', '-m', `review: ${slug}`], wt);
+  return git(['rev-parse', 'HEAD'], wt).trim();
+}
+
 const write = (p, text) => {
   fs.mkdirSync(path.dirname(p), { recursive: true });
   fs.writeFileSync(p, text);

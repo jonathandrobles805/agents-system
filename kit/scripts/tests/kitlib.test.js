@@ -118,3 +118,50 @@ test('a wrong name, another describe, a skipped test, another file, or the wrong
   // a file-level pass is never a red run, and a cell without a file cannot use one
   refused('vitest-default.green.txt', 'green', 'shortens text longer than max to max characters ending in an ellipsis', /has no result/);
 });
+
+test('a red run counts only when its named test is reported failing, never for the suite exit alone (#147 O3)', () => {
+  const lane = { root: null, logPath: '/x/.claude/session/truncate-text.log' };
+  const cells = ['D1', 'c', D1, 'truncate-text.log#1', '—'];
+  // the suite failed before testing anything (a syntax error): exit 1, but no test result, so no red run
+  const crash = ['=== 2026-11-23T10:00:00 D1: npx vitest run -> exit 1', 'SyntaxError: Unexpected token )', '    at tests/truncate.test.ts:3:1'];
+  assert.match(K.runRefProblem(lane, crash, cells, 'red') ?? 'accepted', /logged no test result/);
+  // another test failed and this one passed: exit 1, still no red run for this criterion
+  const other = ['=== 2026-11-23T10:00:00 D1: npx vitest run -> exit 1', ...fs.readFileSync(path.join(RUNS, 'vitest-tap.green.txt'), 'utf8').split('\n')];
+  assert.match(K.runRefProblem(lane, other, cells, 'red') ?? 'accepted', /as passing|has no result/);
+  // this test reported failing: a red run
+  const red = ['=== 2026-11-23T10:00:00 D1: npx vitest run -> exit 1', ...fs.readFileSync(path.join(RUNS, 'vitest-tap.red.txt'), 'utf8').split('\n')];
+  assert.equal(K.runRefProblem(lane, red, cells, 'red'), null);
+});
+
+test('a review covers what merges: tests or code changed after it make it stale; its own report and a clean update from the base do not (#146 O2)', (t) => {
+  const r = makeRepo(t);
+  const g = (...a) => K.git(a, r).trim();
+  const commit = (file, text, msg) => {
+    fs.mkdirSync(path.dirname(path.join(r, file)), { recursive: true });
+    fs.writeFileSync(path.join(r, file), text);
+    g('add', file);
+    g('-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-q', '-m', msg);
+    return g('rev-parse', 'HEAD');
+  };
+  g('checkout', '-q', '-b', 'wt/refund');
+  commit('src/refund.ts', 'export const refund = 1;\n', 'lane code');
+  const reviewed = commit('tests/refund.test.ts', 'test("refund", () => {});\n', 'lane test');
+  // the review's own report after the reviewed head: still covered
+  const report = commit('docs/specs/refund.review.md', `- Head: ${reviewed}\n`, 'review');
+  assert.equal(K.reviewHeadOk(r, reviewed.slice(0, 7), report), true);
+  // a test changed after the review (the reviewer's own test, committed after its Head): stale
+  g('checkout', '-q', '-b', 'later-test', report);
+  const testAfter = commit('tests/refund.test.ts', 'test("refund", () => {});\ntest("more", () => {});\n', 'test after review');
+  assert.equal(K.reviewHeadOk(r, reviewed, testAfter, 'main'), false);
+  // the base moved and was merged into the lane cleanly: the lane's change is the reviewed one, so covered with the base
+  g('checkout', '-q', 'main');
+  commit('README.md', 'base moved\n', 'base');
+  g('checkout', '-q', 'wt/refund');
+  g('-c', 'user.name=t', '-c', 'user.email=t@t', 'merge', '-q', '--no-edit', 'main');
+  const synced = g('rev-parse', 'HEAD');
+  assert.equal(K.reviewHeadOk(r, reviewed, synced, 'main'), true);
+  assert.equal(K.reviewHeadOk(r, reviewed, synced), false, 'without the base, only the parent rule applies');
+  // code changed after that update: stale again
+  const codeAfter = commit('src/refund.ts', 'export const refund = 2;\n', 'code after review');
+  assert.equal(K.reviewHeadOk(r, reviewed, codeAfter, 'main'), false);
+});

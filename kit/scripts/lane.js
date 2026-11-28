@@ -1482,6 +1482,39 @@ export function syncProblem(root, slug, head, { fetch = false } = {}) {
   return null;
 }
 
+/**
+ * Why the review does not cover `head`, or null when it does (#146 O2): the report at that commit must say PASS and
+ * name a commit whose change is the one at `head` (kitlib.reviewHeadOk). A commit after the review that touched a
+ * test or code file needs a new review; an update from the base that left the lane's change alone does not.
+ */
+export function reviewProblem(root, slug, head) {
+  const rel = `${K.workRoot(root)}/${slug}.review.md`;
+  let text;
+  try {
+    text = K.git(['show', `${head}:${rel}`], root);
+  } catch {
+    return `${String(head).slice(0, 7)} has no ${rel}; run /zi-review`;
+  }
+  if (!/(?<![^\n])## Verdict[ \t]*\n+[ \t]*PASS[ \t]*(?=\n|$)/.test(text)) return `the review at ${String(head).slice(0, 7)} is not a PASS; run /zi-review`;
+  const h = /(?<![^\n])- Head:[ \t]*([0-9a-f]{7,40})/.exec(text);
+  if (!h) return `${rel} names no '- Head: <sha>', so it covers no commit; run /zi-review`;
+  const base = K.loadKitJson(root)?.default_branch || 'main';
+  if (!K.reviewHeadOk(root, h[1], head, base)) return `the review PASS is for ${h[1].slice(0, 7)}, and ${String(head).slice(0, 7)} changed tests or code after it; run /zi-review again`;
+  return null;
+}
+
+/** The next numbered gate report for a lane: `<slug>.gate.1.txt`, `<slug>.gate.2.txt`, ... (#147 O4). Never reuses a number. */
+export function nextGateReport(root, slug) {
+  const dir = storeDir(root);
+  const re = new RegExp(`^${slug.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\.gate\\.(\\d+)\\.txt$`);
+  let n = 0;
+  if (K.isDir(dir)) for (const f of fs.readdirSync(dir)) {
+    const m = re.exec(f);
+    if (m) n = Math.max(n, Number(m[1]));
+  }
+  return pjoin(dir, `${slug}.gate.${n + 1}.txt`);
+}
+
 /** Write fields into the lane's store record without a move (the gate's verdict). */
 function writeStoreFields(root, slug, fields) {
   const p = storePath(root, slug);
@@ -1581,7 +1614,10 @@ export async function gate(root, slug, { sync = false } = {}) {
   const failed = checks.filter((c) => c.result === 'FAIL').map((c) => c.name);
   const verdict = failed.length ? 'FAIL' : 'PASS';
   const now = K.isoSeconds();
-  const reportPath = pjoin(storeDir(root), `${slug}.gate.txt`);
+  // every run keeps its own report (#147 O4): the first FAIL's output is what a retro quotes, and it used to be
+  // overwritten by the next run. `<slug>.gate.txt` stays as a copy of the latest, for people and older skills.
+  const reportPath = nextGateReport(root, slug);
+  const latestPath = pjoin(storeDir(root), `${slug}.gate.txt`);
   const line = (c) => c.status === 'kit'
     ? [`${c.result === 'pass' ? 'pass' : 'FAIL'}  ${c.name}${c.name === 'risk' && c.result === 'FAIL' ? ': the owner decides: revert these, or approve the spec again as high risk' : ''}`, ...c.problems.map((x) => `        ${x}`)].join('\n')
     : c.result === 'skipped' ? `skip  ${c.name}: ${c.command}  (not run: ${c.reason})`
@@ -1599,6 +1635,7 @@ export async function gate(root, slug, { sync = false } = {}) {
   ].join('\n');
   fs.mkdirSync(storeDir(root), { recursive: true });
   writeText(reportPath, report);
+  writeText(latestPath, report);
   const prev = laneGate(root, slug);
   const record = {
     verdict, commit: head, at: now, base_ref: src.ref, base_commit: src.commit, runtime: cfg.runtime ?? null, state: cfg.state,
@@ -2420,7 +2457,7 @@ export async function main(argv = process.argv.slice(2)) {
           }
           // the gate passed the PR's exact head after it was updated from the base's current tip (#56 S1.5)
           if (a.cmd === 'merge') {
-            const why = syncProblem(root, m[1], info.headRefOid, { fetch: true });
+            const why = syncProblem(root, m[1], info.headRefOid, { fetch: true }) ?? reviewProblem(root, m[1], info.headRefOid);
             if (why) return refuse([`${m[1]} cannot merge PR ${pr}: ${why}`]);
             opts.head = info.headRefOid;
           }
