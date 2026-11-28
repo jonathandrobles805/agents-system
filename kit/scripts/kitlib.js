@@ -1123,6 +1123,28 @@ export function lanePatchId(root, commit, base) {
   }
 }
 
+/**
+ * True when everything `ref` changed (from where it meets `base`) is on `base` as it is in `ref`: each file the branch
+ * touched has the same content (or is absent on both). A squash merge is not an ancestor, so ancestry cannot say
+ * whether a branch was merged; this can (#138, #145). False when git cannot answer.
+ */
+export function branchOnBase(root, ref, base) {
+  try {
+    const mb = git(['merge-base', ref, base], root).trim();
+    const files = git(['diff', '--name-only', '--no-renames', mb, ref], root).split('\n').filter(Boolean);
+    const blob = (c, f) => {
+      try {
+        return git(['rev-parse', '--verify', '-q', `${c}:${f}`], root).trim();
+      } catch {
+        return null;
+      }
+    };
+    return files.every((f) => blob(ref, f) === blob(base, f));
+  } catch {
+    return false;
+  }
+}
+
 /** A ref for the base that this checkout can resolve: `origin/<base>` when fetched, else the local branch, else null. */
 export function resolvableBase(root, base) {
   if (!base) return null;

@@ -1648,6 +1648,18 @@ class BootstrapParser extends ArgumentParser {
 const print = (s) => process.stdout.write(s + '\n');
 const eprint = (s) => process.stderr.write(s + '\n');
 
+/**
+ * The kit's own repository: it holds the kit's sources (kit/scripts/bootstrap.js and install.sh at its root), or the
+ * running kit is installed from inside it. Bootstrap never writes there (#136).
+ */
+export function isKitRepo(root) {
+  const r = K.realResolve(root);
+  if (K.isFile(path.join(r, 'kit', 'scripts', 'bootstrap.js')) && K.isFile(path.join(r, 'install.sh'))) return true;
+  const kit = K.realResolve(K.KIT_DIR);
+  const rel = path.relative(r, kit);
+  return rel === '' || !(rel === '..' || rel.startsWith('..' + path.sep) || path.isAbsolute(rel));
+}
+
 export function main(argv) {
   const ap = new BootstrapParser({ prog: 'bootstrap.js', description: HELP_HEAD });
   ap.addArgument('--repo', { default: '.' });
@@ -1680,6 +1692,10 @@ export function main(argv) {
         results[proj] = { skipped: 'not a git repo' };
         continue;
       }
+      if (isKitRepo(proj)) {
+        results[proj] = { skipped: "the agent kit's own repository (#136)" };
+        continue;
+      }
       results[proj] = upgradeProject(proj, {}, a.dry_run);
     }
     print(a.json
@@ -1692,6 +1708,12 @@ export function main(argv) {
   const root = K.realResolve(a.repo);
   if (!fs.existsSync(path.join(root, '.git'))) {
     eprint(`bootstrap: ${root} is not a git repository`);
+    return 1;
+  }
+  // #136: run in the kit's own repo, --upgrade rewrote its hand-written CI (.github/workflows/kit.yml) with the
+  // generic project workflow. The kit is not a project; only reading it (--detect-only) is allowed.
+  if (isKitRepo(root) && !a.detect_only) {
+    eprint(`bootstrap: ${root} is the agent kit's own repository, not a project; it has its own CI and settings. Run /zi-bootstrap in a project's folder.`);
     return 1;
   }
   const answers = a.answers ? readJson(a.answers) : {};

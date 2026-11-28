@@ -86,6 +86,7 @@ export const CASES = [
   bash('merge-asks', 'ask', 'Bash(kit lane merge *)', 'kit lane merge probe --by probe', { broad: ['Bash(kit *)'] }),
   bash('resume-asks', 'ask', 'Bash(kit lane resume-all *)', 'kit lane resume-all --by probe', { broad: ['Bash(kit *)'] }),
   bash('signoff-asks', 'ask', 'Bash(kit lane signoff *)', 'kit lane signoff probe --by probe', { broad: ['Bash(kit *)'] }),
+  bash('resolve-asks', 'ask', 'Bash(kit lane resolve *)', 'kit lane resolve probe --by probe --note probe', { broad: ['Bash(kit *)'] }),
   bash('bootstrap-asks', 'ask', 'Bash(kit bootstrap *)', 'kit bootstrap --repo .', { broad: ['Bash(kit *)'] }),
   // xargs is stripped before matching, so `xargs kit lane` is checked as `kit lane`: the bash guard must refuse it;
   // refused here with the guard's own message proves the guard runs in a real session

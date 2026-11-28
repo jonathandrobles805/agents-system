@@ -781,7 +781,8 @@ process.stderr.write('fake gh 52: merge reached GitHub'); process.exit(9);
     //    source; the behaviour (a real push through GIT_ASKPASS, gh under GH_TOKEN) is proven in tests/app_token.test.js.
     const skillDir = path.join(ROOT, 'kit', 'skills');
     const skillText = fs.readdirSync(skillDir).map((d) => path.join(skillDir, d, 'SKILL.md')).filter((p) => fs.existsSync(p)).map((p) => `${p}\n${read(p)}`).join('\n');
-    const rawPush = [...skillText.matchAll(/git push|gh pr create/g)].length;
+    // a line the owner types after `!` (their own command, under their own login, e.g. /zi-bootstrap's last step, #137) is not the agent's
+    const rawPush = [...skillText.split('\n').filter((l) => !/^\s*! /.test(l)).join('\n').matchAll(/git push|gh pr create/g)].length;
     const named = ['zi-implement', 'zi-run', 'zi-plan'].every((s) => /(?:lane\.js"?|kit lane) publish/.test(read(path.join(skillDir, s, 'SKILL.md'))));
     const laneSrc = read(path.join(SCRIPTS, 'lane.js'));
     const tokenKept = laneSrc.includes("GIT_ASKPASS") && laneSrc.includes("GH_TOKEN: tok.token") && laneSrc.includes("'credential.helper='") && !/x-access-token:\$\{/.test(laneSrc);
@@ -1242,6 +1243,12 @@ process.stderr.write('fake gh 61: past the sign-off'); process.exit(9);
     const named69 = String(st66.gate?.report ?? '');
     const caught69 = reports69.length >= 2 && reports69.some((f) => named69.endsWith(f));
     record(69, "the gate's report is overwritten by its next run, so a FAIL's output is lost before anyone reads it", 'every gate run keeps its own report (<slug>.gate.<n>.txt) and the verdict in the lane store names it (#147 O4)', caught69, `${reports69.length} numbered report(s) kept [${reports69.join(', ')}]; the verdict names ${path.basename(named69) || 'none'}`);
+
+    // 70 /zi-bootstrap --upgrade run in the kit's own repository rewrote its hand-written CI with the generic
+    //    project workflow (#136) -> bootstrap refuses the kit's own repo (a dry run, so this fault writes nothing)
+    const boot70 = run('bootstrap.js', ['--repo', ROOT, '--upgrade', '--dry-run', '--json']);
+    const caught70 = boot70.returncode === 1 && /the agent kit's own repository, not a project/.test(boot70.stderr);
+    record(70, "/zi-bootstrap run in the kit's own repository rewrites the kit's CI and settings as if it were a project", "bootstrap refuses the kit's own repository (its sources and install.sh, or the running kit inside it); only --detect-only reads it (#136)", caught70, `bootstrap --upgrade --dry-run in the kit repo -> exit ${boot70.returncode}${boot70.stderr ? `: ${boot70.stderr.trim().split('\n')[0]}` : ''}`);
   } finally {
     if (a.keep) process.stderr.write(`fixtures kept at ${tmp}\n`);
     else fs.rmSync(tmp, { recursive: true, force: true });

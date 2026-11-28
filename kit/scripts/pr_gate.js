@@ -179,7 +179,7 @@ export function gh(root, args) {
 }
 
 export function prInfo(root, pr) {
-  return JSON.parse(gh(root, ['pr', 'view', String(pr), '--json', 'number,url,state,isDraft,headRefOid,headRefName,baseRefName,title']));
+  return JSON.parse(gh(root, ['pr', 'view', String(pr), '--json', 'number,url,state,isDraft,headRefOid,headRefName,baseRefName,title,mergeStateStatus']));
 }
 
 export function checkRuns(root, sha) {
@@ -269,6 +269,12 @@ export function mergeCommand(root, pr, { by, timeoutMin = 30, mutationBlocking =
   const first = prInfo(root, pr);
   if (first.state !== 'OPEN') return refuse(out, [`PR #${first.number} is ${first.state.toLowerCase()}, not open`]);
   if (first.isDraft) return refuse(out, [`PR #${first.number} is a draft; mark it ready first`]);
+  // #135: with "require branches to be up to date" on, GitHub refuses a PR behind its base with "N of N required status
+  // checks are expected", which points at the checks, not the branch; say what is wrong before waiting for CI
+  if (first.mergeStateStatus === 'BEHIND') {
+    const lane = /^wt\/(.+)$/.exec(first.headRefName ?? '');
+    return refuse(out, [`PR #${first.number} is behind ${first.baseRefName}: update it (${lane ? `kit lane gate ${lane[1]} --sync, then kit lane publish ${lane[1]}` : `gh pr update-branch ${first.number}`}), wait for CI, then merge`]);
+  }
   const { info, res, timedOut } = waitForChecks(root, pr, checks, { timeoutMin, log: (l) => out.write(l + '\n') });
   if (res.state !== 'green') {
     return refuse(out, [`PR #${info.number} not merged: CI ${timedOut ? `still pending after ${timeoutMin} min` : 'red'} on ${info.headRefOid.slice(0, 7)}`, ...describe(res)]);

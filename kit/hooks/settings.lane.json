@@ -11,6 +11,7 @@
     "Bash(kit lane merged *)",
     "Bash(kit lane resume-all *)",
     "Bash(kit lane signoff *)",
+    "Bash(kit lane resolve *)",
     "Bash(kit lane launch *)",
     "Bash(kit bootstrap *)"
   ],

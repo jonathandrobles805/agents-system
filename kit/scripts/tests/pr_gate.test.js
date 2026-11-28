@@ -499,3 +499,13 @@ test('lane.js merge refuses a lane PR whose head changed a test after the review
   assert.match(r.stderr + r.stdout, /changed tests or code after it; run \/zi-review again/);
   assert.ok(!calls().some((c) => c.args[0] === 'pr' && c.args[1] === 'merge'), 'no merge');
 });
+
+test('lane.js merge says a PR is behind its base before waiting for CI, instead of GitHub\'s "N of N required status checks are expected" (#135)', (t) => {
+  const root = project(t);
+  const spec = { ...PR, number: 6, url: 'https://github.com/o/proj/pull/6', headRefName: 'spec/footer', title: 'spec: footer', mergeStateStatus: 'BEHIND' };
+  const { env, calls } = fakeGh(t, { pr: spec, polls: [all()] });
+  const r = lane(root, env, 'merge', '--pr', '6', '--by', 'Jonathan');
+  assert.equal(r.returncode, 2, r.stderr + r.stdout);
+  assert.match(r.stderr + r.stdout, /PR #6 is behind main: update it \(gh pr update-branch 6\), wait for CI, then merge/);
+  assert.ok(!calls().some((c) => c.args[0] === 'pr' && c.args[1] === 'merge'), 'no merge');
+});
