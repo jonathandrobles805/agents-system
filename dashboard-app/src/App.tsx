@@ -4,6 +4,7 @@ import { useEffect } from 'react';
 import { useSection, projectOf, VIEWS, type Snap, start, onHashChange, clickTab, changeProject, refresh, clickView } from './store';
 import { Inspector } from './Inspector';
 import { Worktrees } from './Worktrees';
+import { Board } from './Board';
 import { VIEW } from './Views';
 
 // ------------------------------------------------------------------------------------------------ top bar (index.html:184-194, 303-313)
@@ -17,6 +18,7 @@ function TopBar() {
       <nav className="tabs" role="tablist" aria-label="Screens">
         <button className="tab" role="tab" id="tab-arch" data-tab="arch" aria-selected={drawn ? c.tab === 'arch' : undefined} onClick={() => clickTab('arch')}>Architecture Canvas</button>
         <button className="tab" role="tab" id="tab-worktrees" data-tab="worktrees" aria-selected={drawn ? c.tab === 'worktrees' : undefined} onClick={() => clickTab('worktrees')}>Worktrees</button>
+        <button className="tab" role="tab" id="tab-board" data-tab="board" aria-selected={drawn ? c.tab === 'board' : undefined} onClick={() => clickTab('board')}>Board</button>
       </nav>
       <span className="grow"></span>
       <select id="projectSel" aria-label="Project" hidden={!drawn || c.status.length < 2} value={drawn ? c.root ?? '' : ''} onChange={(e) => changeProject(e.target.value)}>
@@ -105,6 +107,7 @@ export function App() {
       <TopBar />
       <Arch />
       <Worktrees />
+      <Board />
     </>
   );
 }

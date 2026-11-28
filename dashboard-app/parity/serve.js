@@ -28,7 +28,9 @@ export const FIXTURE = JSON.parse(fs.readFileSync(path.join(DATA, 'fixture.json'
  *  refund-route's last event is inside the 2-minute "running" window (model.js:21) and the same for both builds. */
 export const NOW = Date.parse(FIXTURE.built_at) + 60_000;
 
-export const kitDir = (target) => path.join(DATA, `kit-${target}`, 'kit');
+/** 'work': this checkout's own kit (its server.js and its built index.html), for the board's tests (Step 10), which
+ *  need the server routes this branch adds; the parity targets run a fixed kit commit. */
+export const kitDir = (target) => (target === 'work' ? path.resolve(HERE, '..', '..', 'kit') : path.join(DATA, `kit-${target}`, 'kit'));
 
 /** PATH without any directory holding a `claude` executable, as kit/scripts/tests/dashboard.test.js does. */
 function pathWithoutClaude() {

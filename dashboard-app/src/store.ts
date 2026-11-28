@@ -6,7 +6,7 @@
 // and each call publishes a snapshot of S for one section. A section's component renders only from its snapshot, so it
 // changes exactly when the original's section would. Snapshots are taken when the render is called, like innerHTML.
 import { useSyncExternalStore } from 'react';
-import type { Arch, Commit, Index, KitEvent, Model, NodeState, Overlay, Project } from './types';
+import type { Arch, Commit, Index, KitEvent, Model, NodeState, Overlay, Project, Workflows } from './types';
 
 export const esc = (v: unknown) => String(v == null ? '' : v).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c] as string));
 
@@ -26,6 +26,8 @@ interface State {
   laneSel: string | null; laneEvents: KitEvent[];
   groupOpen: string | null;
   updated: number;
+  // the Board tab (hardening plan Step 10)
+  workflows: Workflows | null; boardSel: string | null; lastUpdate: number; streamError: string | null;
 }
 
 export const S: State = {
@@ -36,6 +38,7 @@ export const S: State = {
   laneSel: null, laneEvents: [],
   groupOpen: null,
   updated: 0,
+  workflows: null, boardSel: null, lastUpdate: 0, streamError: null,
 };
 
 // ------------------------------------------------------------------------------------------------ snapshots
@@ -47,13 +50,14 @@ export interface Snap {
   status: Project[]; root: string | null; arch: Arch | null; idx: Index | null;
   feed: KitEvent[]; lastEventAt: Record<string, number>; history: Map<string, Commit[] | null>; query: string; kind: string;
   laneSel: string | null; laneEvents: KitEvent[]; groupOpen: string | null;
+  workflows: Workflows | null; boardSel: string | null; lastUpdate: number; streamError: string | null;
   // section-specific
   dot?: { cls: string; text: string };
   insp?: 'blank' | 'full';
   title?: string; sub?: string; body?: 'static' | 'reading' | 'view';
 }
 
-type Section = 'chrome' | 'dot' | 'side' | 'view' | 'inspector' | 'worktrees';
+type Section = 'chrome' | 'dot' | 'side' | 'view' | 'inspector' | 'worktrees' | 'board';
 const snaps: Record<Section, Snap> = {} as Record<Section, Snap>;
 const listeners = new Set<() => void>();
 
@@ -64,10 +68,11 @@ function take(n: number, extra: Partial<Snap> = {}): Snap {
     status: S.status, root: S.root, arch: S.arch, idx: S.idx,
     feed: S.feed.slice(), lastEventAt: { ...S.lastEventAt }, history: new Map(S.history), query: S.query, kind: S.kind,
     laneSel: S.laneSel, laneEvents: S.laneEvents.slice(), groupOpen: S.groupOpen,
+    workflows: S.workflows, boardSel: S.boardSel, lastUpdate: S.lastUpdate, streamError: S.streamError,
     ...extra,
   };
 }
-for (const s of ['chrome', 'dot', 'side', 'view', 'inspector', 'worktrees'] as Section[]) snaps[s] = take(0, s === 'dot' ? { dot: { cls: 'dot', text: 'STATIC' } } : {});
+for (const s of ['chrome', 'dot', 'side', 'view', 'inspector', 'worktrees', 'board'] as Section[]) snaps[s] = take(0, s === 'dot' ? { dot: { cls: 'dot', text: 'STATIC' } } : {});
 
 function publish(section: Section, extra: Partial<Snap> = {}) {
   snaps[section] = take(snaps[section].n + 1, extra);
@@ -96,6 +101,7 @@ async function loadStatus(): Promise<boolean> {
   try { data = await getJson<Project | Project[]>(S.live ? '/api/status' : 'status.json'); } catch { /* static mode without a file */ }
   if (!data) { S.status = []; return false; }
   S.status = Array.isArray(data) ? data : [data];
+  S.lastUpdate = Date.now();
   if (!S.status.find((p) => p.root === S.root)) S.root = S.status[0] ? S.status[0].root : null;
   return true;
 }
@@ -127,10 +133,10 @@ async function seedEvents() {
 // ------------------------------------------------------------------------------------------------ routing (index.html:287-300)
 function parseHash() {
   const [, tab, view, id] = location.hash.split('/');
-  return { tab: tab === 'worktrees' ? 'worktrees' : 'arch', view: VIEWS.some((v) => v[0] === view) ? view : 'system', id: id ? decodeURIComponent(id) : null };
+  return { tab: tab === 'worktrees' ? 'worktrees' : tab === 'board' ? 'board' : 'arch', view: VIEWS.some((v) => v[0] === view) ? view : 'system', id: id ? decodeURIComponent(id) : null };
 }
 function go({ tab = S.tab, view = S.view, id = S.selected }: { tab?: string; view?: string; id?: string | null } = {}) {
-  const h = tab === 'worktrees' ? '#/worktrees' : `#/arch/${view}${id ? '/' + encodeURIComponent(id) : ''}`;
+  const h = tab === 'worktrees' ? '#/worktrees' : tab === 'board' ? '#/board' : `#/arch/${view}${id ? '/' + encodeURIComponent(id) : ''}`;
   if (location.hash === h) render(); else location.hash = h;
 }
 export function onHashChange() {
@@ -187,9 +193,17 @@ function renderArch() {
   renderInspector();
 }
 function renderWorktrees() { publish('worktrees'); }
+/** The Board reads the routes (kit/workflows/*.json) the first time it is drawn; the other screens never ask for them. */
+function renderBoard() {
+  publish('board');
+  if (S.live && S.workflows === null) {
+    S.workflows = {};
+    void getJson<Workflows>('/api/workflows').then((w) => { S.workflows = w; }, () => { S.workflows = {}; }).then(() => { if (S.tab === 'board') publish('board'); });
+  }
+}
 function render() {
   renderChrome();
-  if (S.tab === 'arch') renderArch(); else renderWorktrees();
+  if (S.tab === 'arch') renderArch(); else if (S.tab === 'board') renderBoard(); else renderWorktrees();
 }
 
 async function loadHistory(id: string) {
@@ -227,6 +241,8 @@ export async function refresh() { await loadStatus(); await loadArch(); render()
 export function wtProject(root: string) { S.root = root; S.laneSel = null; S.laneEvents = []; renderWorktrees(); }
 export function wtBack() { S.laneSel = null; S.root = null; renderWorktrees(); }
 export function wtClose() { S.laneSel = null; S.laneEvents = []; renderWorktrees(); }
+export function boardOpen(slug: string | null) { S.boardSel = slug; renderBoard(); }
+
 export async function wtSelectLane(slug: string) {
   S.laneSel = slug; S.laneEvents = [];
   renderWorktrees();
@@ -267,15 +283,24 @@ export async function start() {
     es.onmessage = async (m) => {
       let msg: { type: string; data: unknown; root?: string; lane: string };
       try { msg = JSON.parse(m.data); } catch { return; }
+      S.lastUpdate = Date.now(); S.streamError = null;
       if (msg.type === 'status') { S.status = Array.isArray(msg.data) ? msg.data as Project[] : [msg.data as Project]; if (S.tab === 'worktrees' || S.arch) { try { await loadArch(); } catch { /* keep the last map */ } } render(); }
       if (msg.type === 'architecture') { try { await loadArch(); } catch { /* keep the last map */ } render(); }
       if (msg.type === 'event') {
         if (msg.root === S.root) { S.feed.push({ ...(msg.data as KitEvent), lane: msg.lane }); S.feed = S.feed.slice(-200); S.lastEventAt[msg.lane] = Date.now(); }
         if (S.laneSel && msg.lane === S.laneSel && msg.root === S.root) S.laneEvents.push(msg.data as KitEvent);
-        if (S.tab === 'worktrees' && S.laneSel) renderWorktrees(); else if (S.tab === 'arch' && ['activity', 'agents', 'pipeline'].includes(S.view)) renderArch();
+        if (S.tab === 'board') renderBoard();
+        else if (S.tab === 'worktrees' && S.laneSel) renderWorktrees(); else if (S.tab === 'arch' && ['activity', 'agents', 'pipeline'].includes(S.view)) renderArch();
       }
     };
-    es.onerror = () => { publish('dot', { dot: { cls: 'dot warn', text: 'RECONNECTING' } }); };
-    es.onopen = () => { publish('dot', { dot: { cls: 'dot on', text: 'LIVE' } }); };
+    es.onerror = () => {
+      publish('dot', { dot: { cls: 'dot warn', text: 'RECONNECTING' } });
+      S.streamError = `the event stream failed (${es?.readyState === EventSource.CLOSED ? 'closed' : 'reconnecting'})`;
+      if (S.tab === 'board') renderBoard();
+    };
+    es.onopen = () => {
+      publish('dot', { dot: { cls: 'dot on', text: 'LIVE' } });
+      if (S.streamError) { S.streamError = null; if (S.tab === 'board') renderBoard(); }
+    };
   }
 }

@@ -127,3 +127,20 @@ test('3d: the same Host and Origin checks as step 0', async (t) => {
     }
   });
 });
+
+// 3f: the board's columns come from the routes (kit/workflows/*.json), not from a list in the page
+test('3f: GET /api/workflows gives every route\'s stages, the agent of each stage and the human stages, as the files say', async (t) => {
+  await withLane(t, async ({ port }) => {
+    const r = await get(port, '/api/workflows');
+    assert.equal(r.status, 200, r.body);
+    const got = JSON.parse(r.body);
+    const dir = path.resolve(path.dirname(new URL(import.meta.url).pathname), '..', '..', 'workflows');
+    const names = fs.readdirSync(dir).filter((f) => f.endsWith('.json')).map((f) => f.slice(0, -5)).sort();
+    assert.deepEqual(Object.keys(got).sort(), names);
+    for (const n of names) {
+      const w = JSON.parse(fs.readFileSync(path.join(dir, `${n}.json`), 'utf8'));
+      assert.deepEqual(got[n], { stages: w.stages ?? [], agents: w.agents ?? {}, human: w.human ?? [] }, n);
+    }
+    assert.equal((await get(port, '/api/workflows', { Origin: 'http://evil.example' })).status, 403);
+  });
+});

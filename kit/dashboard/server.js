@@ -11,6 +11,7 @@
  *   GET  /api/events/<slug>?project=NAME   the lane's events.jsonl as JSON (last 500)
  *   GET  /api/architecture      the kit's component map (scripts/arch_manifest.js), git state, and one overlay per served project
  *   GET  /api/history?id=ID     the last commits that touched a component of the map
+ *   GET  /api/workflows         every route's stages, stage agents and human stages (kit/workflows/*.json)
  *   GET  /api/lane-files/<slug>?project=NAME             the lane's own files that exist: path, size, verdict
  *   GET  /api/lane-file/<slug>?project=NAME&path=REL     one of them, read-only; any other path is refused (403)
  *   GET  /api/stream            Server-Sent Events: {"type":"status"} on any change, {"type":"architecture"} when the kit's files change, {"type":"event","lane":slug} per new event line
@@ -50,6 +51,7 @@ export const DOC = [
   '  GET  /api/events/<slug>?project=NAME   the lane\'s events.jsonl as JSON (last 500)',
   '  GET  /api/architecture      the kit\'s component map (scripts/arch_manifest.js), git state, and one overlay per served project',
   '  GET  /api/history?id=ID     the last commits that touched a component of the map',
+  '  GET  /api/workflows         every route\'s stages, stage agents and human stages (kit/workflows/*.json)',
   '  GET  /api/lane-files/<slug>?project=NAME             the lane\'s own files that exist: path, size, verdict',
   '  GET  /api/lane-file/<slug>?project=NAME&path=REL     one of them, read-only; any other path is refused (403)',
   '  GET  /api/stream            Server-Sent Events: {"type":"status"} on any change, {"type":"architecture"} when the kit\'s files change, {"type":"event","lane":slug} per new event line',
@@ -486,6 +488,24 @@ export function laneFileAllowlist(root, slug, base) {
   return [...new Set([`docs/goals/${slug}.md`, spec, ...research, ...K.laneArtifacts(work, slug, root).filter((p) => !p.includes('*'))])];
 }
 
+/**
+ * Every route the kit has (kit/workflows/*.json): its stages, the agent each stage runs and the stages a human holds.
+ * The board draws its columns from these, so a route or stage added later shows without a page change (Step 10).
+ */
+export function workflows(kitDir = KIT_DIR) {
+  const dir = path.join(kitDir, 'workflows');
+  const out = {};
+  for (const f of listDir(dir, (n) => n.endsWith('.json'))) {
+    try {
+      const w = JSON.parse(fs.readFileSync(f, 'utf8'));
+      out[path.basename(f, '.json')] = { stages: Array.isArray(w.stages) ? w.stages : [], agents: w.agents && typeof w.agents === 'object' ? w.agents : {}, human: Array.isArray(w.human) ? w.human : [] };
+    } catch {
+      // an unreadable route file is left out; the kit's own tests catch it
+    }
+  }
+  return out;
+}
+
 const OUTSIDE = Symbol('outside');
 
 /**
@@ -558,6 +578,10 @@ async function doGet(state, req, res, u, q) {
     if (text === OUTSIDE) return sendJson(res, 403, { error: 'not one of the lane\'s files' });
     if (text === null) return sendJson(res, 404, { error: 'no such file' });
     return sendJson(res, 200, { path: rel, size: Buffer.byteLength(text, 'utf8'), text });
+  }
+  if (u.path === '/api/workflows') {
+    if (!originAllowed(req)) return sendJson(res, 403, { error: 'cross-site request refused: Origin is not this server' });
+    return sendJson(res, 200, workflows(KIT_DIR));
   }
   if (u.path === '/api/architecture') {
     return sendJson(res, 200, await architecture(state));

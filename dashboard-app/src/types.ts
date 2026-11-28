@@ -20,7 +20,22 @@ export interface Lane {
   last_check?: { kind: string; result: string; summary?: string; ts?: string } | null;
   rounds?: { round: number; limit: number; failed: number; parked: { reason: string; at?: string | null } | null } | null;
   elapsed_hours?: number | null;
+  // the board (hardening plan Step 10): host facts from /api/status
+  needs_you?: boolean;
+  gate?: { state: 'pass' | 'fail' | 'stale' | 'none'; verdict: string | null; commit: string | null; at: string | null };
+  rounds_detail?: RoundDetail[] | null;
+  ci?: { state: 'pass' | 'fail' | 'pending' | 'unknown' } | null;
+  cost?: { usd: number | null; source?: string } | null;
 }
+
+export interface RoundDetail {
+  round: number;
+  gates: { verdict: string | null; commit: string | null; at: string | null }[];
+  review: { verdict: string | null; head_matches: boolean | null } | null;
+}
+
+/** GET /api/workflows: kit/workflows/*.json */
+export type Workflows = Record<string, { stages: string[]; agents: Record<string, string>; human: string[] }>;
 
 export interface Project {
   root: string;
@@ -54,7 +69,7 @@ export interface Manifest { nodes: KitNode[]; edges: Edge[]; problems: Problem[]
 export interface Git { branch?: string; commit?: string }
 export interface Overlay {
   root: string;
-  lanes: { slug: string }[];
+  lanes: { slug: string; stage?: string | null; needs_human?: boolean }[];
   settings: unknown;
   hooks: { expected: number; missing: { node: string; event: string }[]; stale: string[] };
   kit_version: { project?: string; kit?: string };
@@ -62,7 +77,7 @@ export interface Overlay {
 }
 export interface Arch { manifest: Manifest; git: Git | null; projects: Overlay[] }
 
-export interface KitEvent { ts?: string; event: string; result?: string; path?: string; command?: string; summary?: string; agent?: string; lane?: string }
+export interface KitEvent { ts?: string; event: string; result?: string; path?: string; command?: string; summary?: string; agent?: string; lane?: string; agent_id?: string; agent_type?: string; source?: string }
 export interface Commit { sha: string; date: string; author: string; subject: string }
 
 export interface Index { byId: Map<string, KitNode>; out: Map<string, Edge[]>; inn: Map<string, Edge[]> }
